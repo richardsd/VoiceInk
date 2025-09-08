@@ -1,6 +1,13 @@
 import Combine
 import Foundation
+import AppKit
+import os
 import LLMkit
+
+enum OpenAIAuthMode: String, CaseIterable, Codable {
+    case apiKey = "API Key"
+    case oauth = "ChatGPT Subscription (OAuth)"
+}
 
 enum AIProvider: String, CaseIterable {
     case cerebras = "Cerebras"
