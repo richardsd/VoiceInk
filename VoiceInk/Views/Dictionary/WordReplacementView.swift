@@ -1,6 +1,11 @@
 import SwiftData
 import SwiftUI
 
+extension String: @retroactive Identifiable {
+    public var id: String { self }
+}
+
+
 enum SortMode: String {
     case originalAsc = "originalAsc"
     case originalDesc = "originalDesc"
