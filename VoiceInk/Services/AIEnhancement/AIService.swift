@@ -227,6 +227,34 @@ class AIService: ObservableObject {
     @Published private var openRouterModels: [String] = []
     @Published private(set) var isOllamaRefreshing = false
 
+    // MARK: - OAuth Properties
+
+    @Published var openAIAuthMode: OpenAIAuthMode {
+        didSet {
+            userDefaults.set(openAIAuthMode.rawValue, forKey: "openAIAuthMode")
+            // Update authentication status when mode changes
+            if selectedProvider == .openAI {
+                updateOpenAIAuthenticationStatus()
+            }
+            NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
+        }
+    }
+
+    @Published var isOAuthAuthenticated: Bool = false
+    @Published var oauthAccountId: String?
+
+    @Published var openAIOAuthModel: String {
+        didSet {
+            userDefaults.set(openAIOAuthModel, forKey: "openAIOAuthModel")
+            NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
+        }
+    }
+
+    private var oauthCallbackServer: CodexCallbackServer?
+    private var currentPkceVerifier: String?
+
+    private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "AIService")
+
     var connectedProviders: [AIProvider] {
         AIProvider.allCases.filter { provider in
             guard provider.supportsEnhancement else {
@@ -247,6 +275,11 @@ class AIService: ObservableObject {
     }
 
     var currentModel: String {
+        // If using OAuth mode for OpenAI, use OAuth-specific model
+        if selectedProvider == .openAI && openAIAuthMode == .oauth {
+            return openAIOAuthModel
+        }
+
         if let selectedModel = selectedModels[selectedProvider],
             !selectedModel.isEmpty,
             (selectedProvider == .ollama && !selectedModel.isEmpty) || availableModels.contains(selectedModel)
@@ -290,9 +323,45 @@ class AIService: ObservableObject {
         return provider.availableModels
     }
 
+    /// Returns the appropriate base URL for the selected provider and auth mode
+    var effectiveBaseURL: String {
+        if selectedProvider == .openAI && openAIAuthMode == .oauth {
+            return CodexConstants.responsesEndpoint
+        }
+        return selectedProvider.baseURL
+    }
+
+    /// Returns the appropriate authorization header for the selected provider and auth mode
+    func authorizationHeader() throws -> String {
+        if selectedProvider == .openAI && openAIAuthMode == .oauth {
+            guard let token = try getOAuthAccessToken() else {
+                throw EnhancementError.notConfigured
+            }
+            return "Bearer \(token)"
+        } else if selectedProvider.requiresAPIKey {
+            return "Bearer \(apiKey)"
+        }
+        return ""
+    }
+
     init() {
         if userDefaults.string(forKey: "selectedAIProvider") == "GROQ" {
             userDefaults.set("Groq", forKey: "selectedAIProvider")
+        }
+
+        // Load OpenAI auth mode (default to API key for backward compatibility)
+        if let savedModeRaw = userDefaults.string(forKey: "openAIAuthMode"),
+           let savedMode = OpenAIAuthMode(rawValue: savedModeRaw) {
+            self.openAIAuthMode = savedMode
+        } else {
+            self.openAIAuthMode = .apiKey
+        }
+
+        // Load OAuth model selection (default to gpt-5.3-codex)
+        if let savedOAuthModel = userDefaults.string(forKey: "openAIOAuthModel"), !savedOAuthModel.isEmpty {
+            self.openAIOAuthModel = savedOAuthModel
+        } else {
+            self.openAIOAuthModel = "gpt-5.3-codex"
         }
 
         if let savedProvider = userDefaults.string(forKey: "selectedAIProvider"),
@@ -324,6 +393,10 @@ class AIService: ObservableObject {
                 self?.reloadSelectedProviderConfiguration()
             }
         }
+
+        if selectedProvider == .openAI {
+            updateOpenAIAuthenticationStatus()
+        }
     }
 
     deinit {
@@ -354,6 +427,10 @@ class AIService: ObservableObject {
         } else {
             apiKey = ""
             isAPIKeyValid = selectedProvider == .localCLI ? localCLIService.isConfigured : true
+        }
+
+        if selectedProvider == .openAI {
+            updateOpenAIAuthenticationStatus()
         }
     }
 
@@ -651,5 +728,118 @@ class AIService: ObservableObject {
                 self.objectWillChange.send()
             }
         }
+    }
+
+    // MARK: - OAuth Methods
+
+    private func updateOpenAIAuthenticationStatus() {
+        if openAIAuthMode == .oauth {
+            // Check if we have valid OAuth tokens
+            if let tokens = try? OAuthKeychainManager.shared.retrieveOAuthTokens() {
+                self.isOAuthAuthenticated = !tokens.isExpired
+                self.oauthAccountId = tokens.accountId
+            } else {
+                self.isOAuthAuthenticated = false
+                self.oauthAccountId = nil
+            }
+        } else {
+            // API key mode - use existing isAPIKeyValid
+            self.isOAuthAuthenticated = false
+            self.oauthAccountId = nil
+        }
+    }
+
+    @MainActor
+    func initiateOAuthFlow() async throws {
+        logger.info("Initiating OAuth flow")
+
+        // Generate PKCE codes and state
+        let pkce = CodexAuth.generatePkce()
+        let state = CodexAuth.generateState()
+
+        // Store verifier for later use
+        self.currentPkceVerifier = pkce.verifier
+
+        // Start callback server
+        let server = CodexCallbackServer()
+        self.oauthCallbackServer = server
+
+        // Build authorization URL
+        let authorizeUrl = CodexAuth.buildAuthorizeUrl(pkce: pkce, state: state)
+
+        // Open browser
+        NSWorkspace.shared.open(authorizeUrl)
+
+        // Wait for callback
+        do {
+            let code = try await server.start(expectedState: state)
+            logger.info("Received authorization code")
+
+            // Exchange code for tokens
+            guard let verifier = currentPkceVerifier else {
+                throw CodexAuthError.invalidState
+            }
+
+            let tokens = try await CodexAuth.exchangeCodeForTokens(code: code, pkceVerifier: verifier)
+            logger.info("Successfully exchanged code for tokens")
+
+            // Save tokens to keychain
+            try OAuthKeychainManager.shared.saveOAuthTokens(tokens)
+            logger.info("Saved tokens to keychain")
+
+            // Update state
+            self.isOAuthAuthenticated = true
+            self.oauthAccountId = tokens.accountId
+
+            // Cleanup
+            self.currentPkceVerifier = nil
+            self.oauthCallbackServer = nil
+
+        } catch {
+            logger.error("OAuth flow failed: \(error.localizedDescription)")
+            self.currentPkceVerifier = nil
+            self.oauthCallbackServer = nil
+            throw error
+        }
+    }
+
+    func signOutOAuth() throws {
+        logger.info("Signing out OAuth")
+
+        try OAuthKeychainManager.shared.deleteOAuthTokens()
+
+        self.isOAuthAuthenticated = false
+        self.oauthAccountId = nil
+
+        NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
+    }
+
+    func refreshOAuthTokenIfNeeded() async throws {
+        guard openAIAuthMode == .oauth else { return }
+
+        guard let tokens = try OAuthKeychainManager.shared.retrieveOAuthTokens() else {
+            throw CodexAuthError.invalidToken
+        }
+
+        // Refresh if expiring soon (less than 5 minutes remaining)
+        if tokens.isExpiringSoon || tokens.isExpired {
+            logger.info("OAuth token expiring soon, refreshing...")
+
+            let newTokens = try await CodexAuth.refreshAccessToken(refreshToken: tokens.refreshToken)
+            try OAuthKeychainManager.shared.saveOAuthTokens(newTokens)
+
+            self.oauthAccountId = newTokens.accountId
+            logger.info("Successfully refreshed OAuth token")
+        }
+    }
+
+    func getOAuthAccessToken() throws -> String? {
+        guard openAIAuthMode == .oauth else { return nil }
+
+        guard let tokens = try OAuthKeychainManager.shared.retrieveOAuthTokens() else {
+            return nil
+        }
+
+        return tokens.accessToken
     }
 }
