@@ -26,7 +26,7 @@ struct APIKeyManagementView: View {
             return true
         }
     }
-    
+
     var body: some View {
         Section("AI Provider Integration") {
             HStack {
@@ -37,8 +37,21 @@ struct APIKeyManagementView: View {
                 }
                 .pickerStyle(.automatic)
                 .tint(AppTheme.Status.infoStrong)
-                
-                if aiService.isAPIKeyValid && aiService.selectedProvider != .ollama {
+
+                if aiService.selectedProvider == .openAI {
+                    Spacer()
+                    let isConnected = aiService.openAIAuthMode == .oauth
+                        ? aiService.isOAuthAuthenticated
+                        : aiService.isAPIKeyValid
+                    if isConnected {
+                        Circle()
+                            .fill(AppTheme.Status.positive)
+                            .frame(width: 8, height: 8)
+                        Text("Connected")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                } else if aiService.isAPIKeyValid && aiService.selectedProvider != .ollama {
                     Spacer()
                     Circle()
                         .fill(AppTheme.Status.positive)
@@ -124,7 +137,7 @@ struct APIKeyManagementView: View {
                             }
                         }
                     }
-                    
+
                 } else if !aiService.availableModels.isEmpty &&
                             aiService.selectedProvider != .ollama {
                     Picker("Model", selection: Binding(
@@ -142,7 +155,7 @@ struct APIKeyManagementView: View {
                         HStack {
                             TextField("Base URL", text: $ollamaBaseURL)
                                 .textFieldStyle(.roundedBorder)
-                            
+
                             Button("Save") {
                                 aiService.updateOllamaBaseURL(ollamaBaseURL)
                                 checkOllamaConnection()
@@ -243,6 +256,14 @@ struct APIKeyManagementView: View {
                     Text("Manage custom enhancement models in the Custom tab.")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                } else if aiService.selectedProvider == .openAI {
+                    OpenAIAuthView(
+                        aiService: aiService,
+                        apiKey: $apiKey,
+                        isVerifying: $isVerifying,
+                        alertMessage: $alertMessage,
+                        showAlert: $showAlert
+                    )
                 } else {
                     if aiService.isAPIKeyValid {
                         HStack {
@@ -348,7 +369,7 @@ struct APIKeyManagementView: View {
             isSyncingLocalCLIState = false
         }
     }
-    
+
     private func checkOllamaConnection(showError: Bool = true) {
         isCheckingOllama = true
         Task { @MainActor in
@@ -363,7 +384,7 @@ struct APIKeyManagementView: View {
             }
         }
     }
-    
+
     private func getAPIKeyURL() -> URL? {
         switch aiService.selectedProvider {
         case .groq: return URL(string: "https://console.groq.com/keys")
@@ -379,6 +400,416 @@ struct APIKeyManagementView: View {
         case .openRouter: return URL(string: "https://openrouter.ai/keys")
         case .cerebras: return URL(string: "https://cloud.cerebras.ai/")
         default: return nil
+        }
+    }
+}
+
+// MARK: - OpenAI Auth View
+
+struct OpenAIAuthView: View {
+    @ObservedObject var aiService: AIService
+    @Binding var apiKey: String
+    @Binding var isVerifying: Bool
+    @Binding var alertMessage: String
+    @Binding var showAlert: Bool
+
+    @State private var isAuthenticating = false
+    @State private var showModelInfo = false
+    @State private var selectedModelForInfo: CodexModelMetadata?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Auth Mode Picker
+            Picker("Authentication", selection: $aiService.openAIAuthMode) {
+                ForEach(OpenAIAuthMode.allCases, id: \.self) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Divider()
+
+            if aiService.openAIAuthMode == .oauth {
+                // OAuth Mode UI
+                oauthSection
+            } else {
+                // API Key Mode UI
+                apiKeySection
+            }
+        }
+    }
+
+    private var oauthSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Info tip
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle")
+                    .foregroundColor(.blue)
+                Text("Use your existing ChatGPT Plus or Pro subscription")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 4)
+
+            if aiService.isOAuthAuthenticated {
+                // Authenticated state
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("Signed in")
+                            .font(.subheadline)
+
+                        if let accountId = aiService.oauthAccountId {
+                            Text("•")
+                                .foregroundColor(.secondary)
+                            Text(accountId)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+
+                        Button("Sign Out", role: .destructive) {
+                            do {
+                                try aiService.signOutOAuth()
+                            } catch {
+                                alertMessage = "Failed to sign out: \(error.localizedDescription)"
+                                showAlert = true
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+
+                    Divider()
+
+                    // Model picker with metadata
+                    modelPicker
+                }
+            } else {
+                // Not authenticated state
+                Button(action: {
+                    Task {
+                        isAuthenticating = true
+                        do {
+                            try await aiService.initiateOAuthFlow()
+                        } catch {
+                            alertMessage = "OAuth failed: \(error.localizedDescription)"
+                            showAlert = true
+                        }
+                        isAuthenticating = false
+                    }
+                }) {
+                    HStack {
+                        if isAuthenticating {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Image(systemName: "person.circle.fill")
+                        Text("Sign in with ChatGPT")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isAuthenticating)
+            }
+        }
+    }
+
+    private var apiKeySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if aiService.isAPIKeyValid {
+                HStack {
+                    Text("API Key")
+                    Spacer()
+                    Text("••••••••")
+                        .foregroundColor(.secondary)
+                    Button("Remove", role: .destructive) {
+                        aiService.clearAPIKey()
+                    }
+                }
+            } else {
+                SecureField("API Key", text: $apiKey)
+                    .textFieldStyle(.roundedBorder)
+
+                HStack {
+                    // Get API Key Link
+                    if let url = URL(string: "https://platform.openai.com/api-keys") {
+                        Link(destination: url) {
+                            HStack {
+                                Image(systemName: "key.fill")
+                                Text("Get API Key")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Spacer()
+
+                    Button(action: {
+                        isVerifying = true
+                        aiService.saveAPIKey(apiKey) { success, errorMessage in
+                            isVerifying = false
+                            if !success {
+                                alertMessage = errorMessage ?? "Verification failed"
+                                showAlert = true
+                            }
+                            apiKey = ""
+                        }
+                    }) {
+                        HStack {
+                            if isVerifying {
+                                ProgressView().controlSize(.small)
+                            }
+                            Text("Verify and Save")
+                        }
+                    }
+                    .disabled(apiKey.isEmpty)
+                }
+            }
+        }
+    }
+
+    private var modelPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Model")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+
+            ForEach(CodexModels.sortedForPicker, id: \.id) { model in
+                modelRow(for: model)
+            }
+        }
+    }
+
+    private func modelRow(for model: CodexModelMetadata) -> some View {
+        Button(action: {
+            aiService.openAIOAuthModel = model.id
+        }) {
+            HStack(spacing: 8) {
+                // Selection indicator
+                Image(systemName: aiService.openAIOAuthModel == model.id ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(aiService.openAIOAuthModel == model.id ? .blue : .secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(model.displayName)
+                            .font(.system(.body, design: .monospaced))
+
+                        if model.isRecommended {
+                            Text("⭐️")
+                                .font(.caption)
+                        }
+
+                        // Tier badge
+                        Text(model.tier.rawValue)
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(tierColor(model.tier).opacity(0.2))
+                            .foregroundColor(tierColor(model.tier))
+                            .cornerRadius(4)
+
+                        // Status badge
+                        if model.status != .current {
+                            Text(model.status.rawValue)
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(statusColor(model.status).opacity(0.2))
+                                .foregroundColor(statusColor(model.status))
+                                .cornerRadius(4)
+                        }
+                    }
+
+                    Text(model.description)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer()
+
+                // Info button
+                Button(action: {
+                    selectedModelForInfo = model
+                    showModelInfo = true
+                }) {
+                    Image(systemName: "info.circle")
+                        .foregroundColor(.blue)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(8)
+            .background(aiService.openAIOAuthModel == model.id ? Color.blue.opacity(0.05) : Color.clear)
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showModelInfo) {
+            if let model = selectedModelForInfo {
+                ModelInfoSheet(model: model, isPresented: $showModelInfo)
+            }
+        }
+    }
+
+    private func tierColor(_ tier: SubscriptionTier) -> Color {
+        switch tier {
+        case .plus: return .blue
+        case .pro: return .purple
+        case .api: return .gray
+        }
+    }
+
+    private func statusColor(_ status: ModelStatus) -> Color {
+        switch status {
+        case .current: return .green
+        case .preview: return .orange
+        case .legacy: return .gray
+        case .deprecated: return .red
+        }
+    }
+}
+
+// MARK: - Model Info Sheet
+
+struct ModelInfoSheet: View {
+    let model: CodexModelMetadata
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // Header
+            HStack {
+                Text(model.displayName)
+                    .font(.title2)
+                    .bold()
+                Spacer()
+                Button(action: { isPresented = false }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
+                        .imageScale(.large)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider()
+
+            // Badges
+            HStack(spacing: 8) {
+                tierBadge
+                statusBadge
+                if model.isRecommended {
+                    Text("⭐️ Recommended")
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.yellow.opacity(0.2))
+                        .foregroundColor(.primary)
+                        .cornerRadius(6)
+                }
+                Spacer()
+            }
+
+            // Description
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Description")
+                    .font(.headline)
+                Text(model.description)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Details
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Details")
+                    .font(.headline)
+
+                HStack {
+                    Text("Release Date:")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(model.releaseDate)
+                }
+
+                HStack {
+                    Text("Subscription Tier:")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(model.tier.rawValue)
+                }
+
+                HStack {
+                    Text("Status:")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(model.status.rawValue)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Spacer()
+
+            // Learn More button
+            if let url = URL(string: model.documentationURL) {
+                Link(destination: url) {
+                    HStack {
+                        Image(systemName: "arrow.up.forward.circle.fill")
+                        Text("Learn More")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 400, height: 500)
+    }
+
+    private var tierBadge: some View {
+        Text(model.tier.rawValue)
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(tierColor.opacity(0.2))
+            .foregroundColor(tierColor)
+            .cornerRadius(6)
+    }
+
+    private var statusBadge: some View {
+        Text(model.status.rawValue)
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(statusColor.opacity(0.2))
+            .foregroundColor(statusColor)
+            .cornerRadius(6)
+    }
+
+    private var tierColor: Color {
+        switch model.tier {
+        case .plus: return .blue
+        case .pro: return .purple
+        case .api: return .gray
+        }
+    }
+
+    private var statusColor: Color {
+        switch model.status {
+        case .current: return .green
+        case .preview: return .orange
+        case .legacy: return .gray
+        case .deprecated: return .red
         }
     }
 }
