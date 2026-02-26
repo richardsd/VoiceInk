@@ -85,6 +85,10 @@ class AIEnhancementService: ObservableObject {
             return CustomAIProviderManager.shared.requestConfiguration(forModel: modelName) != nil
         }
 
+        if provider == .openAI && aiService.openAIAuthMode == .oauth {
+            return aiService.isOAuthAuthenticated
+        }
+
         return APIKeyManager.shared.hasAPIKey(forProvider: provider.rawValue)
     }
 
@@ -277,7 +281,10 @@ class AIEnhancementService: ObservableObject {
                     timeout: baseTimeout
                 )
             default:
-                guard let baseURL = URL(string: provider.baseURL) else {
+                let baseURLString = provider == .openAI && aiService.openAIAuthMode == .oauth
+                    ? aiService.effectiveBaseURL
+                    : provider.baseURL
+                guard let baseURL = URL(string: baseURLString) else {
                     throw EnhancementError.customError(
                         "\(provider.rawValue) has an invalid API endpoint URL. Please update it in AI settings.")
                 }
@@ -319,6 +326,13 @@ class AIEnhancementService: ObservableObject {
                 throw EnhancementError.notConfigured
             }
             return customConfiguration.apiKey
+        }
+
+        if provider == .openAI && aiService.openAIAuthMode == .oauth {
+            guard let token = try aiService.getOAuthAccessToken(), !token.isEmpty else {
+                throw EnhancementError.notConfigured
+            }
+            return token
         }
 
         guard let key = APIKeyManager.shared.getAPIKey(forProvider: provider.rawValue), !key.isEmpty else {
