@@ -323,7 +323,7 @@ struct ConfigurationRow: View {
 
                 if config.isAIEnhancementEnabled,
                     config.selectedAIProvider != AIProvider.localCLI.rawValue,
-                    let modelName = config.selectedAIModel,
+                    let modelName = config.effectiveAIModel,
                     !modelName.isEmpty
                 {
                     HStack(spacing: 4) {
