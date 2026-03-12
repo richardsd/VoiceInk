@@ -183,6 +183,8 @@ struct OllamaRefreshResult {
 }
 
 class AIService: ObservableObject {
+    static let fallbackOpenAIOAuthModel = "gpt-5.3-codex"
+
     @Published var apiKey: String = ""
     @Published var isAPIKeyValid: Bool = false
     @Published var customBaseURL: String = UserDefaults.standard.string(forKey: "customProviderBaseURL") ?? "" {
@@ -214,6 +216,9 @@ class AIService: ObservableObject {
                         await refreshOllamaAvailability()
                     }
                 }
+            }
+            if selectedProvider == .openAI {
+                updateOpenAIAuthenticationStatus()
             }
             NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
         }
@@ -268,6 +273,8 @@ class AIService: ObservableObject {
                 return ollamaService.isConnected
             } else if provider == .localCLI {
                 return localCLIService.isConfigured
+            } else if provider == .openAI {
+                return APIKeyManager.shared.hasAPIKey(forProvider: provider.rawValue) || isOAuthAuthenticated
             } else if provider.requiresAPIKey {
                 return APIKeyManager.shared.hasAPIKey(forProvider: provider.rawValue)
             }
@@ -276,28 +283,15 @@ class AIService: ObservableObject {
     }
 
     var currentModel: String {
-        // If using OAuth mode for OpenAI, use OAuth-specific model
-        if selectedProvider == .openAI && openAIAuthMode == .oauth {
-            return openAIOAuthModel
-        }
-
-        if let selectedModel = selectedModels[selectedProvider],
-           !selectedModel.isEmpty,
-           (selectedProvider == .ollama && !selectedModel.isEmpty) || availableModels.contains(selectedModel) {
-            return selectedModel
-        }
-        return selectedProvider.defaultModel
+        selectedModel(for: selectedProvider, authMode: selectedProvider == .openAI ? openAIAuthMode : nil)
     }
 
     func selectedModel(for provider: AIProvider) -> String {
-        if let selectedModel = selectedModels[provider], !selectedModel.isEmpty {
-            return selectedModel
-        }
-        return provider.defaultModel
+        selectedModel(for: provider, authMode: provider == .openAI ? openAIAuthMode : nil)
     }
 
     var availableModels: [String] {
-        availableModels(for: selectedProvider)
+        models(for: selectedProvider, authMode: selectedProvider == .openAI ? openAIAuthMode : nil)
     }
 
     var localCLICommandTemplate: String {
@@ -312,15 +306,55 @@ class AIService: ObservableObject {
         localCLIService.timeoutSeconds
     }
 
-    func availableModels(for provider: AIProvider) -> [String] {
+    var defaultOpenAIOAuthModel: String {
+        CodexModels.sortedForPicker.first(where: \.isRecommended)?.id
+            ?? CodexModels.sortedForPicker.first?.id
+            ?? Self.fallbackOpenAIOAuthModel
+    }
+
+    func models(for provider: AIProvider, authMode: OpenAIAuthMode? = nil) -> [String] {
+        if provider == .openAI && authMode == .oauth {
+            return CodexModels.sortedForPicker.map(\.id)
+        }
         if provider == .ollama {
             return ollamaService.availableModels.map { $0.name }
-        } else if provider == .openRouter {
+        }
+        if provider == .openRouter {
             return openRouterModels
         } else if provider == .custom {
             return CustomAIProviderManager.shared.availableModelNames
         }
         return provider.availableModels
+    }
+
+    func defaultModel(for provider: AIProvider, authMode: OpenAIAuthMode? = nil) -> String {
+        if provider == .openAI && authMode == .oauth {
+            return defaultOpenAIOAuthModel
+        }
+        return provider.defaultModel
+    }
+
+    func selectedModel(for provider: AIProvider, authMode: OpenAIAuthMode? = nil) -> String {
+        if provider == .openAI && authMode == .oauth {
+            return openAIOAuthModel.isEmpty ? defaultModel(for: provider, authMode: authMode) : openAIOAuthModel
+        }
+
+        let availableModels = models(for: provider, authMode: authMode)
+        if let selectedModel = selectedModels[provider],
+           !selectedModel.isEmpty,
+           availableModels.isEmpty || availableModels.contains(selectedModel) {
+            return selectedModel
+        }
+
+        return defaultModel(for: provider, authMode: authMode)
+    }
+
+    func isModelAvailable(_ model: String, for provider: AIProvider, authMode: OpenAIAuthMode? = nil) -> Bool {
+        let availableModels = models(for: provider, authMode: authMode)
+        if availableModels.isEmpty {
+            return !model.isEmpty
+        }
+        return availableModels.contains(model)
     }
 
     /// Returns the appropriate base URL for the selected provider and auth mode
@@ -361,7 +395,7 @@ class AIService: ObservableObject {
         if let savedOAuthModel = userDefaults.string(forKey: "openAIOAuthModel"), !savedOAuthModel.isEmpty {
             self.openAIOAuthModel = savedOAuthModel
         } else {
-            self.openAIOAuthModel = "gpt-5.3-codex"
+            self.openAIOAuthModel = Self.fallbackOpenAIOAuthModel
         }
 
         if let savedProvider = userDefaults.string(forKey: "selectedAIProvider"),
@@ -453,11 +487,20 @@ class AIService: ObservableObject {
     }
 
     func selectModel(_ model: String) {
-        selectModel(model, for: selectedProvider)
+        selectModel(model, for: selectedProvider, authMode: selectedProvider == .openAI ? openAIAuthMode : nil)
     }
 
     func selectModel(_ model: String, for provider: AIProvider) {
+        selectModel(model, for: provider, authMode: provider == .openAI ? openAIAuthMode : nil)
+    }
+
+    func selectModel(_ model: String, for provider: AIProvider, authMode: OpenAIAuthMode? = nil) {
         guard !model.isEmpty else { return }
+
+        if provider == .openAI && authMode == .oauth {
+            openAIOAuthModel = model
+            return
+        }
 
         if provider == .custom {
             guard CustomAIProviderManager.shared.applyConfiguration(forModel: model) else { return }
