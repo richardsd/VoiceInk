@@ -306,12 +306,10 @@ struct ConfigurationRow: View {
                                 .stroke(AppTheme.Border.control, lineWidth: 0.5)
                         )
                     }
-
                     if config.isAIEnhancementEnabled,
                         config.selectedAIProvider != AIProvider.localCLI.rawValue,
-                        let modelName = config.selectedAIModel,
-                        !modelName.isEmpty
-                    {
+                        let modelName = config.effectiveAIModel,
+                        !modelName.isEmpty {
                         HStack(spacing: 4) {
                             Image(systemName: "cpu")
                                 .font(.system(size: 10))

@@ -77,11 +77,15 @@ struct ModeConfig: Codable, Identifiable, Equatable {
     var isRealtimeTranscriptionEnabled: Bool = true
     var selectedLanguage: String?
     var isTextFormattingEnabled: Bool = false
+    var punctuationCleanupMode: PunctuationCleanupMode = .keep
+    var lowercaseTranscription: Bool = false
     var useClipboardContext: Bool
     var useSelectedTextContext: Bool
     var useScreenCapture: Bool
     var selectedAIProvider: String?
     var selectedAIModel: String?
+    var selectedOpenAIAuthMode: String?
+    var selectedOpenAIOAuthModel: String?
     var outputMode: ModeOutputMode = .paste
     var autoSendKey: AutoSendKey = .none
     var customCommand: ModeCustomCommand?
@@ -89,26 +93,20 @@ struct ModeConfig: Codable, Identifiable, Equatable {
     var isDefault: Bool = false
 
     enum CodingKeys: String, CodingKey {
-        case id, name, icon, appConfigs, urlConfigs, triggerGroups, triggerWords, isAIEnhancementEnabled,
-            selectedPrompt, isRealtimeTranscriptionEnabled, selectedLanguage, isTextFormattingEnabled,
-            useClipboardContext, useSelectedTextContext, useScreenCapture, selectedAIProvider, selectedAIModel,
-            outputMode, isAutoSendEnabled, autoSendKey, customCommand, isEnabled, isDefault
+        case id, name, icon, appConfigs, urlConfigs, triggerGroups, triggerWords, isAIEnhancementEnabled, selectedPrompt, isRealtimeTranscriptionEnabled, selectedLanguage, isTextFormattingEnabled, punctuationCleanupMode, removePunctuation, lowercaseTranscription, useClipboardContext, useSelectedTextContext, useScreenCapture, selectedAIProvider, selectedAIModel, selectedOpenAIAuthMode, selectedOpenAIOAuthModel, outputMode, isAutoSendEnabled, autoSendKey, customCommand, isEnabled, isDefault
         case legacyEmoji = "emoji"
         case selectedWhisperModel
         case selectedTranscriptionModelName
     }
 
-    init(
-        id: UUID = UUID(), name: String, icon: ModeIcon = .defaultIcon, appConfigs: [AppConfig]? = nil,
-        urlConfigs: [URLConfig]? = nil, triggerGroups: [ModeTriggerGroup]? = nil, triggerWords: [String] = [],
-        isAIEnhancementEnabled: Bool, selectedPrompt: String? = nil,
-        selectedTranscriptionModelName: String? = nil, isRealtimeTranscriptionEnabled: Bool = true,
-        selectedLanguage: String? = nil, useClipboardContext: Bool = false, useSelectedTextContext: Bool = true,
-        useScreenCapture: Bool = false,
-        isTextFormattingEnabled: Bool = false, selectedAIProvider: String? = nil, selectedAIModel: String? = nil,
-        outputMode: ModeOutputMode = .paste, autoSendKey: AutoSendKey = .none, customCommand: ModeCustomCommand? = nil,
-        isEnabled: Bool = true, isDefault: Bool = false
-    ) {
+    init(id: UUID = UUID(), name: String, icon: ModeIcon = .defaultIcon, appConfigs: [AppConfig]? = nil,
+         urlConfigs: [URLConfig]? = nil, triggerGroups: [ModeTriggerGroup]? = nil, triggerWords: [String] = [],
+         isAIEnhancementEnabled: Bool, selectedPrompt: String? = nil,
+         selectedTranscriptionModelName: String? = nil, isRealtimeTranscriptionEnabled: Bool = true, selectedLanguage: String? = nil, useClipboardContext: Bool = false, useSelectedTextContext: Bool = true, useScreenCapture: Bool = false,
+         isTextFormattingEnabled: Bool = false, punctuationCleanupMode: PunctuationCleanupMode = .keep, lowercaseTranscription: Bool = false,
+          selectedAIProvider: String? = nil, selectedAIModel: String? = nil, selectedOpenAIAuthMode: String? = nil,
+          selectedOpenAIOAuthModel: String? = nil, outputMode: ModeOutputMode = .paste, autoSendKey: AutoSendKey = .none,
+          customCommand: ModeCustomCommand? = nil, isEnabled: Bool = true, isDefault: Bool = false) {
         self.id = id
         self.name = name
         self.icon = icon
@@ -126,10 +124,14 @@ struct ModeConfig: Codable, Identifiable, Equatable {
         self.customCommand = customCommand
         self.selectedAIProvider = selectedAIProvider
         self.selectedAIModel = selectedAIModel
+        self.selectedOpenAIAuthMode = selectedOpenAIAuthMode ?? UserDefaults.standard.string(forKey: "openAIAuthMode")
+        self.selectedOpenAIOAuthModel = selectedOpenAIOAuthModel ?? UserDefaults.standard.string(forKey: "openAIOAuthModel")
         self.selectedTranscriptionModelName = selectedTranscriptionModelName
         self.isRealtimeTranscriptionEnabled = isRealtimeTranscriptionEnabled
         self.selectedLanguage = selectedLanguage ?? "en"
         self.isTextFormattingEnabled = isTextFormattingEnabled
+        self.punctuationCleanupMode = punctuationCleanupMode
+        self.lowercaseTranscription = lowercaseTranscription
         self.isEnabled = isEnabled
         self.isDefault = isDefault
     }
@@ -169,9 +171,14 @@ struct ModeConfig: Codable, Identifiable, Equatable {
             try container.decodeIfPresent(Bool.self, forKey: .isRealtimeTranscriptionEnabled) ?? true
         selectedLanguage = try container.decodeIfPresent(String.self, forKey: .selectedLanguage)
         isTextFormattingEnabled = try container.decodeIfPresent(Bool.self, forKey: .isTextFormattingEnabled) ?? false
-        useClipboardContext =
-            try container.decodeIfPresent(Bool.self, forKey: .useClipboardContext)
-            ?? UserDefaults.standard.bool(forKey: "useClipboardContext")
+        if let mode = try container.decodeIfPresent(PunctuationCleanupMode.self, forKey: .punctuationCleanupMode) {
+            punctuationCleanupMode = mode
+        } else {
+            let removePunctuation = try container.decodeIfPresent(Bool.self, forKey: .removePunctuation) ?? false
+            punctuationCleanupMode = removePunctuation ? .removeAll : .keep
+        }
+        lowercaseTranscription = try container.decodeIfPresent(Bool.self, forKey: .lowercaseTranscription) ?? false
+        useClipboardContext = try container.decodeIfPresent(Bool.self, forKey: .useClipboardContext) ?? UserDefaults.standard.bool(forKey: "useClipboardContext")
         if let decodedSelectedTextContext = try container.decodeIfPresent(Bool.self, forKey: .useSelectedTextContext) {
             useSelectedTextContext = decodedSelectedTextContext
         } else if UserDefaults.standard.object(forKey: "useSelectedTextContext") == nil {
@@ -184,6 +191,8 @@ struct ModeConfig: Codable, Identifiable, Equatable {
             ?? UserDefaults.standard.bool(forKey: "useScreenCaptureContext")
         selectedAIProvider = try container.decodeIfPresent(String.self, forKey: .selectedAIProvider)
         selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel)
+        selectedOpenAIAuthMode = try container.decodeIfPresent(String.self, forKey: .selectedOpenAIAuthMode)
+        selectedOpenAIOAuthModel = try container.decodeIfPresent(String.self, forKey: .selectedOpenAIOAuthModel)
         outputMode = try container.decodeIfPresent(ModeOutputMode.self, forKey: .outputMode) ?? .paste
         customCommand = try container.decodeIfPresent(ModeCustomCommand.self, forKey: .customCommand)
         // Migrate from old isAutoSendEnabled bool to new autoSendKey enum
@@ -222,11 +231,16 @@ struct ModeConfig: Codable, Identifiable, Equatable {
         try container.encode(isRealtimeTranscriptionEnabled, forKey: .isRealtimeTranscriptionEnabled)
         try container.encodeIfPresent(selectedLanguage, forKey: .selectedLanguage)
         try container.encode(isTextFormattingEnabled, forKey: .isTextFormattingEnabled)
+        try container.encode(punctuationCleanupMode, forKey: .punctuationCleanupMode)
+        try container.encode(punctuationCleanupMode == .removeAll, forKey: .removePunctuation)
+        try container.encode(lowercaseTranscription, forKey: .lowercaseTranscription)
         try container.encode(useClipboardContext, forKey: .useClipboardContext)
         try container.encode(useSelectedTextContext, forKey: .useSelectedTextContext)
         try container.encode(useScreenCapture, forKey: .useScreenCapture)
         try container.encodeIfPresent(selectedAIProvider, forKey: .selectedAIProvider)
         try container.encodeIfPresent(selectedAIModel, forKey: .selectedAIModel)
+        try container.encodeIfPresent(selectedOpenAIAuthMode, forKey: .selectedOpenAIAuthMode)
+        try container.encodeIfPresent(selectedOpenAIOAuthModel, forKey: .selectedOpenAIOAuthModel)
         try container.encode(outputMode, forKey: .outputMode)
         try container.encode(autoSendKey, forKey: .autoSendKey)
         try container.encodeIfPresent(customCommand, forKey: .customCommand)
@@ -235,6 +249,20 @@ struct ModeConfig: Codable, Identifiable, Equatable {
         try container.encode(isDefault, forKey: .isDefault)
     }
 
+    var openAIAuthMode: OpenAIAuthMode {
+        guard let selectedOpenAIAuthMode,
+              let authMode = OpenAIAuthMode(rawValue: selectedOpenAIAuthMode) else {
+            return .apiKey
+        }
+        return authMode
+    }
+
+    var effectiveAIModel: String? {
+        if selectedAIProvider == AIProvider.openAI.rawValue && openAIAuthMode == .oauth {
+            return selectedOpenAIOAuthModel
+        }
+        return selectedAIModel
+    }
     static func == (lhs: ModeConfig, rhs: ModeConfig) -> Bool {
         lhs.id == rhs.id
     }
