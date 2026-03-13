@@ -24,7 +24,10 @@ struct PromptEditorView: View {
     let onDelete: ((CustomPrompt) -> Void)?
     @State private var title: String
     @State private var promptText: String
+    @State private var triggerWords: [String]
+    @State private var newTriggerWord = ""
     @State private var useSystemInstructions: Bool
+    @State private var selectedParentPromptId: UUID?
     @State private var showDeleteConfirmation = false
 
     private var saveButtonTitle: LocalizedStringKey {
@@ -46,6 +49,18 @@ struct PromptEditorView: View {
         return title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    private var editingPromptId: UUID? {
+        editingPrompt?.id
+    }
+
+    private var isEditingPredefinedPrompt: Bool {
+        return false
+    }
+
+    private var availableParentPrompts: [CustomPrompt] {
+        enhancementService.availableParentPrompts(for: editingPromptId)
+    }
     
     init(
         mode: Mode,
@@ -61,11 +76,15 @@ struct PromptEditorView: View {
         case .add:
             _title = State(initialValue: "")
             _promptText = State(initialValue: "")
+            _triggerWords = State(initialValue: [])
             _useSystemInstructions = State(initialValue: true)
+            _selectedParentPromptId = State(initialValue: nil)
         case .edit(let prompt):
             _title = State(initialValue: prompt.title)
             _promptText = State(initialValue: prompt.promptText)
+            _triggerWords = State(initialValue: prompt.triggerWords)
             _useSystemInstructions = State(initialValue: prompt.useSystemInstructions)
+            _selectedParentPromptId = State(initialValue: prompt.parentPromptId)
         }
     }
     
@@ -84,6 +103,8 @@ struct PromptEditorView: View {
                     }
 
                     instructionsEditor
+                    triggerWordsEditor
+                    parentPromptPicker
                     systemTemplateToggle
                 }
                 .padding(20)
@@ -130,6 +151,28 @@ struct PromptEditorView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
         .overlay(Divider().opacity(0.5), alignment: .bottom)
+    }
+
+    private var parentPromptPicker: some View {
+        HStack(spacing: 12) {
+            Picker("Inherit From", selection: Binding<UUID?>(
+                get: { selectedParentPromptId },
+                set: { newValue in
+                    guard enhancementService.canAssignParentPrompt(newValue, to: editingPromptId) else {
+                        return
+                    }
+                    selectedParentPromptId = newValue
+                }
+            )) {
+                Text("None").tag(nil as UUID?)
+                ForEach(availableParentPrompts) { prompt in
+                    Text(prompt.title).tag(prompt.id as UUID?)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Spacer(minLength: 12)
+        }
     }
 
     private var systemTemplateToggle: some View {
@@ -188,6 +231,46 @@ struct PromptEditorView: View {
         }
     }
 
+    private var triggerWordsEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                Text("Trigger Words")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.secondary)
+
+                InfoTip("Say a trigger word at the beginning or end of a transcription to use this prompt for that request. The trigger word is removed before enhancement.")
+            }
+
+            HStack(spacing: 8) {
+                TextField("Add trigger word", text: $newTriggerWord)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(AppCardBackground(cornerRadius: 7))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .onSubmit(addTriggerWord)
+
+                AddIconButton(
+                    helpText: "Add trigger word",
+                    isDisabled: normalizedNewTriggerWord == nil,
+                    action: addTriggerWord
+                )
+            }
+
+            if !triggerWords.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(triggerWords, id: \.self) { word in
+                        TriggerWordChip(word: word) {
+                            triggerWords.removeAll { $0 == word }
+                        }
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+
     private var footer: some View {
         HStack {
             if canDeletePrompt {
@@ -241,17 +324,67 @@ struct PromptEditorView: View {
             return enhancementService.addPrompt(
                 title: title,
                 promptText: promptText,
-                useSystemInstructions: useSystemInstructions
+                triggerWords: triggerWords,
+                useSystemInstructions: useSystemInstructions,
+                parentPromptId: selectedParentPromptId
             )
         case .edit(let prompt):
             let updatedPrompt = CustomPrompt(
                 id: prompt.id,
                 title: title,
                 promptText: promptText,
-                useSystemInstructions: useSystemInstructions
+                triggerWords: triggerWords,
+                useSystemInstructions: useSystemInstructions,
+                parentPromptId: selectedParentPromptId
             )
             enhancementService.updatePrompt(updatedPrompt)
             return updatedPrompt
         }
+    }
+
+    private var normalizedNewTriggerWord: String? {
+        let trimmed = newTriggerWord.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard !triggerWords.contains(where: { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private func addTriggerWord() {
+        guard let word = normalizedNewTriggerWord else { return }
+        triggerWords.append(word)
+        newTriggerWord = ""
+    }
+}
+
+private struct TriggerWordChip: View {
+    let word: String
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "mic.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Text(word)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 140, alignment: .leading)
+
+            Button(action: onDelete) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14, height: 14)
+            }
+            .buttonStyle(.plain)
+            .help("Remove trigger word")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(AppCardBackground(cornerRadius: 7))
     }
 }

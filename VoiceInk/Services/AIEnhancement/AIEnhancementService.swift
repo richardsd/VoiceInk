@@ -165,7 +165,7 @@ class AIEnhancementService: ObservableObject {
             ""
         }
 
-        return [prompt.finalPromptText, customVocabularySection, contextSection]
+        return [PromptResolver.resolvedPromptText(for: prompt, in: allPrompts), customVocabularySection, contextSection]
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
     }
@@ -241,6 +241,14 @@ class AIEnhancementService: ObservableObject {
         }
 
         try await waitForRateLimit()
+
+        if provider == .openAI && aiService.openAIAuthMode == .oauth {
+            return try await makeCodexOAuthRequest(
+                formattedText: formattedText,
+                systemMessage: systemMessage,
+                modelName: modelName
+            )
+        }
 
         do {
             let result: String
@@ -326,6 +334,78 @@ class AIEnhancementService: ObservableObject {
         return key
     }
 
+    private func makeCodexOAuthRequest(formattedText: String, systemMessage: String, modelName: String) async throws -> String {
+        try await aiService.refreshOAuthTokenIfNeeded()
+
+        let url = URL(string: CodexConstants.responsesEndpoint)!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = baseTimeout
+
+        let authHeader = try aiService.authorizationHeader()
+        if !authHeader.isEmpty {
+            request.addValue(authHeader, forHTTPHeaderField: "Authorization")
+        }
+
+        let requestBody: [String: Any] = [
+            "model": modelName,
+            "input": [
+                [
+                    "role": "user",
+                    "content": [
+                        ["type": "input_text", "text": formattedText]
+                    ]
+                ]
+            ],
+            "instructions": systemMessage,
+            "stream": true,
+            "store": false
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: requestBody)
+
+        let (byteStream, response) = try await URLSession.shared.bytes(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw EnhancementError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            var errorData = Data()
+            for try await byte in byteStream { errorData.append(byte) }
+            let errorString = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+            if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                let reason = "ChatGPT connection expired. Sign in again to continue AI enhancement."
+                await MainActor.run {
+                    aiService.handleOAuthSessionInvalidation(reason: reason)
+                }
+                throw EnhancementError.oauthDisconnected(reason)
+            }
+            if httpResponse.statusCode == 429 { throw EnhancementError.rateLimitExceeded }
+            if (500...599).contains(httpResponse.statusCode) { throw EnhancementError.serverError }
+            throw EnhancementError.customError("HTTP \(httpResponse.statusCode): \(errorString)")
+        }
+
+        var outputText = ""
+        for try await line in byteStream.lines {
+            guard line.hasPrefix("data: ") else { continue }
+            let jsonString = String(line.dropFirst(6))
+            guard jsonString != "[DONE]",
+                  let jsonData = jsonString.data(using: .utf8),
+                  let event = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else { continue }
+
+            let eventType = event["type"] as? String ?? ""
+            if eventType == "response.output_text.delta", let delta = event["delta"] as? String {
+                outputText += delta
+            } else if eventType == "response.output_text.done", let fullText = event["text"] as? String {
+                outputText = fullText
+            }
+        }
+
+        guard !outputText.isEmpty else { throw EnhancementError.enhancementFailed }
+        return AIEnhancementOutputFilter.filter(outputText.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     private func mapLLMKitError(_ error: LLMKitError) -> EnhancementError {
         switch error {
         case .missingAPIKey:
@@ -341,7 +421,7 @@ class AIEnhancementService: ObservableObject {
         case .timeout:
             return .timeout
         case .invalidURL, .decodingError, .encodingError:
-            return .customError(error.localizedDescription ?? "An unknown error occurred.")
+            return .customError(error.localizedDescription)
         }
     }
 
@@ -442,7 +522,7 @@ class AIEnhancementService: ObservableObject {
             return
         }
 
-        if let capturedText = await screenCaptureService.captureAndExtractText() {
+        if await screenCaptureService.captureAndExtractText() != nil {
             await MainActor.run {
                 self.objectWillChange.send()
             }
@@ -462,12 +542,16 @@ class AIEnhancementService: ObservableObject {
     func addPrompt(
         title: String,
         promptText: String,
-        useSystemInstructions: Bool = true
+        triggerWords: [String] = [],
+        useSystemInstructions: Bool = true,
+        parentPromptId: UUID? = nil
     ) -> CustomPrompt {
         let newPrompt = CustomPrompt(
             title: title,
             promptText: promptText,
-            useSystemInstructions: useSystemInstructions
+            triggerWords: triggerWords,
+            useSystemInstructions: useSystemInstructions,
+            parentPromptId: parentPromptId
         )
         customPrompts.append(newPrompt)
         return newPrompt
@@ -481,7 +565,27 @@ class AIEnhancementService: ObservableObject {
 
     func deletePrompt(_ prompt: CustomPrompt) {
         customPrompts.removeAll { $0.id == prompt.id }
+        customPrompts = customPrompts.map { currentPrompt in
+            guard currentPrompt.parentPromptId == prompt.id else {
+                return currentPrompt
+            }
+            return CustomPrompt(
+                id: currentPrompt.id,
+                title: currentPrompt.title,
+                promptText: currentPrompt.promptText,
+                useSystemInstructions: currentPrompt.useSystemInstructions,
+                parentPromptId: nil
+            )
+        }
         repairModePromptSelections()
+    }
+
+    func availableParentPrompts(for promptId: UUID?) -> [CustomPrompt] {
+        PromptResolver.availableParentPrompts(for: promptId, in: allPrompts)
+    }
+
+    func canAssignParentPrompt(_ parentId: UUID?, to promptId: UUID?) -> Bool {
+        PromptResolver.canAssignParent(parentId, to: promptId, in: allPrompts)
     }
 
     func repairModePromptSelections() {
@@ -519,6 +623,7 @@ class AIEnhancementService: ObservableObject {
 
 enum EnhancementError: Error {
     case notConfigured
+    case oauthDisconnected(String)
     case invalidResponse
     case enhancementFailed
     case networkError
@@ -533,6 +638,8 @@ extension EnhancementError: LocalizedError {
         switch self {
         case .notConfigured:
             return String(localized: "AI provider not configured. Please check your API key.")
+        case .oauthDisconnected(let message):
+            return message
         case .invalidResponse:
             return String(localized: "Invalid response from AI provider.")
         case .enhancementFailed:
