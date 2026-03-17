@@ -4,7 +4,7 @@
 //
 //  Model metadata for Codex OAuth models
 //  Source: https://developers.openai.com/codex/models/
-//  Last synced: 2026-02-26
+//  Last synced: 2026-03-17
 //  Update checklist:
 //  1) Verify model IDs in Codex docs match `id` values below
 //  2) Update `status`/`isRecommended` when models are succeeded/promoted
@@ -65,21 +65,33 @@ struct CodexModelMetadata {
 
 enum CodexModels {
     static let all: [CodexModelMetadata] = [
+        // GPT-5.4 Series
+        CodexModelMetadata(
+            id: "gpt-5.4",
+            displayName: "GPT-5.4",
+            description: "Flagship frontier model for professional work that brings the industry-leading coding capabilities of GPT-5.3-Codex together with stronger reasoning, tool use, and agentic workflows.",
+            tier: .plus,
+            status: .current,
+            releaseDate: "2026-03",
+            isRecommended: true,
+            documentationURL: "https://developers.openai.com/codex/models#gpt-5-4"
+        ),
+
         // GPT-5.3 Series
         CodexModelMetadata(
             id: "gpt-5.3-codex",
             displayName: "GPT-5.3-Codex",
-            description: "Most capable agentic coding model with advanced reasoning",
+            description: "Industry-leading coding model for complex software engineering. Its coding capabilities now also power GPT-5.4.",
             tier: .plus,
             status: .current,
             releaseDate: "2026-01",
-            isRecommended: true,
+            isRecommended: false,
             documentationURL: "https://developers.openai.com/codex/models#gpt-5-3-codex"
         ),
         CodexModelMetadata(
             id: "gpt-5.3-codex-spark",
             displayName: "GPT-5.3-Codex-Spark",
-            description: "Research preview for near-instant, real-time coding iteration",
+            description: "Text-only research preview model optimized for near-instant, real-time coding iteration. Available to ChatGPT Pro users.",
             tier: .pro,
             status: .preview,
             releaseDate: "2026-01",
@@ -91,7 +103,7 @@ enum CodexModels {
         CodexModelMetadata(
             id: "gpt-5.2-codex",
             displayName: "GPT-5.2-Codex",
-            description: "Advanced coding model for real-world engineering (succeeded by GPT-5.3-Codex)",
+            description: "Advanced coding model for real-world engineering. Succeeded by GPT-5.3-Codex.",
             tier: .plus,
             status: .legacy,
             releaseDate: "2025-11",
@@ -101,9 +113,9 @@ enum CodexModels {
         CodexModelMetadata(
             id: "gpt-5.2",
             displayName: "GPT-5.2",
-            description: "General agentic model for coding and broader tasks",
+            description: "Previous general-purpose model for coding and agentic tasks across industries and domains. Succeeded by GPT-5.4.",
             tier: .plus,
-            status: .current,
+            status: .legacy,
             releaseDate: "2025-11",
             isRecommended: false,
             documentationURL: "https://developers.openai.com/codex/models#gpt-5-2"
@@ -113,7 +125,7 @@ enum CodexModels {
         CodexModelMetadata(
             id: "gpt-5.1-codex-max",
             displayName: "GPT-5.1-Codex-Max",
-            description: "Enhanced context window for large codebases",
+            description: "Optimized for long-horizon, agentic coding tasks in Codex.",
             tier: .plus,
             status: .legacy,
             releaseDate: "2025-09",
@@ -123,7 +135,7 @@ enum CodexModels {
         CodexModelMetadata(
             id: "gpt-5.1",
             displayName: "GPT-5.1",
-            description: "General coding and agentic model (succeeded by GPT-5.2)",
+            description: "Great for coding and agentic tasks across domains. Succeeded by GPT-5.2.",
             tier: .plus,
             status: .legacy,
             releaseDate: "2025-08",
@@ -133,7 +145,7 @@ enum CodexModels {
         CodexModelMetadata(
             id: "gpt-5.1-codex",
             displayName: "GPT-5.1-Codex",
-            description: "Balanced performance and speed for coding tasks",
+            description: "Optimized for long-running, agentic coding tasks in Codex. Succeeded by GPT-5.1-Codex-Max.",
             tier: .plus,
             status: .legacy,
             releaseDate: "2025-08",
@@ -145,7 +157,7 @@ enum CodexModels {
         CodexModelMetadata(
             id: "gpt-5-codex",
             displayName: "GPT-5-Codex",
-            description: "Original GPT-5 based coding model",
+            description: "Version of GPT-5 tuned for long-running, agentic coding tasks. Succeeded by GPT-5.1-Codex.",
             tier: .plus,
             status: .legacy,
             releaseDate: "2025-06",
@@ -155,7 +167,7 @@ enum CodexModels {
         CodexModelMetadata(
             id: "gpt-5-codex-mini",
             displayName: "GPT-5-Codex-Mini",
-            description: "Lightweight GPT-5 coding model",
+            description: "Smaller, more cost-effective version of GPT-5-Codex. Succeeded by GPT-5.1-Codex-Mini.",
             tier: .plus,
             status: .legacy,
             releaseDate: "2025-06",
@@ -165,7 +177,7 @@ enum CodexModels {
         CodexModelMetadata(
             id: "gpt-5",
             displayName: "GPT-5",
-            description: "General reasoning model for coding and agentic tasks",
+            description: "Reasoning model for coding and agentic tasks across domains. Succeeded by GPT-5.1.",
             tier: .plus,
             status: .legacy,
             releaseDate: "2025-06",
