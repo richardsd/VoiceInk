@@ -6,6 +6,7 @@ struct RecordTranscribeView: View {
     @EnvironmentObject private var engine: VoiceInkEngine
     @EnvironmentObject private var enhancementService: AIEnhancementService
     @StateObject private var recordManager = RecordTranscriptionManager.shared
+    @ObservedObject private var mediaController = MediaController.shared
     @State private var isEnhancementEnabled = false
     @State private var selectedPromptId: UUID?
     @State private var isAIRequestExpanded = false
@@ -313,6 +314,11 @@ struct RecordTranscribeView: View {
                 .onChange(of: isEnhancementEnabled) { _, newValue in
                     enhancementService.isEnhancementEnabled = newValue
                 }
+
+            Divider()
+
+            Toggle("Mute Device Audio", isOn: $mediaController.isSystemMuteEnabled)
+                .toggleStyle(.switch)
 
             if isEnhancementEnabled {
                 Divider()
