@@ -11,6 +11,7 @@
 		7F1C66BF2E6AE3480000FDDE /* whisper.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F1C66BC2E6AE3480000FDDE /* whisper.xcframework */; };
 		7F1C66C02E6AE3480000FDDE /* whisper.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 7F1C66BC2E6AE3480000FDDE /* whisper.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		7F4DC6C22F1E7FF500F5245E /* whisper.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F1C66BC2E6AE3480000FDDE /* whisper.xcframework */; };
+		E11BBA4E2E5DC555000AB839 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = E11BBA4D2E5DC555000AB839 /* FluidAudio */; };
 		E1342C1F2EB4844800CED8A2 /* Atomics in Frameworks */ = {isa = PBXBuildFile; productRef = E1342C1E2EB4844800CED8A2 /* Atomics */; };
 		E13461ED2FD1CCCD005B6A81 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = E13461EC2FD1CCCD005B6A81 /* MarkdownUI */; };
 		E161D4A12F41ECB90086F83D /* CloudKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E161D4A02F41ECB90086F83D /* CloudKit.framework */; };
@@ -19,7 +20,6 @@
 		E1D7EF992E35E16C00640029 /* MediaRemoteAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = E1D7EF982E35E16C00640029 /* MediaRemoteAdapter */; };
 		E1D7EF9A2E35E19B00640029 /* MediaRemoteAdapter in Embed Frameworks */ = {isa = PBXBuildFile; productRef = E1D7EF982E35E16C00640029 /* MediaRemoteAdapter */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		E1DD1EE12FA1D7D30020AF3B /* Zip in Frameworks */ = {isa = PBXBuildFile; productRef = E1DD1EE02FA1D7D30020AF3B /* Zip */; };
-		E1DD20DE2FA20AD90020AF3B /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = E1DD20DD2FA20AD90020AF3B /* FluidAudio */; };
 		E1DD20E12FA20AEE0020AF3B /* LLMkit in Frameworks */ = {isa = PBXBuildFile; productRef = E1DD20E02FA20AEE0020AF3B /* LLMkit */; };
 		E1F511012FA3B47000F00001 /* SelectedTextKit in Frameworks */ = {isa = PBXBuildFile; productRef = E1F511032FA3B47000F00001 /* SelectedTextKit */; };
 /* End PBXBuildFile section */
@@ -105,7 +105,7 @@
 				E1D7EF992E35E16C00640029 /* MediaRemoteAdapter in Frameworks */,
 				E161D4A12F41ECB90086F83D /* CloudKit.framework in Frameworks */,
 				E1ADD45F2CC544F100303ECB /* Sparkle in Frameworks */,
-				E1DD20DE2FA20AD90020AF3B /* FluidAudio in Frameworks */,
+				E11BBA4E2E5DC555000AB839 /* FluidAudio in Frameworks */,
 				E1DD1EE12FA1D7D30020AF3B /* Zip in Frameworks */,
 				E13461ED2FD1CCCD005B6A81 /* MarkdownUI in Frameworks */,
 				E1DD20E12FA20AEE0020AF3B /* LLMkit in Frameworks */,
@@ -196,7 +196,7 @@
 				E1D7EF982E35E16C00640029 /* MediaRemoteAdapter */,
 				E1342C1E2EB4844800CED8A2 /* Atomics */,
 				E1DD1EE02FA1D7D30020AF3B /* Zip */,
-				E1DD20DD2FA20AD90020AF3B /* FluidAudio */,
+				E11BBA4D2E5DC555000AB839 /* FluidAudio */,
 				E1DD20E02FA20AEE0020AF3B /* LLMkit */,
 				E1F511032FA3B47000F00001 /* SelectedTextKit */,
 				E13461EC2FD1CCCD005B6A81 /* MarkdownUI */,
@@ -290,8 +290,8 @@
 				E1ADD45D2CC544F100303ECB /* XCRemoteSwiftPackageReference "Sparkle" */,
 				E1D7EF972E35E16C00640029 /* XCRemoteSwiftPackageReference "mediaremote-adapter" */,
 				E1ECEC142E44590200DFFBA8 /* XCRemoteSwiftPackageReference "Zip" */,
+				E11BBA4C2E5DC555000AB839 /* XCLocalSwiftPackageReference "LocalPackages/FluidAudio" */,
 				E1342C1D2EB4844800CED8A2 /* XCRemoteSwiftPackageReference "swift-atomics" */,
-				E1DD20DC2FA20AD90020AF3B /* XCRemoteSwiftPackageReference "FluidAudio" */,
 				E1DD20DF2FA20AEE0020AF3B /* XCRemoteSwiftPackageReference "LLMkit" */,
 				E1F511022FA3B47000F00001 /* XCRemoteSwiftPackageReference "SelectedTextKit" */,
 				E13461EB2FD1CCCD005B6A81 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
@@ -689,6 +689,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		E11BBA4C2E5DC555000AB839 /* XCLocalSwiftPackageReference "LocalPackages/FluidAudio" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = LocalPackages/FluidAudio;
+		};
 		E1342C1D2EB4844800CED8A2 /* XCRemoteSwiftPackageReference "swift-atomics" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/apple/swift-atomics.git";
@@ -729,14 +733,6 @@
 				kind = branch;
 			};
 		};
-		E1DD20DC2FA20AD90020AF3B /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
-			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
 		E1DD20DF2FA20AEE0020AF3B /* XCRemoteSwiftPackageReference "LLMkit" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/Beingpax/LLMkit.git";
@@ -764,6 +760,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		E11BBA4D2E5DC555000AB839 /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E11BBA4C2E5DC555000AB839 /* XCLocalSwiftPackageReference "LocalPackages/FluidAudio" */;
+			productName = FluidAudio;
+		};
 		E1342C1E2EB4844800CED8A2 /* Atomics */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = E1342C1D2EB4844800CED8A2 /* XCRemoteSwiftPackageReference "swift-atomics" */;
@@ -793,11 +794,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E1ECEC142E44590200DFFBA8 /* XCRemoteSwiftPackageReference "Zip" */;
 			productName = Zip;
-		};
-		E1DD20DD2FA20AD90020AF3B /* FluidAudio */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E1DD20DC2FA20AD90020AF3B /* XCRemoteSwiftPackageReference "FluidAudio" */;
-			productName = FluidAudio;
 		};
 		E1DD20E02FA20AEE0020AF3B /* LLMkit */ = {
 			isa = XCSwiftPackageProductDependency;
