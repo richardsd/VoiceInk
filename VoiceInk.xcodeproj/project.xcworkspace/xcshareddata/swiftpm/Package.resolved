@@ -20,15 +20,6 @@
       }
     },
     {
-      "identity" : "fluidaudio",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/FluidInference/FluidAudio.git",
-      "state" : {
-        "branch" : "main",
-        "revision" : "88d6d8166880dee1ac7c32c80f8e10cd782f8ca8"
-      }
-    },
-    {
       "identity" : "keysender",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jordanbaird/KeySender",
