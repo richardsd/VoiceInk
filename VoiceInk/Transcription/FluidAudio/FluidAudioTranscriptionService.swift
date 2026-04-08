@@ -17,13 +17,6 @@ class FluidAudioTranscriptionService: TranscriptionService {
         FluidAudioModelManager.asrVersion(for: model.name)
     }
 
-    static func languageHint(from selectedLanguage: String?, model: any TranscriptionModel) -> Language? {
-        guard model.provider == .fluidAudio else {
-            return nil
-        }
-        return FluidAudioModelManager.languageHint(from: selectedLanguage, for: model.name)
-    }
-
     private func cleanupLoadedManagers() async {
         await unifiedAsrManager?.cleanup()
         await nemotronAsrManager?.cleanup()
@@ -47,7 +40,7 @@ class FluidAudioTranscriptionService: TranscriptionService {
         let models = try await getOrLoadModels(for: version)
 
         let manager = AsrManager(config: .default)
-        try await manager.loadModels(models)
+        try await manager.initialize(models: models)
         self.asrManager = manager
         self.activeVersion = version
     }
@@ -146,7 +139,7 @@ class FluidAudioTranscriptionService: TranscriptionService {
 
             let speechAudio = try loadAudioSamples(from: audioURL)
             let text = try await unifiedAsrManager.transcribe(speechAudio)
-            return TextNormalizer.shared.normalizeSentence(text)
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         if FluidAudioModelManager.isNemotronModel(named: model.name) {
@@ -172,7 +165,7 @@ class FluidAudioTranscriptionService: TranscriptionService {
 
             _ = try await nemotronAsrManager.process(samples: speechAudio)
             let text = try await nemotronAsrManager.finish()
-            return TextNormalizer.shared.normalizeSentence(text)
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         let targetVersion = version(for: model)
@@ -182,18 +175,9 @@ class FluidAudioTranscriptionService: TranscriptionService {
             throw ASRError.notInitialized
         }
 
-        let languageHint = Self.languageHint(
-            from: context.language,
-            model: model
-        )
-        var decoderState = TdtDecoderState.make(decoderLayers: await asrManager.decoderLayerCount)
-        let result = try await asrManager.transcribe(
-            audioURL,
-            decoderState: &decoderState,
-            language: languageHint
-        )
+        let result = try await asrManager.transcribe(audioURL)
 
-        return TextNormalizer.shared.normalizeSentence(result.text)
+        return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func loadAudioSamples(from audioURL: URL) throws -> [Float] {
