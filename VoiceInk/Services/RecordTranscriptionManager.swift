@@ -170,7 +170,7 @@ class RecordTranscriptionManager: ObservableObject {
             modelsDirectory: engine.whisperModelManager.modelsDirectory,
             modelContext: modelContext
         )
-        defer { serviceRegistry.cleanup() }
+        defer { Task { await serviceRegistry.cleanup() } }
 
         // Calculate audio duration
         let audioAsset = AVURLAsset(url: fileURL)

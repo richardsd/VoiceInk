@@ -175,7 +175,7 @@ struct RecordTranscribeView: View {
                         if let urlString = transcription.audioFileURL,
                            let url = URL(string: urlString),
                            FileManager.default.fileExists(atPath: url.path) {
-                            AudioPlayerView(url: url)
+                            AudioPlayerView(url: url, transcription: transcription)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
                                 .background(
