@@ -183,7 +183,7 @@ struct OllamaRefreshResult {
 }
 
 class AIService: ObservableObject {
-    static let fallbackOpenAIOAuthModel = "gpt-5.3-codex"
+    static let fallbackOpenAIOAuthModel = "gpt-5.5"
 
     @Published var apiKey: String = ""
     @Published var isAPIKeyValid: Bool = false
@@ -248,6 +248,7 @@ class AIService: ObservableObject {
 
     @Published var isOAuthAuthenticated: Bool = false
     @Published var oauthAccountId: String?
+    @Published var oauthDisconnectionReason: String?
 
     @Published var openAIOAuthModel: String {
         didSet {
@@ -256,8 +257,13 @@ class AIService: ObservableObject {
         }
     }
 
+    var codexOAuthModels: [CodexModelMetadata] {
+        CodexModels.sortedForPicker
+    }
+
     private var oauthCallbackServer: CodexCallbackServer?
     private var currentPkceVerifier: String?
+    private var hasShownOAuthDisconnectionNotice = false
 
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "AIService")
 
@@ -307,14 +313,14 @@ class AIService: ObservableObject {
     }
 
     var defaultOpenAIOAuthModel: String {
-        CodexModels.sortedForPicker.first(where: \.isRecommended)?.id
-            ?? CodexModels.sortedForPicker.first?.id
+        codexOAuthModels.first(where: \.isRecommended)?.id
+            ?? codexOAuthModels.first?.id
             ?? Self.fallbackOpenAIOAuthModel
     }
 
     func models(for provider: AIProvider, authMode: OpenAIAuthMode? = nil) -> [String] {
         if provider == .openAI && authMode == .oauth {
-            return CodexModels.sortedForPicker.map(\.id)
+            return codexOAuthModels.map(\.id)
         }
         if provider == .ollama {
             return ollamaService.availableModels.map { $0.name }
@@ -390,8 +396,7 @@ class AIService: ObservableObject {
         } else {
             self.openAIAuthMode = .apiKey
         }
-
-        // Load OAuth model selection (default to gpt-5.3-codex)
+        // Load OAuth model selection.
         if let savedOAuthModel = userDefaults.string(forKey: "openAIOAuthModel"), !savedOAuthModel.isEmpty {
             self.openAIOAuthModel = savedOAuthModel
         } else {
@@ -430,6 +435,7 @@ class AIService: ObservableObject {
         if selectedProvider == .openAI {
             updateOpenAIAuthenticationStatus()
         }
+
     }
 
     deinit {
@@ -773,6 +779,10 @@ class AIService: ObservableObject {
             if let tokens = try? OAuthKeychainManager.shared.retrieveOAuthTokens() {
                 self.isOAuthAuthenticated = !tokens.isExpired
                 self.oauthAccountId = tokens.accountId
+                if self.isOAuthAuthenticated {
+                    self.oauthDisconnectionReason = nil
+                    self.hasShownOAuthDisconnectionNotice = false
+                }
             } else {
                 self.isOAuthAuthenticated = false
                 self.oauthAccountId = nil
@@ -781,7 +791,72 @@ class AIService: ObservableObject {
             // API key mode - use existing isAPIKeyValid
             self.isOAuthAuthenticated = false
             self.oauthAccountId = nil
+            self.oauthDisconnectionReason = nil
+            self.hasShownOAuthDisconnectionNotice = false
         }
+    }
+
+    @MainActor
+    private func resetOAuthDisconnectionState() {
+        oauthDisconnectionReason = nil
+        hasShownOAuthDisconnectionNotice = false
+    }
+
+    @MainActor
+    private func presentOAuthDisconnectedNotification(reason: String) {
+        guard !hasShownOAuthDisconnectionNotice else { return }
+        hasShownOAuthDisconnectionNotice = true
+
+        NotificationManager.shared.showNotification(
+            title: reason,
+            type: .warning,
+            duration: 6.0,
+            actionButton: (
+                label: "Open AI Models",
+                action: {
+                    _ = WindowManager.shared.showMainWindow()
+                    NotificationCenter.default.post(
+                        name: .navigateToDestination,
+                        object: nil,
+                        userInfo: ["destination": "AI Models"]
+                    )
+                }
+            )
+        )
+    }
+
+    private func shouldInvalidateOAuthSession(for error: Error) -> Bool {
+        if let authError = error as? CodexAuthError {
+            switch authError {
+            case .invalidToken:
+                return true
+            case .tokenRefreshFailed(let message):
+                return message.contains("HTTP 400")
+                    || message.contains("HTTP 401")
+                    || message.contains("HTTP 403")
+                    || message.localizedCaseInsensitiveContains("invalid_grant")
+                    || message.localizedCaseInsensitiveContains("invalid_token")
+            default:
+                return false
+            }
+        }
+        return false
+    }
+
+    @MainActor
+    func handleOAuthSessionInvalidation(reason: String, shouldDeleteTokens: Bool = true) {
+        logger.error("Invalidating OAuth session: \(reason, privacy: .public)")
+
+        if shouldDeleteTokens {
+            try? OAuthKeychainManager.shared.deleteOAuthTokens()
+        }
+
+        isOAuthAuthenticated = false
+        oauthAccountId = nil
+        oauthDisconnectionReason = reason
+
+        NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
+        presentOAuthDisconnectedNotification(reason: reason)
     }
 
     @MainActor
@@ -825,6 +900,8 @@ class AIService: ObservableObject {
             // Update state
             self.isOAuthAuthenticated = true
             self.oauthAccountId = tokens.accountId
+            self.resetOAuthDisconnectionState()
+            NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
 
             // Cleanup
             self.currentPkceVerifier = nil
@@ -838,6 +915,7 @@ class AIService: ObservableObject {
         }
     }
 
+    @MainActor
     func signOutOAuth() throws {
         logger.info("Signing out OAuth")
 
@@ -845,6 +923,7 @@ class AIService: ObservableObject {
 
         self.isOAuthAuthenticated = false
         self.oauthAccountId = nil
+        self.resetOAuthDisconnectionState()
 
         NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
     }
@@ -853,6 +932,11 @@ class AIService: ObservableObject {
         guard openAIAuthMode == .oauth else { return }
 
         guard let tokens = try OAuthKeychainManager.shared.retrieveOAuthTokens() else {
+            await MainActor.run {
+                self.handleOAuthSessionInvalidation(
+                    reason: "ChatGPT connection expired. Sign in again to continue AI enhancement."
+                )
+            }
             throw CodexAuthError.invalidToken
         }
 
@@ -860,11 +944,27 @@ class AIService: ObservableObject {
         if tokens.isExpiringSoon || tokens.isExpired {
             logger.info("OAuth token expiring soon, refreshing...")
 
-            let newTokens = try await CodexAuth.refreshAccessToken(refreshToken: tokens.refreshToken)
-            try OAuthKeychainManager.shared.saveOAuthTokens(newTokens)
+            do {
+                let newTokens = try await CodexAuth.refreshAccessToken(refreshToken: tokens.refreshToken)
+                try OAuthKeychainManager.shared.saveOAuthTokens(newTokens)
 
-            self.oauthAccountId = newTokens.accountId
-            logger.info("Successfully refreshed OAuth token")
+                await MainActor.run {
+                    self.isOAuthAuthenticated = true
+                    self.oauthAccountId = newTokens.accountId
+                    self.resetOAuthDisconnectionState()
+                    NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
+                }
+                logger.info("Successfully refreshed OAuth token")
+            } catch {
+                if shouldInvalidateOAuthSession(for: error) {
+                    await MainActor.run {
+                        self.handleOAuthSessionInvalidation(
+                            reason: "ChatGPT connection expired. Sign in again to continue AI enhancement."
+                        )
+                    }
+                }
+                throw error
+            }
         }
     }
 

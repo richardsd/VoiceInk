@@ -120,7 +120,7 @@ class CodexAuth {
             guard (200...299).contains(httpResponse.statusCode) else {
                 let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
                 logger.error("Token exchange failed: \(httpResponse.statusCode) - \(errorMessage)")
-                throw CodexAuthError.tokenExchangeFailed("HTTP \(httpResponse.statusCode)")
+                throw CodexAuthError.tokenExchangeFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
             }
             
             let tokenResponse = try JSONDecoder().decode(CodexTokenResponse.self, from: data)
@@ -169,7 +169,7 @@ class CodexAuth {
             guard (200...299).contains(httpResponse.statusCode) else {
                 let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
                 logger.error("Token refresh failed: \(httpResponse.statusCode) - \(errorMessage)")
-                throw CodexAuthError.tokenRefreshFailed("HTTP \(httpResponse.statusCode)")
+                throw CodexAuthError.tokenRefreshFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
             }
             
             let tokenResponse = try JSONDecoder().decode(CodexTokenResponse.self, from: data)
