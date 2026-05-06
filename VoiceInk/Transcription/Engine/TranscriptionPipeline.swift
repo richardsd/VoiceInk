@@ -203,7 +203,15 @@ class TranscriptionPipeline {
                         finalText = enhancementResult.text
                     } catch {
                         let errorDescription = EnhancementFailureFormatter.description(for: error)
-                        let failureMessage = EnhancementFailureFormatter.message(description: errorDescription)
+                        let isOAuthDisconnectError: Bool
+                        if case .oauthDisconnected = error as? EnhancementError {
+                            isOAuthDisconnectError = true
+                        } else {
+                            isOAuthDisconnectError = false
+                        }
+                        let failureMessage = isOAuthDisconnectError
+                            ? errorDescription
+                            : EnhancementFailureFormatter.message(description: errorDescription)
                         transcription.enhancedText = failureMessage
                         responseError = errorDescription
                         await MainActor.run {

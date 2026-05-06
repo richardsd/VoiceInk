@@ -110,10 +110,10 @@ class RecordTranscriptionManager: ObservableObject {
         }
     }
 
-    func stopRecording(modelContext: ModelContext, engine: VoiceInkEngine) {
+    func stopRecording(modelContext: ModelContext, engine: VoiceInkEngine) async {
         guard recordingState == .recording else { return }
 
-        recorder.stopRecording()
+        await recorder.stopRecording()
         stopDurationTimer()
 
         guard let fileURL = recordedFileURL else {
@@ -129,14 +129,14 @@ class RecordTranscriptionManager: ObservableObject {
             do {
                 try await transcribe(fileURL: fileURL, modelContext: modelContext, engine: engine)
             } catch {
-                await handleError(error)
+                handleError(error)
             }
         }
     }
 
-    func cancelRecording() {
+    func cancelRecording() async {
         if recordingState == .recording {
-            recorder.stopRecording()
+            await recorder.stopRecording()
             stopDurationTimer()
         }
 
