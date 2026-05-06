@@ -3,11 +3,13 @@
 //  VoiceInk
 //
 //  Model metadata for Codex OAuth models
-//  Source: https://developers.openai.com/codex/models/
-//  Last synced: 2026-03-17
+//  Sources:
+//  - https://developers.openai.com/api/docs/models
+//  - https://developers.openai.com/api/docs/models/all
+//  Last synced: 2026-05-05
 //  Update checklist:
-//  1) Verify model IDs in Codex docs match `id` values below
-//  2) Update `status`/`isRecommended` when models are succeeded/promoted
+//  1) Verify model IDs in OpenAI docs match `id` values below
+//  2) Update `status`/`isRecommended` when models are promoted or deprecated
 //  3) Keep OAuth default model in AIService aligned with recommended model
 //  4) Refresh this sync date
 //
@@ -20,7 +22,7 @@ enum SubscriptionTier: String, Codable {
     case plus = "Plus"
     case pro = "Pro"
     case api = "API"
-    
+
     var color: String {
         switch self {
         case .plus: return "blue"
@@ -37,7 +39,7 @@ enum ModelStatus: String, Codable {
     case preview = "Preview"
     case legacy = "Legacy"
     case deprecated = "Deprecated"
-    
+
     var color: String {
         switch self {
         case .current: return "green"
@@ -50,7 +52,7 @@ enum ModelStatus: String, Codable {
 
 // MARK: - Model Metadata
 
-struct CodexModelMetadata {
+struct CodexModelMetadata: Codable, Equatable {
     let id: String
     let displayName: String
     let description: String
@@ -64,154 +66,235 @@ struct CodexModelMetadata {
 // MARK: - Available Codex Models
 
 enum CodexModels {
-    static let all: [CodexModelMetadata] = [
-        // GPT-5.4 Series
+    static let fallbackModels: [CodexModelMetadata] = [
+        // Current recommended frontier models
+        CodexModelMetadata(
+            id: "gpt-5.5",
+            displayName: "GPT-5.5",
+            description: "OpenAI's flagship model for complex reasoning and coding.",
+            tier: .plus,
+            status: .current,
+            releaseDate: "2026-05",
+            isRecommended: true,
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.5"
+        ),
         CodexModelMetadata(
             id: "gpt-5.4",
             displayName: "GPT-5.4",
-            description: "Flagship frontier model for professional work that brings the industry-leading coding capabilities of GPT-5.3-Codex together with stronger reasoning, tool use, and agentic workflows.",
+            description: "Best intelligence at scale for agentic, coding, and professional workflows.",
             tier: .plus,
             status: .current,
             releaseDate: "2026-03",
-            isRecommended: true,
-            documentationURL: "https://developers.openai.com/codex/models#gpt-5-4"
+            isRecommended: false,
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.4"
+        ),
+        CodexModelMetadata(
+            id: "gpt-5.4-mini",
+            displayName: "GPT-5.4 mini",
+            description: "Strong mini model for coding, computer use, and subagents.",
+            tier: .plus,
+            status: .current,
+            releaseDate: "2026-03",
+            isRecommended: false,
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.4-mini"
+        ),
+        CodexModelMetadata(
+            id: "gpt-5.4-nano",
+            displayName: "GPT-5.4 nano",
+            description: "Cheapest GPT-5.4-class model for simple, high-volume tasks and subagents.",
+            tier: .plus,
+            status: .current,
+            releaseDate: "2026-03",
+            isRecommended: false,
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.4-nano"
+        ),
+        CodexModelMetadata(
+            id: "gpt-5-mini",
+            displayName: "GPT-5 mini",
+            description: "Faster, cheaper GPT-5 variant for well-defined low-latency work.",
+            tier: .plus,
+            status: .current,
+            releaseDate: "2025-08",
+            isRecommended: false,
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5-mini"
+        ),
+        CodexModelMetadata(
+            id: "gpt-5-nano",
+            displayName: "GPT-5 nano",
+            description: "Fastest, lowest-cost GPT-5 variant for summarization and classification.",
+            tier: .plus,
+            status: .current,
+            releaseDate: "2025-08",
+            isRecommended: false,
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5-nano"
         ),
 
-        // GPT-5.3 Series
+        // Current coding-specialized model
         CodexModelMetadata(
             id: "gpt-5.3-codex",
             displayName: "GPT-5.3-Codex",
-            description: "Industry-leading coding model for complex software engineering. Its coding capabilities now also power GPT-5.4.",
+            description: "Current coding-specialized Codex model for agentic software engineering tasks.",
             tier: .plus,
             status: .current,
-            releaseDate: "2026-01",
+            releaseDate: "2026-02",
             isRecommended: false,
-            documentationURL: "https://developers.openai.com/codex/models#gpt-5-3-codex"
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.3-codex"
         ),
         CodexModelMetadata(
             id: "gpt-5.3-codex-spark",
             displayName: "GPT-5.3-Codex-Spark",
-            description: "Text-only research preview model optimized for near-instant, real-time coding iteration. Available to ChatGPT Pro users.",
+            description: "Research preview model retained for compatibility with older selections.",
             tier: .pro,
             status: .preview,
-            releaseDate: "2026-01",
+            releaseDate: "2026-02",
             isRecommended: false,
-            documentationURL: "https://developers.openai.com/codex/models#gpt-5-3-codex-spark"
+            documentationURL: "https://developers.openai.com/api/docs/models/all"
         ),
-        
-        // GPT-5.2 Series
+
+        // Previous but still documented frontier model
         CodexModelMetadata(
-            id: "gpt-5.2-codex",
-            displayName: "GPT-5.2-Codex",
-            description: "Advanced coding model for real-world engineering. Succeeded by GPT-5.3-Codex.",
+            id: "gpt-5",
+            displayName: "GPT-5",
+            description: "Previous GPT-5 reasoning model for coding and agentic tasks.",
             tier: .plus,
             status: .legacy,
-            releaseDate: "2025-11",
+            releaseDate: "2025-08",
             isRecommended: false,
-            documentationURL: "https://developers.openai.com/codex/models#gpt-5-2-codex"
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5"
         ),
         CodexModelMetadata(
             id: "gpt-5.2",
             displayName: "GPT-5.2",
-            description: "Previous general-purpose model for coding and agentic tasks across industries and domains. Succeeded by GPT-5.4.",
+            description: "Previous GPT-5.2 model retained for compatibility.",
             tier: .plus,
             status: .legacy,
             releaseDate: "2025-11",
             isRecommended: false,
-            documentationURL: "https://developers.openai.com/codex/models#gpt-5-2"
-        ),
-        
-        // GPT-5.1 Series
-        CodexModelMetadata(
-            id: "gpt-5.1-codex-max",
-            displayName: "GPT-5.1-Codex-Max",
-            description: "Optimized for long-horizon, agentic coding tasks in Codex.",
-            tier: .plus,
-            status: .legacy,
-            releaseDate: "2025-09",
-            isRecommended: false,
-            documentationURL: "https://developers.openai.com/codex/models#gpt-5-1-codex-max"
+            documentationURL: "https://developers.openai.com/api/docs/models/all"
         ),
         CodexModelMetadata(
             id: "gpt-5.1",
             displayName: "GPT-5.1",
-            description: "Great for coding and agentic tasks across domains. Succeeded by GPT-5.2.",
+            description: "Previous GPT-5.1 model retained for compatibility.",
             tier: .plus,
             status: .legacy,
             releaseDate: "2025-08",
             isRecommended: false,
-            documentationURL: "https://developers.openai.com/codex/models#gpt-5-1"
+            documentationURL: "https://developers.openai.com/api/docs/models/all"
+        ),
+
+        // Deprecated coding models retained for compatibility with saved selections
+        CodexModelMetadata(
+            id: "gpt-5.2-codex",
+            displayName: "GPT-5.2-Codex",
+            description: "Deprecated long-horizon coding model retained for compatibility.",
+            tier: .plus,
+            status: .deprecated,
+            releaseDate: "2025-11",
+            isRecommended: false,
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.2-codex"
+        ),
+        CodexModelMetadata(
+            id: "gpt-5.1-codex-max",
+            displayName: "GPT-5.1-Codex-Max",
+            description: "Deprecated long-running Codex model retained for compatibility.",
+            tier: .plus,
+            status: .deprecated,
+            releaseDate: "2025-09",
+            isRecommended: false,
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.1-codex-max"
         ),
         CodexModelMetadata(
             id: "gpt-5.1-codex",
-            displayName: "GPT-5.1-Codex",
-            description: "Optimized for long-running, agentic coding tasks in Codex. Succeeded by GPT-5.1-Codex-Max.",
+            displayName: "GPT-5.1 Codex",
+            description: "Deprecated Codex model retained for compatibility with older selections.",
             tier: .plus,
-            status: .legacy,
+            status: .deprecated,
             releaseDate: "2025-08",
             isRecommended: false,
-            documentationURL: "https://developers.openai.com/codex/models#gpt-5-1-codex"
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.1-codex"
         ),
-        
-        // GPT-5 Series (Legacy)
+        CodexModelMetadata(
+            id: "gpt-5.1-codex-mini",
+            displayName: "GPT-5.1 Codex mini",
+            description: "Deprecated smaller Codex model retained for compatibility.",
+            tier: .plus,
+            status: .deprecated,
+            releaseDate: "2025-08",
+            isRecommended: false,
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.1-codex-mini"
+        ),
         CodexModelMetadata(
             id: "gpt-5-codex",
             displayName: "GPT-5-Codex",
-            description: "Version of GPT-5 tuned for long-running, agentic coding tasks. Succeeded by GPT-5.1-Codex.",
+            description: "Deprecated GPT-5 Codex variant retained for compatibility.",
             tier: .plus,
-            status: .legacy,
-            releaseDate: "2025-06",
+            status: .deprecated,
+            releaseDate: "2025-08",
             isRecommended: false,
-            documentationURL: "https://developers.openai.com/codex/models#gpt-5-codex"
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5-codex"
         ),
         CodexModelMetadata(
             id: "gpt-5-codex-mini",
             displayName: "GPT-5-Codex-Mini",
-            description: "Smaller, more cost-effective version of GPT-5-Codex. Succeeded by GPT-5.1-Codex-Mini.",
+            description: "Deprecated smaller GPT-5 Codex variant retained for compatibility.",
             tier: .plus,
-            status: .legacy,
-            releaseDate: "2025-06",
+            status: .deprecated,
+            releaseDate: "2025-08",
             isRecommended: false,
-            documentationURL: "https://developers.openai.com/codex/models#gpt-5-codex-mini"
+            documentationURL: "https://developers.openai.com/api/docs/models/all"
         ),
         CodexModelMetadata(
-            id: "gpt-5",
-            displayName: "GPT-5",
-            description: "Reasoning model for coding and agentic tasks across domains. Succeeded by GPT-5.1.",
+            id: "codex-mini-latest",
+            displayName: "codex-mini-latest",
+            description: "Deprecated Codex CLI model retained for compatibility with older saved configs.",
             tier: .plus,
-            status: .legacy,
-            releaseDate: "2025-06",
+            status: .deprecated,
+            releaseDate: "2025-08",
             isRecommended: false,
-            documentationURL: "https://developers.openai.com/codex/models#gpt-5"
+            documentationURL: "https://developers.openai.com/api/docs/models/all"
         )
     ]
-    
+
     static var sortedForPicker: [CodexModelMetadata] {
-        all.sorted { lhs, rhs in
-            // Recommended first
+        sortedForPicker(fallbackModels)
+    }
+
+    static func sortedForPicker(_ models: [CodexModelMetadata]) -> [CodexModelMetadata] {
+        models.sorted { lhs, rhs in
             if lhs.isRecommended != rhs.isRecommended {
                 return lhs.isRecommended
             }
-            // Current status models next
             if lhs.status == .current && rhs.status != .current {
                 return true
             }
             if lhs.status != .current && rhs.status == .current {
                 return false
             }
-            // Preview before legacy
             if lhs.status == .preview && rhs.status == .legacy {
                 return true
             }
             if lhs.status == .legacy && rhs.status == .preview {
                 return false
             }
-            // Newer models first (by release date descending)
-            return lhs.releaseDate > rhs.releaseDate
+            if lhs.status == .legacy && rhs.status == .deprecated {
+                return true
+            }
+            if lhs.status == .deprecated && rhs.status == .legacy {
+                return false
+            }
+            if lhs.releaseDate != rhs.releaseDate {
+                return lhs.releaseDate > rhs.releaseDate
+            }
+            return lhs.id < rhs.id
         }
     }
-    
+
     static func metadata(for modelId: String) -> CodexModelMetadata? {
-        all.first { $0.id == modelId }
+        fallbackModels.first { $0.id == modelId }
+    }
+
+    static func isCodexOAuthCandidate(_ modelId: String) -> Bool {
+        modelId.hasPrefix("gpt-5") || modelId.localizedCaseInsensitiveContains("codex")
     }
 }

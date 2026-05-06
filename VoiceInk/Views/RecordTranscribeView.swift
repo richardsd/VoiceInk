@@ -92,7 +92,9 @@ struct RecordTranscribeView: View {
 
             HStack(spacing: 24) {
                 Button {
-                    recordManager.cancelRecording()
+                    Task {
+                        await recordManager.cancelRecording()
+                    }
                 } label: {
                     Label("Cancel", systemImage: "xmark.circle.fill")
                         .font(.body)
@@ -100,7 +102,9 @@ struct RecordTranscribeView: View {
                 .buttonStyle(.bordered)
 
                 Button {
-                    recordManager.stopRecording(modelContext: modelContext, engine: engine)
+                    Task {
+                        await recordManager.stopRecording(modelContext: modelContext, engine: engine)
+                    }
                 } label: {
                     Label("Stop Recording", systemImage: "stop.circle.fill")
                         .font(.body.weight(.semibold))
