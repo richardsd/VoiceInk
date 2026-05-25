@@ -185,51 +185,84 @@ class RecordTranscriptionManager: ObservableObject {
         text = TranscriptionOutputFilter.filter(text)
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if UserDefaults.standard.bool(forKey: "IsTextFormattingEnabled") {
-            text = WhisperTextFormatter.format(text)
+        let mode = ModeManager.shared.currentEffectiveConfiguration
+        let modeMetadata: (name: String?, emoji: String?) = mode.map { mode -> (name: String?, emoji: String?) in
+            guard mode.isEnabled else { return (nil, nil) }
+            return (mode.name, mode.icon.legacyEmojiValue)
+        } ?? (nil, nil)
+        let formattingConfiguration = ModeRuntimeResolver.transcriptionFormattingConfiguration(mode: mode)
+
+        if formattingConfiguration.isTextFormattingEnabled {
+            text = ParagraphFormatter.format(text)
         }
 
         text = WordReplacementService.shared.applyReplacements(to: text, using: modelContext)
+        let cleanedText = TranscriptionOutputFilter.applyCleanupPreferences(
+            text,
+            punctuationMode: formattingConfiguration.punctuationCleanupMode,
+            shouldLowercase: formattingConfiguration.lowercaseTranscription
+        )
 
         // Enhancement
+        let enhancementConfiguration = engine.enhancementService
+            .flatMap { enhancementService in
+                enhancementService.getAIService().map { aiService in
+                    ModeRuntimeResolver.currentEnhancementConfiguration(
+                        mode: mode,
+                        enhancementService: enhancementService,
+                        aiService: aiService
+                    )
+                }
+            }
+
         if let enhancementService = engine.enhancementService,
-           enhancementService.isEnhancementEnabled,
-           enhancementService.isConfigured {
+           let enhancementConfiguration,
+           enhancementConfiguration.isEnabled,
+           enhancementService.isConfigured(for: enhancementConfiguration) {
             recordingState = .enhancing
             do {
-                let (enhancedText, enhancementDuration, promptName) = try await enhancementService.enhance(text)
+                let (enhancedText, enhancementDuration, promptName) = try await enhancementService.enhance(
+                    text,
+                    configuration: enhancementConfiguration
+                )
                 let transcription = Transcription(
-                    text: text,
+                    text: cleanedText,
                     duration: duration,
                     enhancedText: enhancedText,
                     audioFileURL: fileURL.absoluteString,
                     transcriptionModelName: currentModel.displayName,
-                    aiEnhancementModelName: enhancementService.getAIService()?.currentModel,
+                    aiEnhancementModelName: enhancementConfiguration.modelName ?? enhancementConfiguration.provider?.defaultModel,
                     promptName: promptName,
                     transcriptionDuration: transcriptionDuration,
                     enhancementDuration: enhancementDuration,
                     aiRequestSystemMessage: enhancementService.lastSystemMessageSent,
-                    aiRequestUserMessage: enhancementService.lastUserMessageSent
+                    aiRequestUserMessage: enhancementService.lastUserMessageSent,
+                    modeName: modeMetadata.name,
+                    modeEmoji: modeMetadata.emoji
                 )
                 saveTranscription(transcription, modelContext: modelContext)
             } catch {
                 logger.error("Enhancement failed: \(error.localizedDescription, privacy: .public)")
                 let transcription = Transcription(
-                    text: text,
+                    text: cleanedText,
                     duration: duration,
                     audioFileURL: fileURL.absoluteString,
                     transcriptionModelName: currentModel.displayName,
-                    transcriptionDuration: transcriptionDuration
+                    transcriptionDuration: transcriptionDuration,
+                    modeName: modeMetadata.name,
+                    modeEmoji: modeMetadata.emoji
                 )
                 saveTranscription(transcription, modelContext: modelContext)
             }
         } else {
             let transcription = Transcription(
-                text: text,
+                text: cleanedText,
                 duration: duration,
                 audioFileURL: fileURL.absoluteString,
                 transcriptionModelName: currentModel.displayName,
-                transcriptionDuration: transcriptionDuration
+                transcriptionDuration: transcriptionDuration,
+                modeName: modeMetadata.name,
+                modeEmoji: modeMetadata.emoji
             )
             saveTranscription(transcription, modelContext: modelContext)
         }

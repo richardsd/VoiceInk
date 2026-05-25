@@ -61,6 +61,8 @@ private extension ViewType {
         switch self {
         case .transcribeAudio:
             return "Transcribe"
+        case .recordTranscribe:
+            return "Record"
         default:
             return LocalizedStringKey(rawValue)
         }
@@ -70,6 +72,7 @@ private extension ViewType {
         .dashboard,
         .modes,
         .transcribeAudio,
+        .recordTranscribe,
         .history,
         .dictionary,
         .models,
@@ -92,6 +95,7 @@ private extension ViewType {
         switch self {
         case .dashboard: return "gauge.medium"
         case .transcribeAudio: return "waveform.path"
+        case .recordTranscribe: return "record.circle"
         case .history: return "doc.text.fill"
         case .models: return "cpu"
         case .modes: return "sparkles.square.fill.on.square"
@@ -118,6 +122,8 @@ private extension ViewType {
             return .init(background: AppTheme.Sidebar.audio)
         case .transcribeAudio:
             return .init(background: AppTheme.Sidebar.transcribeAudio)
+        case .recordTranscribe:
+            return .init(background: AppTheme.Sidebar.fallback)
         case .settings:
             return .init(background: AppTheme.Sidebar.fallback)
         case .license:
