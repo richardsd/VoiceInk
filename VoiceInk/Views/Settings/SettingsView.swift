@@ -267,8 +267,16 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Export Settings") {
-                    Button("Export") {
+                AudioCleanupSettingsView()
+            } header: {
+                Text("Privacy")
+            } footer: {
+                Text("Control how VoiceInk handles your transcription data and audio recordings.")
+            }
+
+            Section {
+                LabeledContent("Create Configuration Backup") {
+                    Button("Create Backup") {
                         ImportExportService.shared.exportSettings(
                             enhancementService: enhancementService,
                             recordingShortcutManager: recordingShortcutManager,
@@ -276,13 +284,14 @@ struct SettingsView: View {
                             mediaController: mediaController,
                             playbackController: playbackController,
                             recorderUIManager: recorderUIManager,
-                            modelContext: modelContext
+                            modelContext: modelContext,
+                            transcriptionModelManager: transcriptionModelManager
                         )
                     }
                 }
 
-                LabeledContent("Import Settings") {
-                    Button("Import") {
+                LabeledContent("Restore Configuration Backup") {
+                    Button("Restore") {
                         ImportExportService.shared.importSettings(
                             enhancementService: enhancementService,
                             recordingShortcutManager: recordingShortcutManager,
@@ -298,7 +307,7 @@ struct SettingsView: View {
             } header: {
                 Text("Backup")
             } footer: {
-                Text("Export all settings, or choose specific categories when importing a backup.")
+                Text("Back up personal configuration only. API keys, OAuth tokens, recordings, history, logs, caches, custom sound files, and downloaded models are not included.")
             }
 
             Section("Diagnostics") {

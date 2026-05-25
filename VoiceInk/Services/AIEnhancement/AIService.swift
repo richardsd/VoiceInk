@@ -299,6 +299,10 @@ class AIService: ObservableObject {
         models(for: selectedProvider, authMode: selectedProvider == .openAI ? openAIAuthMode : nil)
     }
 
+    func availableModels(for provider: AIProvider) -> [String] {
+        models(for: provider, authMode: provider == .openAI ? openAIAuthMode : nil)
+    }
+
     var localCLICommandTemplate: String {
         localCLIService.commandTemplate
     }

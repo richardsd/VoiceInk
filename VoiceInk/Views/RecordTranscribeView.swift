@@ -7,6 +7,7 @@ struct RecordTranscribeView: View {
     @EnvironmentObject private var enhancementService: AIEnhancementService
     @StateObject private var recordManager = RecordTranscriptionManager.shared
     @ObservedObject private var mediaController = MediaController.shared
+    @ObservedObject private var modeManager = ModeManager.shared
     @State private var isEnhancementEnabled = false
     @State private var selectedPromptId: UUID?
     @State private var isAIRequestExpanded = false
@@ -37,8 +38,7 @@ struct RecordTranscribeView: View {
             }
         }
         .onAppear {
-            isEnhancementEnabled = enhancementService.isEnhancementEnabled
-            selectedPromptId = enhancementService.selectedPromptId
+            refreshEnhancementStateFromMode()
         }
     }
 
@@ -316,7 +316,12 @@ struct RecordTranscribeView: View {
             Toggle("AI Enhancement", isOn: $isEnhancementEnabled)
                 .toggleStyle(.switch)
                 .onChange(of: isEnhancementEnabled) { _, newValue in
-                    enhancementService.isEnhancementEnabled = newValue
+                    updateCurrentMode { mode in
+                        mode.isAIEnhancementEnabled = newValue
+                        if newValue, mode.selectedPrompt == nil {
+                            mode.selectedPrompt = enhancementService.allPrompts.first?.id.uuidString
+                        }
+                    }
                 }
 
             Divider()
@@ -344,7 +349,9 @@ struct RecordTranscribeView: View {
                             },
                             set: { newValue in
                                 selectedPromptId = newValue
-                                enhancementService.selectedPromptId = newValue
+                                updateCurrentMode { mode in
+                                    mode.selectedPrompt = newValue.uuidString
+                                }
                             }
                         )
 
@@ -360,11 +367,29 @@ struct RecordTranscribeView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(CardBackground(isSelected: false))
+        .background(AppCardBackground(isSelected: false, cornerRadius: 12))
         .frame(maxWidth: 400)
     }
 
     // MARK: - Helpers
+
+    private func refreshEnhancementStateFromMode() {
+        let mode = modeManager.currentEffectiveConfiguration
+        isEnhancementEnabled = mode?.isAIEnhancementEnabled ?? false
+        selectedPromptId = mode?.selectedPrompt.flatMap(UUID.init(uuidString:))
+    }
+
+    private func updateCurrentMode(_ update: (inout ModeConfig) -> Void) {
+        guard var mode = modeManager.currentEffectiveConfiguration ?? modeManager.configurations.first else {
+            return
+        }
+        update(&mode)
+        modeManager.updateConfiguration(mode)
+        if modeManager.activeConfiguration?.id == mode.id {
+            modeManager.setActiveConfiguration(mode)
+        }
+        refreshEnhancementStateFromMode()
+    }
 
     private func formatDuration(_ duration: TimeInterval) -> String {
         let minutes = Int(duration) / 60
