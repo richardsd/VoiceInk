@@ -146,24 +146,11 @@ final class LicenseViewModel: ObservableObject {
     }
 
     var canUseApp: Bool {
-        switch licenseState {
-        case .licensed, .trial:
-            return true
-        case .unlicensed, .trialExpired:
-            return false
-        }
+        true
     }
 
     var usageRestrictionMessage: String? {
-        switch licenseState {
-        case .unlicensed, .trialExpired:
-            return String(
-                format: String(localized: "Your trial has ended. Upgrade to VoiceInk Pro at %@"),
-                "tryvoiceink.com/buy"
-            )
-        case .trial, .licensed:
-            return nil
-        }
+        nil
     }
 
     var diagnosticLicenseStatus: String {
