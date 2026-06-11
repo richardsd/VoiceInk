@@ -11,7 +11,7 @@ class LicenseViewModel: ObservableObject {
         case licensed
     }
 
-    @Published private(set) var licenseState: LicenseState = .unlicensed
+    @Published private(set) var licenseState: LicenseState = .licensed
     @Published var licenseKey: String = ""
     @Published var isValidating = false
     @Published var validationMessage: String?
@@ -25,42 +25,18 @@ class LicenseViewModel: ObservableObject {
     private let licenseManager = LicenseManager.shared
 
     init() {
-        #if LOCAL_BUILD
         licenseState = .licensed
-        #else
-        loadLicenseState()
-        #endif
     }
 
     func startTrial() {
-        let didStartTrial = licenseManager.startTrialIfNeeded()
-        refreshTrialState()
+        _ = licenseManager.startTrialIfNeeded()
+        licenseState = .licensed
         NotificationCenter.default.post(name: .licenseStatusChanged, object: nil)
-
-        if didStartTrial {
-            requestLicenseCelebration()
-        }
+        requestLicenseCelebration()
     }
 
     private func loadLicenseState() {
-        // Check for existing license key
-        if let storedLicenseKey = licenseManager.licenseKey {
-            self.licenseKey = storedLicenseKey
-
-            // If we have a license key, trust that it's licensed
-            // Skip server validation on startup
-            if licenseManager.activationId != nil || !userDefaults.bool(forKey: "VoiceInkLicenseRequiresActivation") {
-                licenseState = .licensed
-                activationsLimit = userDefaults.activationsLimit
-                return
-            }
-        }
-
-        if let trialStartDate = licenseManager.trialStartDate {
-            refreshTrialState(from: trialStartDate)
-        } else {
-            setUnlicensedState()
-        }
+        licenseState = .licensed
     }
 
     var isLicensed: Bool {
@@ -95,24 +71,11 @@ class LicenseViewModel: ObservableObject {
     }
     
     var canUseApp: Bool {
-        switch licenseState {
-        case .licensed, .trial:
-            return true
-        case .unlicensed, .trialExpired:
-            return false
-        }
+        true
     }
 
     var usageRestrictionMessage: String? {
-        switch licenseState {
-        case .unlicensed, .trialExpired:
-            return String(
-                format: String(localized: "Your trial has ended. Upgrade to VoiceInk Pro at %@"),
-                "tryvoiceink.com/buy"
-            )
-        case .trial, .licensed:
-            return nil
-        }
+        nil
     }
     
     func openPurchaseLink() {
