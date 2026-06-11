@@ -45,6 +45,16 @@ extension ModeManager {
                 changedConfig = true
             }
 
+            if config.selectedOpenAIAuthMode == nil {
+                config.selectedOpenAIAuthMode = UserDefaults.standard.string(forKey: "openAIAuthMode")
+                changedConfig = true
+            }
+
+            if config.selectedOpenAIOAuthModel == nil {
+                config.selectedOpenAIOAuthModel = UserDefaults.standard.string(forKey: "openAIOAuthModel")
+                changedConfig = true
+            }
+
             if config.isAIEnhancementEnabled && config.selectedPrompt == nil {
                 config.selectedPrompt = UserDefaults.standard.string(forKey: "selectedPromptId")
                 changedConfig = true
