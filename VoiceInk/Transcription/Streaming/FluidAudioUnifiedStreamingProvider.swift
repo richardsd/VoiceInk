@@ -1,68 +1,29 @@
-import FluidAudio
 import Foundation
-import os
 
-/// True streaming provider backed by FluidAudio's Parakeet Unified manager.
+/// Placeholder retained for project compatibility while the local FluidAudio
+/// fork does not expose StreamingUnifiedAsrManager.
 final class FluidAudioUnifiedStreamingProvider: StreamingTranscriptionProvider {
-    private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "FluidAudioUnifiedStreaming")
-    private var manager: StreamingUnifiedAsrManager?
-    private var eventsContinuation: AsyncStream<StreamingTranscriptionEvent>.Continuation?
+    private let stream: AsyncStream<StreamingTranscriptionEvent>
 
-    private(set) var transcriptionEvents: AsyncStream<StreamingTranscriptionEvent>
-
-    init() {
-        var continuation: AsyncStream<StreamingTranscriptionEvent>.Continuation!
-        transcriptionEvents = AsyncStream { continuation = $0 }
-        eventsContinuation = continuation
+    var transcriptionEvents: AsyncStream<StreamingTranscriptionEvent> {
+        stream
     }
 
-    deinit {
-        eventsContinuation?.finish()
+    init() {
+        self.stream = AsyncStream { continuation in
+            continuation.finish()
+        }
     }
 
     func connect(model: any TranscriptionModel, language: String?) async throws {
-        let manager = StreamingUnifiedAsrManager(
-            encoderPrecision: FluidAudioModelManager.parakeetUnifiedPrecision
+        throw StreamingTranscriptionError.connectionFailed(
+            String(localized: "This FluidAudio streaming model is not available in the bundled FluidAudio build.")
         )
-        let continuation = eventsContinuation
-        await manager.setPartialTranscriptCallback { partial in
-            continuation?.yield(.partial(text: partial))
-        }
-        try await manager.loadModels()
-        self.manager = manager
-        eventsContinuation?.yield(.sessionStarted)
-        logger.notice("Parakeet Unified streaming started for \(model.displayName, privacy: .public)")
     }
 
-    func sendAudioChunk(_ data: Data) async throws {
-        guard let manager else {
-            throw StreamingTranscriptionError.notConnected
-        }
+    func sendAudioChunk(_ data: Data) async throws {}
 
-        guard !data.isEmpty else { return }
+    func commit() async throws {}
 
-        guard let buffer = PCMAudioConverter.pcmBuffer(fromPCM16Data: data) else {
-            throw StreamingTranscriptionError.audioConversionFailed
-        }
-
-        try await manager.appendAudio(buffer)
-        try await manager.processBufferedAudio()
-    }
-
-    func commit() async throws {
-        guard let manager else {
-            throw StreamingTranscriptionError.notConnected
-        }
-
-        let finalText = try await manager.finish()
-        let text = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
-        eventsContinuation?.yield(.committed(text: text))
-    }
-
-    func disconnect() async {
-        await manager?.cleanup()
-        manager = nil
-        eventsContinuation?.finish()
-        logger.notice("Parakeet Unified streaming disconnected")
-    }
+    func disconnect() async {}
 }

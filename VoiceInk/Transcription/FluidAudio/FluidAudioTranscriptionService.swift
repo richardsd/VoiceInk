@@ -4,11 +4,8 @@ import os.log
 
 class FluidAudioTranscriptionService: TranscriptionService {
     private var asrManager: AsrManager?
-    private var unifiedAsrManager: UnifiedAsrManager?
-    private var nemotronAsrManager: StreamingNemotronMultilingualAsrManager?
     private var vadManager: VadManager?
     private var activeVersion: AsrModelVersion?
-    private var activeNemotronModelName: String?
     private var cachedModels: AsrModels?
     private var loadingTask: (version: AsrModelVersion, task: Task<AsrModels, Error>)?
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "FluidAudioTranscriptionService")
@@ -18,16 +15,11 @@ class FluidAudioTranscriptionService: TranscriptionService {
     }
 
     private func cleanupLoadedManagers() async {
-        await unifiedAsrManager?.cleanup()
-        await nemotronAsrManager?.cleanup()
         await asrManager?.cleanup()
 
-        unifiedAsrManager = nil
-        nemotronAsrManager = nil
         asrManager = nil
         vadManager = nil
         activeVersion = nil
-        activeNemotronModelName = nil
     }
 
     private func ensureModelsLoaded(for version: AsrModelVersion) async throws {
@@ -44,31 +36,6 @@ class FluidAudioTranscriptionService: TranscriptionService {
         try await manager.initialize(models: models)
         self.asrManager = manager
         self.activeVersion = version
-    }
-
-    private func ensureUnifiedModelsLoaded() async throws {
-        if unifiedAsrManager != nil {
-            return
-        }
-
-        await cleanupLoadedManagers()
-
-        let manager = UnifiedAsrManager(encoderPrecision: FluidAudioModelManager.parakeetUnifiedPrecision)
-        try await manager.loadModels()
-        self.unifiedAsrManager = manager
-    }
-
-    private func ensureNemotronModelsLoaded(named modelName: String) async throws {
-        if nemotronAsrManager != nil, activeNemotronModelName == modelName {
-            return
-        }
-
-        await cleanupLoadedManagers()
-
-        let manager = StreamingNemotronMultilingualAsrManager()
-        try await manager.loadModels(from: FluidAudioModelManager.nemotronCacheDirectory(for: modelName))
-        self.nemotronAsrManager = manager
-        self.activeNemotronModelName = modelName
     }
 
     // Returns cached models or loads from disk; deduplicates concurrent loads
@@ -108,58 +75,10 @@ class FluidAudioTranscriptionService: TranscriptionService {
     }
 
     func loadModel(for model: FluidAudioModel) async throws {
-        if FluidAudioModelManager.isNemotronModel(named: model.name) {
-            // Realtime Nemotron uses a dedicated streaming manager; batch loads lazily in transcribe().
-            return
-        }
-
-        if FluidAudioModelManager.isParakeetUnifiedModel(named: model.name) {
-            try await ensureUnifiedModelsLoaded()
-            return
-        }
-
         try await ensureModelsLoaded(for: version(for: model))
     }
 
     func transcribe(audioURL: URL, model: any TranscriptionModel, context: TranscriptionRequestContext) async throws -> String {
-        if FluidAudioModelManager.isParakeetUnifiedModel(named: model.name) {
-            try await ensureUnifiedModelsLoaded()
-            guard let unifiedAsrManager else {
-                throw ASRError.notInitialized
-            }
-
-            let speechAudio = try await preparedSpeechAudio(from: audioURL, usesVAD: false)
-            let text = try await unifiedAsrManager.transcribe(speechAudio)
-            return text.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        if FluidAudioModelManager.isNemotronModel(named: model.name) {
-            try await ensureNemotronModelsLoaded(named: model.name)
-            guard let nemotronAsrManager else {
-                throw ASRError.notInitialized
-            }
-
-            await nemotronAsrManager.reset()
-            let compatibleLanguage = TranscriptionLanguageSupport.validLanguageOrFallback(
-                context.language,
-                for: model
-            )
-            await nemotronAsrManager.setLanguage(
-                FluidAudioModelManager.nemotronLanguageHint(from: compatibleLanguage)
-            )
-
-            var speechAudio = try await preparedSpeechAudio(from: audioURL, usesVAD: true)
-            let trailingSilenceSamples = 16_000
-            let maxSingleChunkSamples = 240_000
-            if speechAudio.count + trailingSilenceSamples <= maxSingleChunkSamples {
-                speechAudio += [Float](repeating: 0, count: trailingSilenceSamples)
-            }
-
-            _ = try await nemotronAsrManager.process(samples: speechAudio)
-            let text = try await nemotronAsrManager.finish()
-            return text.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
         let targetVersion = version(for: model)
         try await ensureModelsLoaded(for: targetVersion)
 
