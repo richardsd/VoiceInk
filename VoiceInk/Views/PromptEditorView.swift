@@ -266,9 +266,9 @@ struct PromptEditorView: View {
             if !triggerWords.isEmpty {
                 FlowLayout(spacing: 6) {
                     ForEach(triggerWords, id: \.self) { word in
-                        TriggerWordChip(word: word) {
+                        TriggerWordChip(word: word, onRemove: {
                             triggerWords.removeAll { $0 == word }
-                        }
+                        })
                     }
                 }
                 .padding(.top, 2)
@@ -360,36 +360,5 @@ struct PromptEditorView: View {
         guard let word = normalizedNewTriggerWord else { return }
         triggerWords.append(word)
         newTriggerWord = ""
-    }
-}
-
-private struct TriggerWordChip: View {
-    let word: String
-    let onDelete: () -> Void
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "mic.fill")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
-
-            Text(word)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: 140, alignment: .leading)
-
-            Button(action: onDelete) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14, height: 14)
-            }
-            .buttonStyle(.plain)
-            .help("Remove trigger word")
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(AppCardBackground(cornerRadius: 7))
     }
 }
