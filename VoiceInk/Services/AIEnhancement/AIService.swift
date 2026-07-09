@@ -279,12 +279,24 @@ class AIService: ObservableObject {
             } else if provider == .localCLI {
                 return localCLIService.isConfigured
             } else if provider == .openAI {
-                return APIKeyManager.shared.hasAPIKey(forProvider: provider.rawValue) || isOAuthAuthenticated
+                return APIKeyManager.shared.hasAPIKey(forProvider: provider.rawValue) || hasOAuthSession
             } else if provider.requiresAPIKey {
                 return APIKeyManager.shared.hasAPIKey(forProvider: provider.rawValue)
             }
             return false
         }
+    }
+
+    var hasOAuthSession: Bool {
+        if isOAuthAuthenticated {
+            return true
+        }
+
+        guard let tokens = try? OAuthKeychainManager.shared.retrieveOAuthTokens() else {
+            return false
+        }
+
+        return !tokens.accessToken.isEmpty && !tokens.refreshToken.isEmpty
     }
 
     var currentModel: String {
@@ -375,14 +387,22 @@ class AIService: ObservableObject {
     }
 
     /// Returns the appropriate authorization header for the selected provider and auth mode
-    func authorizationHeader() throws -> String {
-        if selectedProvider == .openAI && openAIAuthMode == .oauth {
-            guard let token = try getOAuthAccessToken() else {
+    func authorizationHeader(for provider: AIProvider? = nil, authMode: OpenAIAuthMode? = nil) throws -> String {
+        let resolvedProvider = provider ?? selectedProvider
+        let resolvedAuthMode = authMode ?? (resolvedProvider == .openAI ? openAIAuthMode : nil)
+
+        if resolvedProvider == .openAI && resolvedAuthMode == .oauth {
+            guard let token = try getOAuthAccessToken(authMode: .oauth) else {
                 throw EnhancementError.notConfigured
             }
             return "Bearer \(token)"
-        } else if selectedProvider.requiresAPIKey {
+        } else if resolvedProvider == selectedProvider && resolvedProvider.requiresAPIKey {
             return "Bearer \(apiKey)"
+        } else if resolvedProvider.requiresAPIKey {
+            guard let key = APIKeyManager.shared.getAPIKey(forProvider: resolvedProvider.rawValue), !key.isEmpty else {
+                throw EnhancementError.notConfigured
+            }
+            return "Bearer \(key)"
         }
         return ""
     }
@@ -939,8 +959,9 @@ class AIService: ObservableObject {
         NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
     }
 
-    func refreshOAuthTokenIfNeeded() async throws {
-        guard openAIAuthMode == .oauth else { return }
+    func refreshOAuthTokenIfNeeded(authMode: OpenAIAuthMode? = nil) async throws {
+        let resolvedAuthMode = authMode ?? openAIAuthMode
+        guard resolvedAuthMode == .oauth else { return }
 
         guard let tokens = try OAuthKeychainManager.shared.retrieveOAuthTokens() else {
             await MainActor.run {
@@ -979,8 +1000,9 @@ class AIService: ObservableObject {
         }
     }
 
-    func getOAuthAccessToken() throws -> String? {
-        guard openAIAuthMode == .oauth else { return nil }
+    func getOAuthAccessToken(authMode: OpenAIAuthMode? = nil) throws -> String? {
+        let resolvedAuthMode = authMode ?? openAIAuthMode
+        guard resolvedAuthMode == .oauth else { return nil }
 
         guard let tokens = try OAuthKeychainManager.shared.retrieveOAuthTokens() else {
             return nil

@@ -122,7 +122,7 @@ enum OnboardingV2Migration {
             icon: .symbol(isEnhancementEnabled ? "sparkles" : "mic.fill"),
             isAIEnhancementEnabled: isEnhancementEnabled,
             selectedPrompt: selectedPrompt,
-            selectedTranscriptionModelName: defaults.string(forKey: "CurrentTranscriptionModel") ?? StarterModeFactory.transcriptionModelName,
+            selectedTranscriptionModelName: defaults.string(forKey: "CurrentTranscriptionModel") ?? StarterModeFactory.defaultTranscriptionModelName,
             isRealtimeTranscriptionEnabled: true,
             selectedLanguage: defaults.string(forKey: "SelectedLanguage") ?? "en",
             useClipboardContext: defaults.bool(forKey: "useClipboardContext"),
