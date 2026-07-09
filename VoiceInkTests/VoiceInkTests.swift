@@ -8,6 +8,7 @@
 import Testing
 @testable import VoiceInk
 import Foundation
+import SwiftData
 
 struct VoiceInkTests {
 
@@ -49,6 +50,79 @@ struct VoiceInkTests {
 
         #expect(config.openAIAuthMode == .oauth)
         #expect(config.effectiveAIModel == "gpt-5.3-codex")
+    }
+
+    @MainActor
+    @Test func modeRuntimeResolverUsesModeCodexOAuthModelForEnhancement() throws {
+        let defaults = UserDefaults.standard
+        let originalAuthMode = defaults.string(forKey: "openAIAuthMode")
+        let originalOAuthModel = defaults.string(forKey: "openAIOAuthModel")
+        let originalPrompts = defaults.data(forKey: "customPrompts")
+        defer {
+            restoreDefault(originalAuthMode, forKey: "openAIAuthMode")
+            restoreDefault(originalOAuthModel, forKey: "openAIOAuthModel")
+            restoreDefault(originalPrompts, forKey: "customPrompts")
+        }
+
+        let aiService = AIService()
+        aiService.openAIAuthMode = .apiKey
+        aiService.isOAuthAuthenticated = true
+
+        let container = try makeInMemoryModelContainer()
+        let enhancementService = AIEnhancementService(
+            aiService: aiService,
+            modelContext: container.mainContext
+        )
+        let prompt = CustomPrompt(
+            id: UUID(uuidString: "99999999-9999-9999-9999-999999999999")!,
+            title: "Codex Prompt",
+            promptText: "Improve this",
+            useSystemInstructions: false
+        )
+        enhancementService.customPrompts = [prompt]
+
+        let mode = ModeConfig(
+            name: "Codex Enhancement",
+            isAIEnhancementEnabled: true,
+            selectedPrompt: prompt.id.uuidString,
+            selectedAIProvider: AIProvider.openAI.rawValue,
+            selectedAIModel: "gpt-5.2",
+            selectedOpenAIAuthMode: OpenAIAuthMode.oauth.rawValue,
+            selectedOpenAIOAuthModel: "gpt-5.3-codex"
+        )
+
+        let configuration = ModeRuntimeResolver.currentEnhancementConfiguration(
+            mode: mode,
+            enhancementService: enhancementService,
+            aiService: aiService
+        )
+
+        #expect(configuration.prompt?.id == prompt.id)
+        #expect(configuration.provider == .openAI)
+        #expect(configuration.openAIAuthMode == .oauth)
+        #expect(configuration.modelName == "gpt-5.3-codex")
+    }
+
+    @Test func modeConfigDraftPreservesCodexOAuthFieldsWhenSaving() {
+        let originalConfig = ModeConfig(
+            name: "Codex",
+            isAIEnhancementEnabled: true,
+            selectedAIProvider: AIProvider.openAI.rawValue,
+            selectedAIModel: "gpt-5.2",
+            selectedOpenAIAuthMode: OpenAIAuthMode.oauth.rawValue,
+            selectedOpenAIOAuthModel: "gpt-5.3-codex"
+        )
+        var draft = ModeConfigDraft(
+            mode: .edit(originalConfig),
+            modeManager: ModeManager.shared
+        )
+
+        draft.selectedOpenAIOAuthModel = "gpt-5.5"
+        let updatedConfig = draft.makeConfig(mode: .edit(originalConfig))
+
+        #expect(updatedConfig.selectedOpenAIAuthMode == OpenAIAuthMode.oauth.rawValue)
+        #expect(updatedConfig.selectedOpenAIOAuthModel == "gpt-5.5")
+        #expect(updatedConfig.effectiveAIModel == "gpt-5.5")
     }
 
     @Test func onboardingMigrationPreservesLegacyPowerModeConfigurations() throws {
@@ -194,6 +268,42 @@ struct VoiceInkTests {
     private func removeIsolatedDefaults(named suiteName: String) {
         guard let defaults = UserDefaults(suiteName: suiteName) else { return }
         defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    private func restoreDefault(_ value: String?, forKey key: String) {
+        if let value {
+            UserDefaults.standard.set(value, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
+    private func restoreDefault(_ value: Data?, forKey key: String) {
+        if let value {
+            UserDefaults.standard.set(value, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
+    private func makeInMemoryModelContainer() throws -> ModelContainer {
+        let schema = Schema([
+            Transcription.self,
+            VocabularyWord.self,
+            WordReplacement.self,
+            SessionMetric.self
+        ])
+        let transcriptSchema = Schema([Transcription.self])
+        let dictionarySchema = Schema([VocabularyWord.self, WordReplacement.self])
+        let statsSchema = Schema([SessionMetric.self])
+
+        return try ModelContainer(
+            for: schema,
+            configurations:
+                ModelConfiguration("default", schema: transcriptSchema, isStoredInMemoryOnly: true),
+                ModelConfiguration("dictionary", schema: dictionarySchema, isStoredInMemoryOnly: true),
+                ModelConfiguration("stats", schema: statsSchema, isStoredInMemoryOnly: true)
+        )
     }
 
 }

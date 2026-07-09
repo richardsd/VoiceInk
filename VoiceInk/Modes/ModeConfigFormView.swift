@@ -88,6 +88,9 @@ struct ModeConfigFormView: View {
         .onChange(of: draft.selectedAIModel) { _, _ in
             applyOutputRules()
         }
+        .onChange(of: draft.selectedOpenAIOAuthModel) { _, _ in
+            applyOutputRules()
+        }
     }
 
     private var header: some View {
@@ -332,14 +335,18 @@ struct ModeConfigFormView: View {
                 .onChange(of: draft.isAIEnhancementEnabled) { _, newValue in
                     if newValue {
                         if configuredSelectedAIProvider == nil {
-                            draft.selectedAIProvider = aiProviderOptions.first?.rawValue
+                            if let provider = aiProviderOptions.first {
+                                draft.selectedAIProvider = provider.rawValue
+                                prepareOpenAIAuthSelectionIfNeeded(for: provider)
+                            }
                             draft.selectedAIModel = nil
                         }
-                        if draft.selectedAIModel == nil,
-                            let provider = configuredSelectedAIProvider,
-                            provider != .localCLI
-                        {
-                            draft.selectedAIModel = warmupSnapshot.selectedModel(for: provider)
+                        if let provider = configuredSelectedAIProvider,
+                           provider != .localCLI {
+                            let selectedModel = selectedEnhancementModel(for: provider)
+                            if selectedModel == nil || selectedModel?.isEmpty == true {
+                                setEnhancementModel(defaultEnhancementModel(for: provider), for: provider)
+                            }
                         }
                         if configuredSelectedAIProvider != .voiceInkRefine,
                             draft.selectedPromptId == nil
@@ -358,6 +365,7 @@ struct ModeConfigFormView: View {
                 },
                 set: { newValue in
                     draft.selectedAIProvider = newValue.rawValue
+                    prepareOpenAIAuthSelectionIfNeeded(for: newValue)
                     draft.selectedAIModel = nil
                 }
             )
@@ -379,18 +387,20 @@ struct ModeConfigFormView: View {
                     }
                     .onChange(of: draft.selectedAIProvider) { _, newValue in
                         if let provider = newValue.flatMap({ AIProvider(rawValue: $0) }) {
+                            prepareOpenAIAuthSelectionIfNeeded(for: provider)
                             switch provider {
                             case .localCLI:
                                 draft.selectedAIModel = nil
                             case .voiceInkRefine:
                                 applyVoiceInkRefineRules()
                             case .ollama:
-                                if draft.selectedAIModel == nil || draft.selectedAIModel?.isEmpty == true {
-                                    draft.selectedAIModel = warmupSnapshot.selectedModel(for: provider)
+                                let selectedModel = selectedEnhancementModel(for: provider)
+                                if selectedModel == nil || selectedModel?.isEmpty == true {
+                                    setEnhancementModel(defaultEnhancementModel(for: provider), for: provider)
                                 }
                                 aiService.refreshOllamaAvailabilityInBackground()
                             default:
-                                draft.selectedAIModel = provider.defaultModel
+                                setEnhancementModel(defaultEnhancementModel(for: provider), for: provider)
                             }
 
                             if provider != .voiceInkRefine,
@@ -445,11 +455,11 @@ struct ModeConfigFormView: View {
             } else {
                 let modelBinding = Binding<String>(
                     get: {
-                        if let model = draft.selectedAIModel, !model.isEmpty { return model }
-                        return warmupSnapshot.selectedModel(for: provider)
+                        if let model = selectedEnhancementModel(for: provider), !model.isEmpty { return model }
+                        return defaultEnhancementModel(for: provider)
                     },
                     set: { newModelValue in
-                        draft.selectedAIModel = newModelValue
+                        setEnhancementModel(newModelValue, for: provider)
                     }
                 )
 
@@ -470,16 +480,69 @@ struct ModeConfigFormView: View {
     }
 
     private func aiModelOptions(for provider: AIProvider) -> [String] {
-        var models = warmupSnapshot.availableModels(for: provider)
+        var models = availableEnhancementModels(for: provider)
 
-        if let selectedModel = draft.selectedAIModel,
-            !selectedModel.isEmpty,
-            !models.contains(selectedModel)
-        {
+        if let selectedModel = selectedEnhancementModel(for: provider),
+           !selectedModel.isEmpty,
+           !models.contains(selectedModel) {
             models.insert(selectedModel, at: 0)
         }
 
         return models
+    }
+
+    private func selectedOpenAIAuthMode() -> OpenAIAuthMode {
+        if let rawMode = draft.selectedOpenAIAuthMode,
+           let authMode = OpenAIAuthMode(rawValue: rawMode) {
+            return authMode
+        }
+
+        return aiService.openAIAuthMode
+    }
+
+    private func prepareOpenAIAuthSelectionIfNeeded(for provider: AIProvider) {
+        guard provider == .openAI else { return }
+
+        if draft.selectedOpenAIAuthMode == nil {
+            draft.selectedOpenAIAuthMode = aiService.openAIAuthMode.rawValue
+        }
+
+        if selectedOpenAIAuthMode() == .oauth,
+           (draft.selectedOpenAIOAuthModel?.isEmpty ?? true) {
+            draft.selectedOpenAIOAuthModel = aiService.openAIOAuthModel
+        }
+    }
+
+    private func availableEnhancementModels(for provider: AIProvider) -> [String] {
+        if provider == .openAI {
+            return aiService.models(for: provider, authMode: selectedOpenAIAuthMode())
+        }
+
+        return warmupSnapshot.availableModels(for: provider)
+    }
+
+    private func defaultEnhancementModel(for provider: AIProvider) -> String {
+        if provider == .openAI {
+            return aiService.selectedModel(for: provider, authMode: selectedOpenAIAuthMode())
+        }
+
+        return warmupSnapshot.selectedModel(for: provider)
+    }
+
+    private func selectedEnhancementModel(for provider: AIProvider) -> String? {
+        if provider == .openAI && selectedOpenAIAuthMode() == .oauth {
+            return draft.selectedOpenAIOAuthModel ?? draft.selectedAIModel
+        }
+
+        return draft.selectedAIModel
+    }
+
+    private func setEnhancementModel(_ model: String?, for provider: AIProvider) {
+        if provider == .openAI && selectedOpenAIAuthMode() == .oauth {
+            draft.selectedOpenAIOAuthModel = model
+        } else {
+            draft.selectedAIModel = model
+        }
     }
 
     private var promptPicker: some View {

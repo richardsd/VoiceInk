@@ -19,6 +19,8 @@ struct ModeConfigDraft {
     var useScreenCapture: Bool
     var selectedAIProvider: String?
     var selectedAIModel: String?
+    var selectedOpenAIAuthMode: String?
+    var selectedOpenAIOAuthModel: String?
     var outputMode: ModeOutputMode
     var autoSendKey: AutoSendKey
     var customCommand: String
@@ -50,6 +52,8 @@ struct ModeConfigDraft {
             useScreenCapture = true
             selectedAIProvider = inheritedConfig?.selectedAIProvider
             selectedAIModel = inheritedConfig?.selectedAIModel
+            selectedOpenAIAuthMode = inheritedConfig?.selectedOpenAIAuthMode ?? UserDefaults.standard.string(forKey: "openAIAuthMode")
+            selectedOpenAIOAuthModel = inheritedConfig?.selectedOpenAIOAuthModel ?? UserDefaults.standard.string(forKey: "openAIOAuthModel")
             outputMode = .paste
             autoSendKey = .none
             customCommand = inheritedConfig?.customCommand?.command ?? ""
@@ -77,6 +81,8 @@ struct ModeConfigDraft {
             useScreenCapture = latestConfig.useScreenCapture
             selectedAIProvider = latestConfig.selectedAIProvider
             selectedAIModel = latestConfig.selectedAIModel
+            selectedOpenAIAuthMode = latestConfig.selectedOpenAIAuthMode
+            selectedOpenAIOAuthModel = latestConfig.selectedOpenAIOAuthModel
             outputMode = latestConfig.outputMode
             autoSendKey = latestConfig.autoSendKey
             customCommand = latestConfig.customCommand?.command ?? ""
@@ -188,6 +194,8 @@ struct ModeConfigDraft {
                 isTextFormattingEnabled: isTextFormattingEnabled,
                 selectedAIProvider: selectedAIProvider,
                 selectedAIModel: selectedAIModel,
+                selectedOpenAIAuthMode: selectedOpenAIAuthMode,
+                selectedOpenAIOAuthModel: selectedOpenAIOAuthModel,
                 outputMode: outputMode,
                 autoSendKey: savedAutoSendKey,
                 customCommand: savedCustomCommand,
@@ -213,6 +221,8 @@ struct ModeConfigDraft {
             updatedConfig.useScreenCapture = useScreenCapture
             updatedConfig.selectedAIProvider = selectedAIProvider
             updatedConfig.selectedAIModel = selectedAIModel
+            updatedConfig.selectedOpenAIAuthMode = selectedOpenAIAuthMode
+            updatedConfig.selectedOpenAIOAuthModel = selectedOpenAIOAuthModel
             updatedConfig.outputMode = outputMode
             updatedConfig.autoSendKey = savedAutoSendKey
             updatedConfig.customCommand = savedCustomCommand
