@@ -84,8 +84,8 @@ class AIEnhancementService: ObservableObject {
             return CustomAIProviderManager.shared.requestConfiguration(forModel: modelName) != nil
         }
 
-        if provider == .openAI && aiService.openAIAuthMode == .oauth {
-            return aiService.isOAuthAuthenticated
+        if provider == .openAI && configuration.openAIAuthMode == .oauth {
+            return aiService.hasOAuthSession
         }
 
         return APIKeyManager.shared.hasAPIKey(forProvider: provider.rawValue)
@@ -242,7 +242,7 @@ class AIEnhancementService: ObservableObject {
 
         try await waitForRateLimit()
 
-        if provider == .openAI && aiService.openAIAuthMode == .oauth {
+        if provider == .openAI && configuration.openAIAuthMode == .oauth {
             return try await makeCodexOAuthRequest(
                 formattedText: formattedText,
                 systemMessage: systemMessage,
@@ -276,8 +276,8 @@ class AIEnhancementService: ObservableObject {
                     timeout: baseTimeout
                 )
             default:
-                let baseURLString = provider == .openAI && aiService.openAIAuthMode == .oauth
-                    ? aiService.effectiveBaseURL
+                let baseURLString = provider == .openAI && configuration.openAIAuthMode == .oauth
+                    ? CodexConstants.responsesEndpoint
                     : provider.baseURL
                 guard let baseURL = URL(string: baseURLString) else {
                     throw EnhancementError.customError("\(provider.rawValue) has an invalid API endpoint URL. Please update it in AI settings.")
@@ -293,7 +293,11 @@ class AIEnhancementService: ObservableObject {
                 )
                 result = try await OpenAILLMClient.chatCompletion(
                     baseURL: baseURL,
-                    apiKey: try apiKey(for: provider, modelName: modelName),
+                    apiKey: try apiKey(
+                        for: provider,
+                        modelName: modelName,
+                        openAIAuthMode: configuration.openAIAuthMode
+                    ),
                     model: modelName,
                     messages: [.user(formattedText)],
                     systemPrompt: systemMessage,
@@ -313,7 +317,11 @@ class AIEnhancementService: ObservableObject {
         }
     }
 
-    private func apiKey(for provider: AIProvider, modelName: String) throws -> String {
+    private func apiKey(
+        for provider: AIProvider,
+        modelName: String,
+        openAIAuthMode: OpenAIAuthMode? = nil
+    ) throws -> String {
         if provider == .custom {
             guard let customConfiguration = CustomAIProviderManager.shared.requestConfiguration(forModel: modelName) else {
                 throw EnhancementError.notConfigured
@@ -321,8 +329,8 @@ class AIEnhancementService: ObservableObject {
             return customConfiguration.apiKey
         }
 
-        if provider == .openAI && aiService.openAIAuthMode == .oauth {
-            guard let token = try aiService.getOAuthAccessToken(), !token.isEmpty else {
+        if provider == .openAI && openAIAuthMode == .oauth {
+            guard let token = try aiService.getOAuthAccessToken(authMode: .oauth), !token.isEmpty else {
                 throw EnhancementError.notConfigured
             }
             return token
@@ -335,7 +343,7 @@ class AIEnhancementService: ObservableObject {
     }
 
     private func makeCodexOAuthRequest(formattedText: String, systemMessage: String, modelName: String) async throws -> String {
-        try await aiService.refreshOAuthTokenIfNeeded()
+        try await aiService.refreshOAuthTokenIfNeeded(authMode: .oauth)
 
         let url = URL(string: CodexConstants.responsesEndpoint)!
         var request = URLRequest(url: url)
@@ -343,7 +351,7 @@ class AIEnhancementService: ObservableObject {
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = baseTimeout
 
-        let authHeader = try aiService.authorizationHeader()
+        let authHeader = try aiService.authorizationHeader(for: .openAI, authMode: .oauth)
         if !authHeader.isEmpty {
             request.addValue(authHeader, forHTTPHeaderField: "Authorization")
         }

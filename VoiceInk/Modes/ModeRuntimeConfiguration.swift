@@ -34,6 +34,7 @@ struct EnhancementRuntimeConfiguration {
     let prompt: CustomPrompt?
     let provider: AIProvider?
     let modelName: String?
+    let openAIAuthMode: OpenAIAuthMode?
     let useClipboardContext: Bool
     let useSelectedTextContext: Bool
     let useScreenCaptureContext: Bool
@@ -45,6 +46,7 @@ struct EnhancementRuntimeConfiguration {
             prompt: prompt,
             provider: provider,
             modelName: modelName,
+            openAIAuthMode: openAIAuthMode,
             useClipboardContext: useClipboardContext,
             useSelectedTextContext: useSelectedTextContext,
             useScreenCaptureContext: useScreenCaptureContext
@@ -112,9 +114,19 @@ enum ModeRuntimeResolver {
             providerName: mode?.selectedAIProvider,
             aiService: aiService
         )
+        let openAIAuthMode = resolvedOpenAIAuthMode(
+            provider: provider,
+            mode: mode,
+            aiService: aiService
+        )
         let modelName = resolvedEnhancementModelName(
             provider: provider,
-            configuredModelName: mode?.selectedAIModel,
+            configuredModelName: resolvedConfiguredModelName(
+                provider: provider,
+                mode: mode,
+                openAIAuthMode: openAIAuthMode
+            ),
+            openAIAuthMode: openAIAuthMode,
             aiService: aiService
         )
 
@@ -124,6 +136,7 @@ enum ModeRuntimeResolver {
             prompt: prompt,
             provider: provider,
             modelName: modelName,
+            openAIAuthMode: openAIAuthMode,
             useClipboardContext: mode?.useClipboardContext ?? false,
             useSelectedTextContext: mode?.useSelectedTextContext ?? true,
             useScreenCaptureContext: mode?.useScreenCapture ?? false
@@ -178,9 +191,41 @@ enum ModeRuntimeResolver {
         return aiService.connectedProviders.first
     }
 
+    private static func resolvedOpenAIAuthMode(
+        provider: AIProvider?,
+        mode: ModeConfig?,
+        aiService: AIService
+    ) -> OpenAIAuthMode? {
+        guard provider == .openAI else { return nil }
+
+        if let rawMode = mode?.selectedOpenAIAuthMode,
+           let authMode = OpenAIAuthMode(rawValue: rawMode) {
+            return authMode
+        }
+
+        return aiService.openAIAuthMode
+    }
+
+    private static func resolvedConfiguredModelName(
+        provider: AIProvider?,
+        mode: ModeConfig?,
+        openAIAuthMode: OpenAIAuthMode?
+    ) -> String? {
+        guard provider == .openAI, openAIAuthMode == .oauth else {
+            return mode?.selectedAIModel
+        }
+
+        if let oauthModel = mode?.selectedOpenAIOAuthModel, !oauthModel.isEmpty {
+            return oauthModel
+        }
+
+        return mode?.selectedAIModel
+    }
+
     private static func resolvedEnhancementModelName(
         provider: AIProvider?,
         configuredModelName: String?,
+        openAIAuthMode: OpenAIAuthMode?,
         aiService: AIService
     ) -> String? {
         guard let provider else { return nil }
@@ -189,7 +234,7 @@ enum ModeRuntimeResolver {
             return nil
         }
 
-        let models = aiService.availableModels(for: provider)
+        let models = aiService.models(for: provider, authMode: openAIAuthMode)
         if let configuredModelName,
            !configuredModelName.isEmpty,
            (models.isEmpty || models.contains(configuredModelName)) {
@@ -200,6 +245,6 @@ enum ModeRuntimeResolver {
             return firstModel
         }
 
-        return provider.defaultModel
+        return aiService.defaultModel(for: provider, authMode: openAIAuthMode)
     }
 }
