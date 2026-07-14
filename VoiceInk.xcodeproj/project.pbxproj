@@ -291,7 +291,7 @@
 				E1ADD45D2CC544F100303ECB /* XCRemoteSwiftPackageReference "Sparkle" */,
 				E1D7EF972E35E16C00640029 /* XCRemoteSwiftPackageReference "mediaremote-adapter" */,
 				E1ECEC142E44590200DFFBA8 /* XCRemoteSwiftPackageReference "Zip" */,
-				E11BBA4C2E5DC555000AB839 /* XCLocalSwiftPackageReference "LocalPackages/FluidAudio" */,
+				E11BBA4C2E5DC555000AB839 /* XCRemoteSwiftPackageReference "FluidAudio" */,
 				E1342C1D2EB4844800CED8A2 /* XCRemoteSwiftPackageReference "swift-atomics" */,
 				E1DD20DF2FA20AEE0020AF3B /* XCRemoteSwiftPackageReference "LLMkit" */,
 				E1F511022FA3B47000F00001 /* XCRemoteSwiftPackageReference "SelectedTextKit" */,
@@ -689,14 +689,15 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		E11BBA4C2E5DC555000AB839 /* XCLocalSwiftPackageReference "LocalPackages/FluidAudio" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = LocalPackages/FluidAudio;
-		};
-/* End XCLocalSwiftPackageReference section */
-
 /* Begin XCRemoteSwiftPackageReference section */
+		E11BBA4C2E5DC555000AB839 /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 		E1342C1D2EB4844800CED8A2 /* XCRemoteSwiftPackageReference "swift-atomics" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/apple/swift-atomics.git";
@@ -766,7 +767,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		E11BBA4D2E5DC555000AB839 /* FluidAudio */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = E11BBA4C2E5DC555000AB839 /* XCLocalSwiftPackageReference "LocalPackages/FluidAudio" */;
+			package = E11BBA4C2E5DC555000AB839 /* XCRemoteSwiftPackageReference "FluidAudio" */;
 			productName = FluidAudio;
 		};
 		E1342C1E2EB4844800CED8A2 /* Atomics */ = {

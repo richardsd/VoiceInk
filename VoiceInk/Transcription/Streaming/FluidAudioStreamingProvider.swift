@@ -18,6 +18,8 @@ final class FluidAudioStreamingProvider: StreamingTranscriptionProvider {
     private var trimmedSampleCount: Int = 0
 
     private var asrManager: AsrManager?
+    private var decoderLayerCount: Int = 0
+    private var languageHint: Language?
     private let agreementEngine: WordAgreementEngine
     private let config: AgreementConfig
 
@@ -27,8 +29,8 @@ final class FluidAudioStreamingProvider: StreamingTranscriptionProvider {
     private let confirmationLock = NSLock()
     private var confirmedSegmentCount = 0
     private let minimumConfirmedSegmentsForStreamingFinalization = 3
-    private let minimumAudioSamples = ASRConstants.sampleRate
-    private let minNewSamples = ASRConstants.sampleRate
+    private let minimumAudioSamples = ASRConstants.minimumRequiredSamples(forSampleRate: ASRConstants.sampleRate)
+    private let minNewSamples = ASRConstants.minimumRequiredSamples(forSampleRate: ASRConstants.sampleRate)
 
     var stopDisposition: StreamingStopDisposition {
         confirmationLock.lock()
@@ -58,8 +60,10 @@ final class FluidAudioStreamingProvider: StreamingTranscriptionProvider {
         let models = try await fluidAudioService.getOrLoadModels(for: version)
 
         let manager = AsrManager(config: .default)
-        try await manager.initialize(models: models)
+        try await manager.loadModels(models)
         self.asrManager = manager
+        self.decoderLayerCount = await manager.decoderLayerCount
+        self.languageHint = FluidAudioTranscriptionService.languageHint(from: language, model: model)
 
         agreementEngine.reset()
         audioBuffer = []
@@ -99,6 +103,8 @@ final class FluidAudioStreamingProvider: StreamingTranscriptionProvider {
 
         await asrManager?.cleanup()
         asrManager = nil
+        decoderLayerCount = 0
+        languageHint = nil
 
         bufferLock.lock()
         audioBuffer = []
@@ -167,7 +173,12 @@ final class FluidAudioStreamingProvider: StreamingTranscriptionProvider {
         guard audioSlice.count >= minimumAudioSamples else { return }
 
         do {
-            let result = try await asrManager.transcribe(audioSlice)
+            var state = TdtDecoderState.make(decoderLayers: decoderLayerCount)
+            let result = try await asrManager.transcribe(
+                audioSlice,
+                decoderState: &state,
+                language: languageHint
+            )
             lastTranscribedSampleCount = absoluteSampleCount
 
             guard let tokenTimings = result.tokenTimings, !tokenTimings.isEmpty else {
@@ -185,7 +196,7 @@ final class FluidAudioStreamingProvider: StreamingTranscriptionProvider {
                 words: words, resultConfidence: result.confidence)
 
             if !agreementResult.newlyConfirmedText.isEmpty {
-                let normalizedConfirmed = agreementResult.newlyConfirmedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                let normalizedConfirmed = TextNormalizer.shared.normalizeSentence(agreementResult.newlyConfirmedText)
                 if !normalizedConfirmed.isEmpty {
                     confirmationLock.lock()
                     confirmedSegmentCount += 1
@@ -242,10 +253,15 @@ final class FluidAudioStreamingProvider: StreamingTranscriptionProvider {
         samples += [Float](repeating: 0, count: trailingSilenceSamples)
 
         do {
-            let result = try await asrManager.transcribe(samples)
+            var state = TdtDecoderState.make(decoderLayers: decoderLayerCount)
+            let result = try await asrManager.transcribe(
+                samples,
+                decoderState: &state,
+                language: languageHint
+            )
             let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
-            return text
+            return TextNormalizer.shared.normalizeSentence(text)
         } catch {
             logger.error("Final transcription failed: \(error, privacy: .public)")
             return nil
