@@ -115,6 +115,21 @@ struct ModeConfigDraft {
             return
         }
 
+        if provider == .openAI {
+            let authMode = snapshot.preferredOpenAIAuthMode
+            selectedOpenAIAuthMode = authMode.rawValue
+
+            if authMode == .oauth {
+                selectedOpenAIOAuthModel = snapshot.defaultOpenAIModel(for: .oauth)
+            } else {
+                let models = snapshot.availableOpenAIModels(for: .apiKey)
+                if selectedAIModel?.isEmpty != false || !models.contains(selectedAIModel ?? "") {
+                    selectedAIModel = snapshot.selectedOpenAIModel(for: .apiKey)
+                }
+            }
+            return
+        }
+
         let availableModels = snapshot.availableModels(for: provider)
         if let selectedAIModel,
             !selectedAIModel.isEmpty,

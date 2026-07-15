@@ -15,10 +15,16 @@ struct ProviderDetailPanel: View {
     @State private var verificationDetailMessage: String?
     @State private var verificationSucceeded = false
     @State private var isShowingRemoveAPIKeyConfirmation = false
+    @State private var isShowingOAuthSignOutConfirmation = false
+    @State private var oauthErrorMessage: String?
     @State private var activeDescriptorID = ""
 
-    private var isConfigured: Bool {
+    private var hasAPIKey: Bool {
         APIKeyManager.shared.hasAPIKey(forProvider: descriptor.providerKey)
+    }
+
+    private var isOpenAI: Bool {
+        descriptor.aiProvider == .openAI
     }
 
     private var iconName: String {
@@ -33,7 +39,7 @@ struct ProviderDetailPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    apiKeySection
+                    connectionSection
 
                     if descriptor.hasTranscription {
                         transcriptionModelsSection
@@ -46,7 +52,13 @@ struct ProviderDetailPanel: View {
                 .padding(20)
             }
         }
-        .onAppear(perform: loadSavedAPIKey)
+        .onAppear {
+            loadSavedAPIKey()
+            if isOpenAI {
+                aiService.refreshOpenAIAuthenticationStatus()
+                refreshChatGPTSessionIfNeeded()
+            }
+        }
         .onChange(of: descriptor.id) { _, _ in
             resetProviderState()
         }
@@ -84,10 +96,19 @@ struct ProviderDetailPanel: View {
         .overlay(Divider().opacity(0.5), alignment: .bottom)
     }
 
+    @ViewBuilder
+    private var connectionSection: some View {
+        if isOpenAI {
+            openAIConnectionSection
+        } else {
+            apiKeySection
+        }
+    }
+
     private var apiKeySection: some View {
         ProviderConfigurationGroup(title: "Connection") {
             VStack(alignment: .leading, spacing: 8) {
-                if isConfigured {
+                if hasAPIKey {
                     verifiedAPIKeyRow
                 } else {
                     apiKeyInputRow
@@ -95,6 +116,127 @@ struct ProviderDetailPanel: View {
 
                 verificationStatusMessage
             }
+        }
+    }
+
+    private var openAIConnectionSection: some View {
+        ProviderConfigurationGroup(title: "Connections") {
+            VStack(alignment: .leading, spacing: 10) {
+                oauthConnectionCard
+
+                if hasAPIKey {
+                    verifiedAPIKeyRow
+                } else {
+                    apiKeyInputRow
+                }
+
+                verificationStatusMessage
+            }
+        }
+    }
+
+    private var oauthConnectionCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                providerDetailIcon("person.crop.circle.badge.checkmark")
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("ChatGPT Subscription (OAuth)")
+                            .font(.system(size: 13, weight: .semibold))
+
+                        Text("BETA")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(AppTheme.Status.warningStrong)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(AppTheme.Status.warningStrong.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+
+                    Text("Codex-backed enhancement using your ChatGPT account. Model access depends on your account.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
+            }
+
+            if aiService.hasOAuthSession {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(AppTheme.Status.positive)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(aiService.isOAuthAuthenticated ? "Connected" : "Connected — refresh pending")
+                            .font(.system(size: 12, weight: .medium))
+
+                        if let accountID = aiService.oauthAccountId, !accountID.isEmpty {
+                            Text(accountID)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .privacySensitive()
+                        }
+                    }
+
+                    Spacer()
+
+                    if !aiService.isOAuthAuthenticated {
+                        Button("Reconnect") {
+                            signInWithChatGPT()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(aiService.isOAuthAuthenticating)
+                    }
+
+                    Button("Sign Out", role: .destructive) {
+                        isShowingOAuthSignOutConfirmation = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            } else {
+                Button {
+                    signInWithChatGPT()
+                } label: {
+                    HStack(spacing: 7) {
+                        if aiService.isOAuthAuthenticating {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "person.crop.circle.badge.plus")
+                        }
+                        Text(aiService.oauthDisconnectionReason == nil ? "Sign in with ChatGPT" : "Reconnect ChatGPT")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(aiService.isOAuthAuthenticating)
+            }
+
+            if let reason = aiService.oauthDisconnectionReason ?? oauthErrorMessage {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.Status.error)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .background(ProviderSurface(cornerRadius: 8))
+        .alert("Sign Out of ChatGPT?", isPresented: $isShowingOAuthSignOutConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Sign Out", role: .destructive) {
+                do {
+                    try aiService.signOutOAuth()
+                } catch {
+                    oauthErrorMessage = String(localized: "Could not remove the ChatGPT connection.")
+                }
+            }
+        } message: {
+            Text("Modes using this connection will keep their selection but enhancement will remain unavailable until you reconnect.")
         }
     }
 
@@ -288,67 +430,113 @@ struct ProviderDetailPanel: View {
     @ViewBuilder
     private var enhancementModelsSection: some View {
         if let provider = descriptor.aiProvider {
-            let models = aiService.availableModels(for: provider)
+            if provider == .openAI {
+                openAIEnhancementModelsSection
+            } else {
+                let models = aiService.availableModels(for: provider)
 
-            ProviderModelListSection(title: "Available Enhancement Models") {
-                if provider == .openRouter {
-                    HStack(spacing: 12) {
-                        Text(openRouterModelAvailabilityText(for: models.count))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(models.isEmpty ? .secondary : .primary)
+                ProviderModelListSection(title: "Available Enhancement Models") {
+                    if provider == .openRouter {
+                        HStack(spacing: 12) {
+                            Text(openRouterModelAvailabilityText(for: models.count))
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(models.isEmpty ? .secondary : .primary)
 
-                        Spacer()
+                            Spacer()
 
-                        Button {
-                            refreshOpenRouterModels()
-                        } label: {
-                            HStack(spacing: 5) {
-                                if isRefreshingOpenRouterModels {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                } else {
-                                    Image(systemName: "arrow.clockwise")
+                            Button {
+                                refreshOpenRouterModels()
+                            } label: {
+                                HStack(spacing: 5) {
+                                    if isRefreshingOpenRouterModels {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    } else {
+                                        Image(systemName: "arrow.clockwise")
+                                    }
+                                    Text(
+                                        isRefreshingOpenRouterModels
+                                            ? LocalizedStringKey("Refreshing") : LocalizedStringKey("Refresh"))
                                 }
-                                Text(
-                                    isRefreshingOpenRouterModels
-                                        ? LocalizedStringKey("Refreshing") : LocalizedStringKey("Refresh"))
+                                .font(.system(size: 12, weight: .medium))
                             }
-                            .font(.system(size: 12, weight: .medium))
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(isRefreshingOpenRouterModels)
+                            .opacity(isRefreshingOpenRouterModels ? 0.55 : 1)
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(isRefreshingOpenRouterModels)
-                        .opacity(isRefreshingOpenRouterModels ? 0.55 : 1)
-                    }
-                    .padding(.vertical, 8)
-                } else if models.isEmpty {
-                    Text("No models listed.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                         .padding(.vertical, 8)
-                } else {
-                    ForEach(Array(models.prefix(8).enumerated()), id: \.offset) { index, model in
-                        modelRow(
-                            title: model,
-                            subtitle: nil,
-                            trailing: nil,
-                            systemImage: "sparkles"
-                        )
-
-                        if index < min(models.count, 8) - 1 {
-                            Divider()
-                        }
-                    }
-
-                    if models.count > 8 {
-                        Divider()
-                        Text("More enhancement models available")
+                    } else if models.isEmpty {
+                        Text("No models listed.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 8)
+                    } else {
+                        modelRows(models)
+
+                        if models.count > 8 {
+                            Divider()
+                            Text("More enhancement models available")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 8)
+                        }
                     }
                 }
+            }
+        }
+    }
 
+    private var openAIEnhancementModelsSection: some View {
+        let oauthModels = aiService.models(for: .openAI, authMode: .oauth)
+        let apiModels = aiService.models(for: .openAI, authMode: .apiKey)
+
+        return VStack(alignment: .leading, spacing: 14) {
+            ProviderModelListSection(title: "ChatGPT OAuth Models — Beta (\(oauthModels.count))") {
+                Text("Candidate models for Codex-backed enhancement. Availability depends on your ChatGPT account.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 8)
+
+                Divider()
+                modelRows(oauthModels, showsOAuthMetadata: true)
+
+                if oauthModels.count > 8 {
+                    Divider()
+                    Text("More OAuth models available")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+                }
+            }
+
+            ProviderModelListSection(title: "OpenAI API Models (\(apiModels.count))") {
+                modelRows(apiModels)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func modelRows(_ models: [String], showsOAuthMetadata: Bool = false) -> some View {
+        if models.isEmpty {
+            Text("No models listed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 8)
+        } else {
+            ForEach(Array(models.prefix(8).enumerated()), id: \.offset) { index, model in
+                let metadata = showsOAuthMetadata ? CodexModels.metadata(for: model) : nil
+                modelRow(
+                    title: metadata?.displayName ?? model,
+                    subtitle: metadata?.id,
+                    trailing: metadata?.isRecommended == true ? "Recommended" : metadata?.status.rawValue,
+                    systemImage: "sparkles"
+                )
+
+                if index < min(models.count, 8) - 1 {
+                    Divider()
+                }
             }
         }
     }
@@ -425,18 +613,21 @@ struct ProviderDetailPanel: View {
 
     private func resetProviderState() {
         activeDescriptorID = descriptor.id
-        verificationSucceeded = isConfigured
+        verificationSucceeded = hasAPIKey
         apiKey = ""
         isVerifying = false
         isRefreshingOpenRouterModels = false
         verificationMessage = nil
         verificationDetailMessage = nil
         isShowingRemoveAPIKeyConfirmation = false
+        isShowingOAuthSignOutConfirmation = false
+        oauthErrorMessage = nil
     }
 
     private func verificationModel(for provider: AIProvider) -> String {
-        let selectedModel = aiService.selectedModel(for: provider)
-        let models = aiService.availableModels(for: provider)
+        let authMode: OpenAIAuthMode? = provider == .openAI ? .apiKey : nil
+        let selectedModel = aiService.selectedModel(for: provider, authMode: authMode)
+        let models = aiService.models(for: provider, authMode: authMode)
 
         if models.contains(selectedModel) {
             return selectedModel
@@ -512,6 +703,33 @@ struct ProviderDetailPanel: View {
             await aiService.fetchOpenRouterModels()
             await MainActor.run {
                 isRefreshingOpenRouterModels = false
+            }
+        }
+    }
+
+    private func signInWithChatGPT() {
+        oauthErrorMessage = nil
+        Task {
+            do {
+                try await aiService.initiateOAuthFlow()
+            } catch {
+                oauthErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func refreshChatGPTSessionIfNeeded() {
+        guard aiService.hasOAuthSession else { return }
+
+        Task {
+            do {
+                try await aiService.refreshOAuthTokenIfNeeded(authMode: .oauth)
+            } catch {
+                // The service owns session invalidation. Transient refresh failures are
+                // intentionally left retryable without exposing backend error details.
+            }
+            await MainActor.run {
+                aiService.refreshOpenAIAuthenticationStatus()
             }
         }
     }

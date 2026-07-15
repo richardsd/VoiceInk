@@ -6,17 +6,20 @@
 //
 
 import Foundation
-import Network
+import Darwin
 import os
 
 private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "CodexCallbackServer")
 
-enum CallbackServerError: LocalizedError {
+enum CallbackServerError: LocalizedError, Equatable {
     case portInUse
     case timeout
     case cancelled
+    case invalidRequest
+    case unsupportedMethod
+    case invalidPath
     case invalidState
-    case authorizationDenied(String)
+    case authorizationDenied
     case missingCode
     
     var errorDescription: String? {
@@ -27,230 +30,332 @@ enum CallbackServerError: LocalizedError {
             return "Authorization timed out. Please try again."
         case .cancelled:
             return "Authorization was cancelled"
+        case .invalidRequest:
+            return "Invalid OAuth callback request"
+        case .unsupportedMethod:
+            return "Unsupported OAuth callback method"
+        case .invalidPath:
+            return "Invalid OAuth callback path"
         case .invalidState:
             return "Invalid OAuth state parameter"
-        case .authorizationDenied(let message):
-            return "Authorization denied: \(message)"
+        case .authorizationDenied:
+            return "Authorization was denied"
         case .missingCode:
             return "Authorization code not received"
         }
     }
 }
 
+struct CodexCallbackRequestParser {
+    static func authorizationCode(from request: String, expectedState: String) throws -> String {
+        guard let firstLine = request.split(separator: "\r\n").first else {
+            throw CallbackServerError.invalidRequest
+        }
+
+        let requestParts = firstLine.split(separator: " ", maxSplits: 2)
+        guard requestParts.count == 3 else {
+            throw CallbackServerError.invalidRequest
+        }
+        guard requestParts[0] == "GET" else {
+            throw CallbackServerError.unsupportedMethod
+        }
+
+        let requestTarget = String(requestParts[1])
+        guard let components = URLComponents(string: "http://localhost\(requestTarget)") else {
+            throw CallbackServerError.invalidRequest
+        }
+        guard components.path == "/auth/callback" else {
+            throw CallbackServerError.invalidPath
+        }
+
+        var parameters: [String: String] = [:]
+        for item in components.queryItems ?? [] {
+            parameters[item.name] = item.value ?? ""
+        }
+
+        guard let receivedState = parameters["state"],
+              !receivedState.isEmpty,
+              receivedState == expectedState else {
+            throw CallbackServerError.invalidState
+        }
+
+        if parameters["error"] != nil {
+            throw CallbackServerError.authorizationDenied
+        }
+
+        guard let code = parameters["code"], !code.isEmpty else {
+            throw CallbackServerError.missingCode
+        }
+        return code
+    }
+}
+
 @MainActor
 class CodexCallbackServer: ObservableObject {
     @Published var isListening = false
-    
-    private var listener: NWListener?
+
+    private static let maximumRequestSize = 65_536
+    private let timeoutSeconds: TimeInterval
+    private var listeningSocket: Int32 = -1
+    private var acceptSource: DispatchSourceRead?
+    private var clientSources: [Int32: DispatchSourceRead] = [:]
+    private var clientBuffers: [Int32: Data] = [:]
     private var expectedState: String?
     private var continuation: CheckedContinuation<String, Error>?
     private var timeoutTask: Task<Void, Never>?
+
+    init(timeoutSeconds: TimeInterval = CodexConstants.callbackTimeoutSeconds) {
+        self.timeoutSeconds = timeoutSeconds
+    }
     
-    func start(expectedState: String) async throws -> String {
+    func start(
+        expectedState: String,
+        onListening: @MainActor () throws -> Void = {}
+    ) async throws -> String {
         guard !isListening else {
             throw CallbackServerError.portInUse
         }
         
         self.expectedState = expectedState
         
-        return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
-            
-            do {
-                try setupListener()
-                startTimeout()
-            } catch {
-                self.continuation = nil
-                continuation.resume(throwing: error)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                self.continuation = continuation
+
+                do {
+                    try setupListener()
+                    try onListening()
+                    startTimeout()
+                } catch {
+                    self.continuation = nil
+                    cleanupListener()
+                    continuation.resume(throwing: error)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.stop()
             }
         }
     }
     
     func stop() {
         logger.debug("Stopping callback server")
+        let pendingContinuation = continuation
+        continuation = nil
+        cleanupListener()
+
+        pendingContinuation?.resume(throwing: CallbackServerError.cancelled)
+    }
+
+    private func cleanupListener() {
         timeoutTask?.cancel()
         timeoutTask = nil
-        listener?.cancel()
-        listener = nil
+
+        acceptSource?.cancel()
+        acceptSource = nil
+        if listeningSocket >= 0 {
+            Darwin.shutdown(listeningSocket, SHUT_RDWR)
+            Darwin.close(listeningSocket)
+            listeningSocket = -1
+        }
+
+        for socket in Array(clientSources.keys) {
+            closeClient(socket)
+        }
+
         isListening = false
         expectedState = nil
-        
-        if let continuation = continuation {
-            self.continuation = nil
-            continuation.resume(throwing: CallbackServerError.cancelled)
-        }
     }
-    
+
     private func setupListener() throws {
-        let parameters = NWParameters.tcp
-        parameters.allowLocalEndpointReuse = true
-        
-        // Enable SO_REUSEADDR and SO_REUSEPORT for better development experience
-        let options = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options
-        options?.enableKeepalive = false
-        options?.connectionTimeout = 10
-        
-        guard let port = NWEndpoint.Port(rawValue: UInt16(CodexConstants.redirectPort)) else {
+        guard let port = UInt16(exactly: CodexConstants.redirectPort) else {
             throw CallbackServerError.portInUse
         }
-        
-        do {
-            listener = try NWListener(using: parameters, on: port)
-        } catch let error as NSError {
-            // Provide more detailed error message
-            logger.error("Failed to create listener on port \(CodexConstants.redirectPort): \(error.localizedDescription)")
-            if error.domain == NSPOSIXErrorDomain && error.code == Int(EADDRINUSE) {
-                logger.error("Port \(CodexConstants.redirectPort) is already in use. Close other VoiceInk instances or apps using this port.")
+
+        let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        guard socket >= 0 else {
+            logger.error("Failed to create callback listener socket")
+            throw CallbackServerError.portInUse
+        }
+
+        var reuseAddress: Int32 = 1
+        guard Darwin.setsockopt(
+            socket,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            &reuseAddress,
+            socklen_t(MemoryLayout<Int32>.size)
+        ) == 0 else {
+            Darwin.close(socket)
+            throw CallbackServerError.portInUse
+        }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(port.bigEndian)
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+
+        let bindResult = withUnsafePointer(to: &address) { addressPointer in
+            addressPointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                Darwin.bind(
+                    socket,
+                    socketAddress,
+                    socklen_t(MemoryLayout<sockaddr_in>.size)
+                )
+            }
+        }
+
+        guard bindResult == 0, Darwin.listen(socket, SOMAXCONN) == 0 else {
+            let bindError = errno
+            Darwin.close(socket)
+            if bindError == EADDRINUSE {
+                logger.warning("OAuth callback port is already in use")
+            } else {
+                logger.error("Failed to bind the OAuth callback listener to loopback")
             }
             throw CallbackServerError.portInUse
         }
-        
-        listener?.stateUpdateHandler = { [weak self] state in
-            Task { @MainActor in
-                self?.handleStateChange(state)
-            }
+
+        let currentFlags = Darwin.fcntl(socket, F_GETFL, 0)
+        _ = Darwin.fcntl(socket, F_SETFL, currentFlags | O_NONBLOCK)
+
+        listeningSocket = socket
+        let source = DispatchSource.makeReadSource(fileDescriptor: socket, queue: .main)
+        source.setEventHandler { [weak self] in
+            self?.acceptPendingConnections()
         }
-        
-        listener?.newConnectionHandler = { [weak self] connection in
-            Task { @MainActor in
-                self?.handleConnection(connection)
-            }
-        }
-        
-        listener?.start(queue: .main)
+        acceptSource = source
+        source.resume()
+
         isListening = true
-        logger.debug("Callback server started on port \(CodexConstants.redirectPort)")
+        logger.debug("Callback server started on the IPv4 loopback interface")
     }
-    
-    private func handleStateChange(_ state: NWListener.State) {
-        switch state {
-        case .ready:
-            logger.debug("Listener ready")
-        case .failed(let error):
-            logger.error("Listener failed: \(error.localizedDescription)")
-            completeWithError(CallbackServerError.portInUse)
-        case .cancelled:
-            logger.debug("Listener cancelled")
-        default:
-            break
-        }
-    }
-    
-    private func handleConnection(_ connection: NWConnection) {
-        connection.stateUpdateHandler = { state in
-            if case .failed(let error) = state {
-                logger.warning("Connection failed: \(error.localizedDescription)")
-            }
-        }
-        
-        connection.start(queue: .main)
-        
-        receiveRequest(from: connection)
-    }
-    
-    private func receiveRequest(from connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            Task { @MainActor in
-                guard let self = self else { return }
-                
-                if let error = error {
-                    logger.error("Receive error: \(error.localizedDescription)")
-                    self.sendResponse(to: connection, statusCode: 500, body: "Internal error")
-                    return
+
+    private func acceptPendingConnections() {
+        guard listeningSocket >= 0 else { return }
+
+        while true {
+            var peerAddress = sockaddr_in()
+            var peerAddressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let clientSocket = withUnsafeMutablePointer(to: &peerAddress) { addressPointer in
+                addressPointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                    Darwin.accept(listeningSocket, socketAddress, &peerAddressLength)
                 }
-                
-                guard let data = data, let requestString = String(data: data, encoding: .utf8) else {
-                    self.sendResponse(to: connection, statusCode: 400, body: "Invalid request")
-                    return
-                }
-                
-                self.handleHTTPRequest(requestString, connection: connection)
             }
+
+            if clientSocket < 0 {
+                if errno != EAGAIN && errno != EWOULDBLOCK {
+                    logger.warning("Failed to accept an OAuth callback connection")
+                }
+                return
+            }
+
+            guard peerAddress.sin_family == sa_family_t(AF_INET),
+                  peerAddress.sin_addr.s_addr == inet_addr("127.0.0.1") else {
+                Darwin.close(clientSocket)
+                logger.warning("Rejected a non-loopback OAuth callback connection")
+                continue
+            }
+
+            var noSigPipe: Int32 = 1
+            _ = Darwin.setsockopt(
+                clientSocket,
+                SOL_SOCKET,
+                SO_NOSIGPIPE,
+                &noSigPipe,
+                socklen_t(MemoryLayout<Int32>.size)
+            )
+
+            let source = DispatchSource.makeReadSource(fileDescriptor: clientSocket, queue: .main)
+            source.setEventHandler { [weak self] in
+                self?.readRequest(from: clientSocket)
+            }
+            clientBuffers[clientSocket] = Data()
+            clientSources[clientSocket] = source
+            source.resume()
         }
     }
-    
-    private func handleHTTPRequest(_ requestString: String, connection: NWConnection) {
+
+    private func readRequest(from socket: Int32) {
+        var bytes = [UInt8](repeating: 0, count: 4096)
+        let byteCount = Darwin.recv(socket, &bytes, bytes.count, 0)
+
+        guard byteCount > 0 else {
+            closeClient(socket)
+            return
+        }
+
+        clientBuffers[socket, default: Data()].append(contentsOf: bytes.prefix(byteCount))
+        guard let requestData = clientBuffers[socket] else {
+            closeClient(socket)
+            return
+        }
+
+        guard requestData.count <= Self.maximumRequestSize else {
+            sendResponse(to: socket, statusCode: 400, body: "Invalid request")
+            return
+        }
+
+        let headerTerminator = Data([13, 10, 13, 10])
+        guard requestData.range(of: headerTerminator) != nil else { return }
+
+        guard let requestString = String(data: requestData, encoding: .utf8) else {
+            sendResponse(to: socket, statusCode: 400, body: "Invalid request")
+            return
+        }
+
+        handleHTTPRequest(requestString, socket: socket)
+    }
+
+    private func handleHTTPRequest(_ requestString: String, socket: Int32) {
         logger.debug("Received HTTP request")
-        
-        // Parse the request line
-        guard let firstLine = requestString.split(separator: "\r\n").first,
-              let urlPart = firstLine.split(separator: " ").dropFirst().first else {
-            sendResponse(to: connection, statusCode: 400, body: "Invalid request format")
-            return
+
+        do {
+            let code = try CodexCallbackRequestParser.authorizationCode(
+                from: requestString,
+                expectedState: expectedState ?? ""
+            )
+            logger.debug("Successfully received authorization code")
+            sendSuccessResponse(to: socket)
+            completeWithCode(code)
+        } catch let error as CallbackServerError {
+            switch error {
+            case .unsupportedMethod:
+                sendResponse(to: socket, statusCode: 405, body: "Method not allowed")
+            case .invalidPath:
+                sendResponse(to: socket, statusCode: 404, body: "Not found")
+            case .invalidState:
+                logger.warning("Rejected OAuth callback with invalid state")
+                sendResponse(to: socket, statusCode: 400, body: "Invalid state parameter")
+            case .authorizationDenied:
+                logger.warning("OAuth authorization was denied")
+                sendResponse(to: socket, statusCode: 400, body: "Authorization failed")
+                completeWithError(error)
+            case .missingCode:
+                logger.warning("OAuth callback did not contain an authorization code")
+                sendResponse(to: socket, statusCode: 400, body: "Missing authorization code")
+                completeWithError(error)
+            default:
+                sendResponse(to: socket, statusCode: 400, body: "Invalid request")
+            }
+        } catch {
+            sendResponse(to: socket, statusCode: 400, body: "Invalid request")
         }
-        
-        // Parse query parameters
-        let urlString = String(urlPart)
-        guard let components = URLComponents(string: "http://localhost\(urlString)") else {
-            sendResponse(to: connection, statusCode: 400, body: "Invalid URL")
-            return
-        }
-        
-        // Check if this is the callback path
-        guard components.path == "/auth/callback" else {
-            sendResponse(to: connection, statusCode: 404, body: "Not found")
-            return
-        }
-        
-        let queryItems = components.queryItems ?? []
-        let params = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
-        
-        // Check for error
-        if let error = params["error"] {
-            let errorDescription = params["error_description"] ?? error
-            logger.error("OAuth error: \(errorDescription)")
-            sendResponse(to: connection, statusCode: 400, body: "Authorization failed")
-            completeWithError(CallbackServerError.authorizationDenied(errorDescription))
-            return
-        }
-        
-        // Validate state
-        guard let receivedState = params["state"], !receivedState.isEmpty else {
-            logger.error("Missing state parameter")
-            sendResponse(to: connection, statusCode: 400, body: "Missing state parameter")
-            completeWithError(CallbackServerError.invalidState)
-            return
-        }
-        
-        guard receivedState == self.expectedState else {
-            let expected = self.expectedState ?? "nil"
-            logger.error("State mismatch: expected \(expected), got \(receivedState)")
-            sendResponse(to: connection, statusCode: 400, body: "Invalid state parameter")
-            completeWithError(CallbackServerError.invalidState)
-            return
-        }
-        
-        // Get authorization code
-        guard let code = params["code"], !code.isEmpty else {
-            logger.error("Missing authorization code")
-            sendResponse(to: connection, statusCode: 400, body: "Missing authorization code")
-            completeWithError(CallbackServerError.missingCode)
-            return
-        }
-        
-        logger.debug("Successfully received authorization code")
-        sendSuccessResponse(to: connection)
-        completeWithCode(code)
     }
-    
-    private func sendResponse(to connection: NWConnection, statusCode: Int, body: String) {
-        let response = """
-        HTTP/1.1 \(statusCode) \(httpStatusText(statusCode))
-        Content-Type: text/plain
-        Content-Length: \(body.utf8.count)
-        Connection: close
-        
-        \(body)
-        """
-        
-        guard let data = response.data(using: .utf8) else { return }
-        
-        connection.send(content: data, completion: .contentProcessed { _ in
-            connection.cancel()
-        })
+
+    private func sendResponse(to socket: Int32, statusCode: Int, body: String) {
+        let response =
+            "HTTP/1.1 \(statusCode) \(httpStatusText(statusCode))\r\n"
+            + "Content-Type: text/plain; charset=utf-8\r\n"
+            + "Content-Length: \(body.utf8.count)\r\n"
+            + "Connection: close\r\n\r\n"
+            + body
+        writeResponse(response, to: socket)
     }
-    
-    private func sendSuccessResponse(to connection: NWConnection) {
+
+    private func sendSuccessResponse(to socket: Int32) {
         let html = """
         <!DOCTYPE html>
         <html>
@@ -286,21 +391,46 @@ class CodexCallbackServer: ObservableObject {
         </body>
         </html>
         """
-        
-        let response = """
-        HTTP/1.1 200 OK
-        Content-Type: text/html
-        Content-Length: \(html.utf8.count)
-        Connection: close
-        
-        \(html)
-        """
-        
-        guard let data = response.data(using: .utf8) else { return }
-        
-        connection.send(content: data, completion: .contentProcessed { _ in
-            connection.cancel()
-        })
+
+        let response =
+            "HTTP/1.1 200 OK\r\n"
+            + "Content-Type: text/html; charset=utf-8\r\n"
+            + "Content-Length: \(html.utf8.count)\r\n"
+            + "Connection: close\r\n\r\n"
+            + html
+        writeResponse(response, to: socket)
+    }
+
+    private func writeResponse(_ response: String, to socket: Int32) {
+        guard let data = response.data(using: .utf8) else {
+            closeClient(socket)
+            return
+        }
+
+        data.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            var totalSent = 0
+
+            while totalSent < rawBuffer.count {
+                let sent = Darwin.send(
+                    socket,
+                    baseAddress.advanced(by: totalSent),
+                    rawBuffer.count - totalSent,
+                    0
+                )
+                guard sent > 0 else { break }
+                totalSent += sent
+            }
+        }
+
+        closeClient(socket)
+    }
+
+    private func closeClient(_ socket: Int32) {
+        clientSources.removeValue(forKey: socket)?.cancel()
+        clientBuffers.removeValue(forKey: socket)
+        Darwin.shutdown(socket, SHUT_RDWR)
+        Darwin.close(socket)
     }
     
     private func httpStatusText(_ code: Int) -> String {
@@ -308,6 +438,7 @@ class CodexCallbackServer: ObservableObject {
         case 200: return "OK"
         case 400: return "Bad Request"
         case 404: return "Not Found"
+        case 405: return "Method Not Allowed"
         case 500: return "Internal Server Error"
         default: return "Unknown"
         }
@@ -315,7 +446,7 @@ class CodexCallbackServer: ObservableObject {
     
     private func startTimeout() {
         timeoutTask = Task {
-            try? await Task.sleep(for: .seconds(CodexConstants.callbackTimeoutSeconds))
+            try? await Task.sleep(for: .seconds(timeoutSeconds))
             
             if !Task.isCancelled {
                 await MainActor.run {
@@ -329,39 +460,25 @@ class CodexCallbackServer: ObservableObject {
     private func completeWithCode(_ code: String) {
         guard let continuation = continuation else { return }
         self.continuation = nil
-        
-        timeoutTask?.cancel()
-        timeoutTask = nil
-        
-        Task {
-            try? await Task.sleep(for: .milliseconds(500))
-            await MainActor.run {
-                stop()
-            }
-        }
-        
+        cleanupListener()
         continuation.resume(returning: code)
     }
     
     private func completeWithError(_ error: Error) {
         guard let continuation = continuation else { return }
         self.continuation = nil
-        
-        timeoutTask?.cancel()
-        timeoutTask = nil
-        
-        Task {
-            try? await Task.sleep(for: .milliseconds(500))
-            await MainActor.run {
-                stop()
-            }
-        }
-        
+        cleanupListener()
         continuation.resume(throwing: error)
     }
     
     deinit {
-        listener?.cancel()
+        acceptSource?.cancel()
+        if listeningSocket >= 0 {
+            Darwin.close(listeningSocket)
+        }
+        for socket in clientSources.keys {
+            Darwin.close(socket)
+        }
         timeoutTask?.cancel()
     }
 }

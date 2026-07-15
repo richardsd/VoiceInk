@@ -14,6 +14,8 @@ private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category:
 enum CodexAuthError: LocalizedError {
     case invalidState
     case missingCode
+    case authenticationInProgress
+    case browserLaunchFailed
     case tokenExchangeFailed(String)
     case tokenRefreshFailed(String)
     case invalidToken
@@ -24,6 +26,10 @@ enum CodexAuthError: LocalizedError {
             return "OAuth state validation failed"
         case .missingCode:
             return "Authorization code not received"
+        case .authenticationInProgress:
+            return "A ChatGPT sign-in is already in progress"
+        case .browserLaunchFailed:
+            return "Could not open the ChatGPT sign-in page"
         case .tokenExchangeFailed(let message):
             return "Token exchange failed: \(message)"
         case .tokenRefreshFailed(let message):
@@ -94,7 +100,11 @@ class CodexAuth {
     
     // MARK: - Token Exchange
     
-    static func exchangeCodeForTokens(code: String, pkceVerifier: String) async throws -> OAuthTokens {
+    static func exchangeCodeForTokens(
+        code: String,
+        pkceVerifier: String,
+        session: any OAuthHTTPSessionProtocol = URLSession.shared
+    ) async throws -> OAuthTokens {
         let url = URL(string: "\(CodexConstants.issuer)/oauth/token")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -111,16 +121,15 @@ class CodexAuth {
         request.httpBody = body.formURLEncoded()
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw CodexAuthError.tokenExchangeFailed("Invalid response")
             }
             
             guard (200...299).contains(httpResponse.statusCode) else {
-                let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-                logger.error("Token exchange failed: \(httpResponse.statusCode) - \(errorMessage)")
-                throw CodexAuthError.tokenExchangeFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
+                logger.error("Token exchange failed with HTTP \(httpResponse.statusCode)")
+                throw CodexAuthError.tokenExchangeFailed("HTTP \(httpResponse.statusCode)")
             }
             
             let tokenResponse = try JSONDecoder().decode(CodexTokenResponse.self, from: data)
@@ -138,14 +147,19 @@ class CodexAuth {
         } catch let error as CodexAuthError {
             throw error
         } catch {
-            logger.error("Token exchange error: \(error.localizedDescription)")
-            throw CodexAuthError.tokenExchangeFailed(error.localizedDescription)
+            logger.error("Token exchange request failed")
+            throw CodexAuthError.tokenExchangeFailed(
+                "The authentication server returned an invalid response"
+            )
         }
     }
     
     // MARK: - Token Refresh
     
-    static func refreshAccessToken(refreshToken: String) async throws -> OAuthTokens {
+    static func refreshAccessToken(
+        refreshToken: String,
+        session: any OAuthHTTPSessionProtocol = URLSession.shared
+    ) async throws -> OAuthTokens {
         let url = URL(string: "\(CodexConstants.issuer)/oauth/token")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -160,16 +174,15 @@ class CodexAuth {
         request.httpBody = body.formURLEncoded()
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw CodexAuthError.tokenRefreshFailed("Invalid response")
             }
             
             guard (200...299).contains(httpResponse.statusCode) else {
-                let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-                logger.error("Token refresh failed: \(httpResponse.statusCode) - \(errorMessage)")
-                throw CodexAuthError.tokenRefreshFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
+                logger.error("Token refresh failed with HTTP \(httpResponse.statusCode)")
+                throw CodexAuthError.tokenRefreshFailed("HTTP \(httpResponse.statusCode)")
             }
             
             let tokenResponse = try JSONDecoder().decode(CodexTokenResponse.self, from: data)
@@ -187,8 +200,10 @@ class CodexAuth {
         } catch let error as CodexAuthError {
             throw error
         } catch {
-            logger.error("Token refresh error: \(error.localizedDescription)")
-            throw CodexAuthError.tokenRefreshFailed(error.localizedDescription)
+            logger.error("Token refresh request failed")
+            throw CodexAuthError.tokenRefreshFailed(
+                "The authentication server returned an invalid response"
+            )
         }
     }
     
@@ -235,8 +250,9 @@ class CodexAuth {
 extension Dictionary where Key == String, Value == String {
     func formURLEncoded() -> Data? {
         let pairs = map { key, value in
-            let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
-            let encodedValue = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
+            let allowedCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._*"))
+            let encodedKey = key.addingPercentEncoding(withAllowedCharacters: allowedCharacters) ?? key
+            let encodedValue = value.addingPercentEncoding(withAllowedCharacters: allowedCharacters) ?? value
             return "\(encodedKey)=\(encodedValue)"
         }
         return pairs.joined(separator: "&").data(using: .utf8)

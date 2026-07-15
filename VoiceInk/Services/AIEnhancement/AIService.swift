@@ -194,7 +194,7 @@ struct OllamaRefreshResult {
 }
 
 class AIService: ObservableObject {
-    static let fallbackOpenAIOAuthModel = "gpt-5.5"
+    static let fallbackOpenAIOAuthModel = "gpt-5.6-luna"
 
     @Published var apiKey: String = ""
     @Published var isAPIKeyValid: Bool = false
@@ -244,6 +244,7 @@ class AIService: ObservableObject {
     @Published private var selectedModels: [AIProvider: String] = [:]
     private let userDefaults = UserDefaults.standard
     let voiceInkRefineService = VoiceInkRefineService.shared
+    private let oauthTokenStore: any OAuthTokenStore
     private lazy var ollamaService = OllamaService()
     private lazy var localCLIService = LocalCLIService()
     private var apiKeyChangeObserver: NSObjectProtocol?
@@ -257,15 +258,12 @@ class AIService: ObservableObject {
     @Published var openAIAuthMode: OpenAIAuthMode {
         didSet {
             userDefaults.set(openAIAuthMode.rawValue, forKey: "openAIAuthMode")
-            // Update authentication status when mode changes
-            if selectedProvider == .openAI {
-                updateOpenAIAuthenticationStatus()
-            }
             NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
         }
     }
 
     @Published var isOAuthAuthenticated: Bool = false
+    @Published private(set) var isOAuthAuthenticating = false
     @Published var oauthAccountId: String?
     @Published var oauthDisconnectionReason: String?
 
@@ -301,7 +299,7 @@ class AIService: ObservableObject {
             } else if provider == .localCLI {
                 return localCLIService.isConfigured
             } else if provider == .openAI {
-                return APIKeyManager.shared.hasAPIKey(forProvider: provider.rawValue) || hasOAuthSession
+                return !configuredOpenAIAuthModes.isEmpty
             } else if provider.requiresAPIKey {
                 return APIKeyManager.shared.hasAPIKey(forProvider: provider.rawValue)
             }
@@ -314,11 +312,45 @@ class AIService: ObservableObject {
             return true
         }
 
-        guard let tokens = try? OAuthKeychainManager.shared.retrieveOAuthTokens() else {
+        guard let tokens = try? oauthTokenStore.retrieveOAuthTokens() else {
             return false
         }
 
         return !tokens.accessToken.isEmpty && !tokens.refreshToken.isEmpty
+    }
+
+    var hasOpenAIAPIKey: Bool {
+        APIKeyManager.shared.hasAPIKey(forProvider: AIProvider.openAI.rawValue)
+    }
+
+    var configuredOpenAIAuthModes: [OpenAIAuthMode] {
+        Self.configuredOpenAIAuthModes(hasAPIKey: hasOpenAIAPIKey, hasOAuthSession: hasOAuthSession)
+    }
+
+    var preferredOpenAIAuthModeForNewMode: OpenAIAuthMode {
+        Self.preferredOpenAIAuthMode(hasAPIKey: hasOpenAIAPIKey, hasOAuthSession: hasOAuthSession)
+    }
+
+    func isOpenAIConnectionConfigured(_ authMode: OpenAIAuthMode) -> Bool {
+        switch authMode {
+        case .apiKey:
+            return hasOpenAIAPIKey
+        case .oauth:
+            return hasOAuthSession
+        }
+    }
+
+    static func configuredOpenAIAuthModes(hasAPIKey: Bool, hasOAuthSession: Bool) -> [OpenAIAuthMode] {
+        var modes: [OpenAIAuthMode] = []
+        if hasOAuthSession { modes.append(.oauth) }
+        if hasAPIKey { modes.append(.apiKey) }
+        return modes
+    }
+
+    static func preferredOpenAIAuthMode(hasAPIKey: Bool, hasOAuthSession: Bool) -> OpenAIAuthMode {
+        if hasOAuthSession { return .oauth }
+        if hasAPIKey { return .apiKey }
+        return .oauth
     }
 
     var currentModel: String {
@@ -433,7 +465,9 @@ class AIService: ObservableObject {
         return ""
     }
 
-    init() {
+    init(oauthTokenStore: any OAuthTokenStore = OAuthKeychainManager.shared) {
+        self.oauthTokenStore = oauthTokenStore
+
         if userDefaults.string(forKey: "selectedAIProvider") == "GROQ" {
             userDefaults.set("Groq", forKey: "selectedAIProvider")
         }
@@ -504,9 +538,7 @@ class AIService: ObservableObject {
             }
         }
 
-        if selectedProvider == .openAI {
-            updateOpenAIAuthenticationStatus()
-        }
+        updateOpenAIAuthenticationStatus()
 
     }
 
@@ -873,26 +905,21 @@ class AIService: ObservableObject {
 
     // MARK: - OAuth Methods
 
+    func refreshOpenAIAuthenticationStatus() {
+        updateOpenAIAuthenticationStatus()
+    }
+
     private func updateOpenAIAuthenticationStatus() {
-        if openAIAuthMode == .oauth {
-            // Check if we have valid OAuth tokens
-            if let tokens = try? OAuthKeychainManager.shared.retrieveOAuthTokens() {
-                self.isOAuthAuthenticated = !tokens.isExpired
-                self.oauthAccountId = tokens.accountId
-                if self.isOAuthAuthenticated {
-                    self.oauthDisconnectionReason = nil
-                    self.hasShownOAuthDisconnectionNotice = false
-                }
-            } else {
-                self.isOAuthAuthenticated = false
-                self.oauthAccountId = nil
+        if let tokens = try? oauthTokenStore.retrieveOAuthTokens() {
+            self.isOAuthAuthenticated = !tokens.isExpired
+            self.oauthAccountId = tokens.accountId
+            if self.isOAuthAuthenticated {
+                self.oauthDisconnectionReason = nil
+                self.hasShownOAuthDisconnectionNotice = false
             }
         } else {
-            // API key mode - use existing isAPIKeyValid
             self.isOAuthAuthenticated = false
             self.oauthAccountId = nil
-            self.oauthDisconnectionReason = nil
-            self.hasShownOAuthDisconnectionNotice = false
         }
     }
 
@@ -948,7 +975,7 @@ class AIService: ObservableObject {
         logger.error("Invalidating OAuth session: \(reason, privacy: .public)")
 
         if shouldDeleteTokens {
-            try? OAuthKeychainManager.shared.deleteOAuthTokens()
+            try? oauthTokenStore.deleteOAuthTokens()
         }
 
         isOAuthAuthenticated = false
@@ -961,65 +988,53 @@ class AIService: ObservableObject {
 
     @MainActor
     func initiateOAuthFlow() async throws {
+        guard !isOAuthAuthenticating else {
+            throw CodexAuthError.authenticationInProgress
+        }
+
+        isOAuthAuthenticating = true
         logger.info("Initiating OAuth flow")
 
-        // Generate PKCE codes and state
         let pkce = CodexAuth.generatePkce()
         let state = CodexAuth.generateState()
-
-        // Store verifier for later use
         self.currentPkceVerifier = pkce.verifier
-
-        // Start callback server
         let server = CodexCallbackServer()
         self.oauthCallbackServer = server
 
-        // Build authorization URL
-        let authorizeUrl = CodexAuth.buildAuthorizeUrl(pkce: pkce, state: state)
-
-        // Open browser
-        NSWorkspace.shared.open(authorizeUrl)
-
-        // Wait for callback
-        do {
-            let code = try await server.start(expectedState: state)
-            logger.info("Received authorization code")
-
-            // Exchange code for tokens
-            guard let verifier = currentPkceVerifier else {
-                throw CodexAuthError.invalidState
-            }
-
-            let tokens = try await CodexAuth.exchangeCodeForTokens(code: code, pkceVerifier: verifier)
-            logger.info("Successfully exchanged code for tokens")
-
-            // Save tokens to keychain
-            try OAuthKeychainManager.shared.saveOAuthTokens(tokens)
-            logger.info("Saved tokens to keychain")
-
-            // Update state
-            self.isOAuthAuthenticated = true
-            self.oauthAccountId = tokens.accountId
-            self.resetOAuthDisconnectionState()
-            NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
-
-            // Cleanup
-            self.currentPkceVerifier = nil
-            self.oauthCallbackServer = nil
-
-        } catch {
-            logger.error("OAuth flow failed: \(error.localizedDescription)")
-            self.currentPkceVerifier = nil
-            self.oauthCallbackServer = nil
-            throw error
+        defer {
+            server.stop()
+            currentPkceVerifier = nil
+            oauthCallbackServer = nil
+            isOAuthAuthenticating = false
         }
+
+        let authorizeUrl = CodexAuth.buildAuthorizeUrl(pkce: pkce, state: state)
+        let code = try await server.start(expectedState: state) {
+            guard NSWorkspace.shared.open(authorizeUrl) else {
+                throw CodexAuthError.browserLaunchFailed
+            }
+        }
+        logger.info("Received authorization code")
+
+        guard let verifier = currentPkceVerifier else {
+            throw CodexAuthError.invalidState
+        }
+
+        let tokens = try await CodexAuth.exchangeCodeForTokens(code: code, pkceVerifier: verifier)
+        try oauthTokenStore.saveOAuthTokens(tokens)
+
+        self.isOAuthAuthenticated = true
+        self.oauthAccountId = tokens.accountId
+        self.resetOAuthDisconnectionState()
+        NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
+        logger.info("ChatGPT OAuth sign-in completed")
     }
 
     @MainActor
     func signOutOAuth() throws {
         logger.info("Signing out OAuth")
 
-        try OAuthKeychainManager.shared.deleteOAuthTokens()
+        try oauthTokenStore.deleteOAuthTokens()
 
         self.isOAuthAuthenticated = false
         self.oauthAccountId = nil
@@ -1032,7 +1047,7 @@ class AIService: ObservableObject {
         let resolvedAuthMode = authMode ?? openAIAuthMode
         guard resolvedAuthMode == .oauth else { return }
 
-        guard let tokens = try OAuthKeychainManager.shared.retrieveOAuthTokens() else {
+        guard let tokens = try oauthTokenStore.retrieveOAuthTokens() else {
             await MainActor.run {
                 self.handleOAuthSessionInvalidation(
                     reason: "ChatGPT connection expired. Sign in again to continue AI enhancement."
@@ -1047,7 +1062,7 @@ class AIService: ObservableObject {
 
             do {
                 let newTokens = try await CodexAuth.refreshAccessToken(refreshToken: tokens.refreshToken)
-                try OAuthKeychainManager.shared.saveOAuthTokens(newTokens)
+                try oauthTokenStore.saveOAuthTokens(newTokens)
 
                 await MainActor.run {
                     self.isOAuthAuthenticated = true
@@ -1073,7 +1088,7 @@ class AIService: ObservableObject {
         let resolvedAuthMode = authMode ?? openAIAuthMode
         guard resolvedAuthMode == .oauth else { return nil }
 
-        guard let tokens = try OAuthKeychainManager.shared.retrieveOAuthTokens() else {
+        guard let tokens = try oauthTokenStore.retrieveOAuthTokens() else {
             return nil
         }
 

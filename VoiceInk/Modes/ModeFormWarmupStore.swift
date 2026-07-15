@@ -5,6 +5,11 @@ struct ModeFormWarmupSnapshot {
     let connectedAIProviders: [AIProvider]
     let aiModelsByProvider: [AIProvider: [String]]
     let selectedAIModelsByProvider: [AIProvider: String]
+    let configuredOpenAIAuthModes: [OpenAIAuthMode]
+    let openAIModelsByAuthMode: [OpenAIAuthMode: [String]]
+    let selectedOpenAIModelsByAuthMode: [OpenAIAuthMode: String]
+    let defaultOpenAIModelsByAuthMode: [OpenAIAuthMode: String]
+    let preferredOpenAIAuthMode: OpenAIAuthMode
     let usableTranscriptionModels: [any TranscriptionModel]
     let allTranscriptionModels: [any TranscriptionModel]
     let prompts: [CustomPrompt]
@@ -13,6 +18,11 @@ struct ModeFormWarmupSnapshot {
         connectedAIProviders: [],
         aiModelsByProvider: [:],
         selectedAIModelsByProvider: [:],
+        configuredOpenAIAuthModes: [],
+        openAIModelsByAuthMode: [:],
+        selectedOpenAIModelsByAuthMode: [:],
+        defaultOpenAIModelsByAuthMode: [:],
+        preferredOpenAIAuthMode: .oauth,
         usableTranscriptionModels: [],
         allTranscriptionModels: [],
         prompts: []
@@ -36,15 +46,37 @@ struct ModeFormWarmupSnapshot {
         connectedAIProviders = providers
         aiModelsByProvider = modelsByProvider
         selectedAIModelsByProvider = selectedModelsByProvider
+        configuredOpenAIAuthModes = aiService.configuredOpenAIAuthModes
+        openAIModelsByAuthMode = Dictionary(
+            uniqueKeysWithValues: OpenAIAuthMode.allCases.map { authMode in
+                (authMode, aiService.models(for: .openAI, authMode: authMode))
+            }
+        )
+        selectedOpenAIModelsByAuthMode = Dictionary(
+            uniqueKeysWithValues: OpenAIAuthMode.allCases.map { authMode in
+                (authMode, aiService.selectedModel(for: .openAI, authMode: authMode))
+            }
+        )
+        defaultOpenAIModelsByAuthMode = Dictionary(
+            uniqueKeysWithValues: OpenAIAuthMode.allCases.map { authMode in
+                (authMode, aiService.defaultModel(for: .openAI, authMode: authMode))
+            }
+        )
+        preferredOpenAIAuthMode = aiService.preferredOpenAIAuthModeForNewMode
         usableTranscriptionModels = transcriptionModelManager.usableModels
         allTranscriptionModels = transcriptionModelManager.allAvailableModels
         prompts = enhancementService.allPrompts
     }
 
-    private init(
+    init(
         connectedAIProviders: [AIProvider],
         aiModelsByProvider: [AIProvider: [String]],
         selectedAIModelsByProvider: [AIProvider: String],
+        configuredOpenAIAuthModes: [OpenAIAuthMode],
+        openAIModelsByAuthMode: [OpenAIAuthMode: [String]],
+        selectedOpenAIModelsByAuthMode: [OpenAIAuthMode: String],
+        defaultOpenAIModelsByAuthMode: [OpenAIAuthMode: String],
+        preferredOpenAIAuthMode: OpenAIAuthMode,
         usableTranscriptionModels: [any TranscriptionModel],
         allTranscriptionModels: [any TranscriptionModel],
         prompts: [CustomPrompt]
@@ -52,6 +84,11 @@ struct ModeFormWarmupSnapshot {
         self.connectedAIProviders = connectedAIProviders
         self.aiModelsByProvider = aiModelsByProvider
         self.selectedAIModelsByProvider = selectedAIModelsByProvider
+        self.configuredOpenAIAuthModes = configuredOpenAIAuthModes
+        self.openAIModelsByAuthMode = openAIModelsByAuthMode
+        self.selectedOpenAIModelsByAuthMode = selectedOpenAIModelsByAuthMode
+        self.defaultOpenAIModelsByAuthMode = defaultOpenAIModelsByAuthMode
+        self.preferredOpenAIAuthMode = preferredOpenAIAuthMode
         self.usableTranscriptionModels = usableTranscriptionModels
         self.allTranscriptionModels = allTranscriptionModels
         self.prompts = prompts
@@ -67,6 +104,24 @@ struct ModeFormWarmupSnapshot {
 
     func selectedModel(for provider: AIProvider) -> String {
         selectedAIModelsByProvider[provider] ?? provider.defaultModel
+    }
+
+    func isOpenAIConnectionConfigured(_ authMode: OpenAIAuthMode) -> Bool {
+        configuredOpenAIAuthModes.contains(authMode)
+    }
+
+    func availableOpenAIModels(for authMode: OpenAIAuthMode) -> [String] {
+        openAIModelsByAuthMode[authMode] ?? []
+    }
+
+    func selectedOpenAIModel(for authMode: OpenAIAuthMode) -> String {
+        selectedOpenAIModelsByAuthMode[authMode]
+            ?? defaultOpenAIModel(for: authMode)
+    }
+
+    func defaultOpenAIModel(for authMode: OpenAIAuthMode) -> String {
+        defaultOpenAIModelsByAuthMode[authMode]
+            ?? (authMode == .oauth ? AIService.fallbackOpenAIOAuthModel : AIProvider.openAI.defaultModel)
     }
 
     func transcriptionModel(named name: String?) -> (any TranscriptionModel)? {

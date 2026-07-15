@@ -42,7 +42,13 @@ struct ModeConfigFormView: View {
     }
 
     private var aiProviderOptions: [AIProvider] {
-        warmupSnapshot.connectedAIProviders
+        var providers = warmupSnapshot.connectedAIProviders
+        if let selectedProvider = draft.selectedAIProvider.flatMap(AIProvider.init(rawValue:)),
+           selectedProvider.supportsEnhancement,
+           !providers.contains(selectedProvider) {
+            providers.insert(selectedProvider, at: 0)
+        }
+        return providers
     }
 
     private var configuredSelectedAIProvider: AIProvider? {
@@ -53,10 +59,7 @@ struct ModeConfigFormView: View {
             selectedProvider = aiProviderOptions.first
         }
 
-        guard let selectedProvider,
-            selectedProvider.supportsEnhancement,
-            aiProviderOptions.contains(selectedProvider)
-        else { return nil }
+        guard let selectedProvider, selectedProvider.supportsEnhancement else { return nil }
 
         return selectedProvider
     }
@@ -89,6 +92,9 @@ struct ModeConfigFormView: View {
             applyOutputRules()
         }
         .onChange(of: draft.selectedOpenAIOAuthModel) { _, _ in
+            applyOutputRules()
+        }
+        .onChange(of: draft.selectedOpenAIAuthMode) { _, _ in
             applyOutputRules()
         }
     }
@@ -413,12 +419,48 @@ struct ModeConfigFormView: View {
                 }
 
                 if let provider = configuredSelectedAIProvider {
+                    if provider == .openAI {
+                        openAIConnectionPicker
+                    }
                     aiModelPicker(for: provider)
                     if provider != .voiceInkRefine {
                         promptPicker
                         contextAwarenessRow
                     }
                 }
+            }
+        }
+    }
+
+    private var openAIConnectionPicker: some View {
+        let authModeBinding = Binding<OpenAIAuthMode>(
+            get: { selectedOpenAIAuthMode() },
+            set: { newAuthMode in
+                draft.selectedOpenAIAuthMode = newAuthMode.rawValue
+                if newAuthMode == .oauth {
+                    if draft.selectedOpenAIOAuthModel?.isEmpty != false {
+                        draft.selectedOpenAIOAuthModel = warmupSnapshot.defaultOpenAIModel(for: .oauth)
+                    }
+                } else if draft.selectedAIModel?.isEmpty != false {
+                    draft.selectedAIModel = warmupSnapshot.selectedOpenAIModel(for: .apiKey)
+                }
+            }
+        )
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Picker("Connection", selection: authModeBinding) {
+                Text("ChatGPT Subscription (OAuth) — Beta").tag(OpenAIAuthMode.oauth)
+                Text("OpenAI API Key").tag(OpenAIAuthMode.apiKey)
+            }
+
+            if !warmupSnapshot.isOpenAIConnectionConfigured(selectedOpenAIAuthMode()) {
+                Label(
+                    "This connection is not configured. Connect it in AI Models to enable enhancement.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(AppTheme.Status.warning)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -504,18 +546,28 @@ struct ModeConfigFormView: View {
         guard provider == .openAI else { return }
 
         if draft.selectedOpenAIAuthMode == nil {
-            draft.selectedOpenAIAuthMode = aiService.openAIAuthMode.rawValue
+            switch mode {
+            case .add:
+                draft.selectedOpenAIAuthMode = warmupSnapshot.preferredOpenAIAuthMode.rawValue
+            case .edit:
+                draft.selectedOpenAIAuthMode = aiService.openAIAuthMode.rawValue
+            }
         }
 
         if selectedOpenAIAuthMode() == .oauth,
            (draft.selectedOpenAIOAuthModel?.isEmpty ?? true) {
-            draft.selectedOpenAIOAuthModel = aiService.openAIOAuthModel
+            switch mode {
+            case .add:
+                draft.selectedOpenAIOAuthModel = warmupSnapshot.defaultOpenAIModel(for: .oauth)
+            case .edit:
+                draft.selectedOpenAIOAuthModel = aiService.openAIOAuthModel
+            }
         }
     }
 
     private func availableEnhancementModels(for provider: AIProvider) -> [String] {
         if provider == .openAI {
-            return aiService.models(for: provider, authMode: selectedOpenAIAuthMode())
+            return warmupSnapshot.availableOpenAIModels(for: selectedOpenAIAuthMode())
         }
 
         return warmupSnapshot.availableModels(for: provider)
@@ -523,7 +575,11 @@ struct ModeConfigFormView: View {
 
     private func defaultEnhancementModel(for provider: AIProvider) -> String {
         if provider == .openAI {
-            return aiService.selectedModel(for: provider, authMode: selectedOpenAIAuthMode())
+            let authMode = selectedOpenAIAuthMode()
+            if authMode == .oauth {
+                return warmupSnapshot.defaultOpenAIModel(for: authMode)
+            }
+            return warmupSnapshot.selectedOpenAIModel(for: authMode)
         }
 
         return warmupSnapshot.selectedModel(for: provider)

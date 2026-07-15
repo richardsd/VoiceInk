@@ -179,11 +179,17 @@ private struct ProviderListRow: View {
     let onSelect: () -> Void
 
     private var isConfigured: Bool {
-        APIKeyManager.shared.hasAPIKey(forProvider: descriptor.providerKey)
+        if descriptor.aiProvider == .openAI {
+            return !aiService.configuredOpenAIAuthModes.isEmpty
+        }
+        return APIKeyManager.shared.hasAPIKey(forProvider: descriptor.providerKey)
     }
 
     private var statusText: LocalizedStringKey {
-        isConfigured ? "Connected" : "Not connected"
+        if descriptor.aiProvider == .openAI && aiService.configuredOpenAIAuthModes.count == 2 {
+            return "2 connections"
+        }
+        return isConfigured ? "Connected" : "Not connected"
     }
 
     private var statusColor: Color {
@@ -205,8 +211,14 @@ private struct ProviderListRow: View {
         }
 
         if let provider = descriptor.aiProvider {
-            let enhancementCount = aiService.availableModels(for: provider).count
-            parts.append(enhancementModelCountText(enhancementCount))
+            if provider == .openAI {
+                let apiCount = aiService.models(for: .openAI, authMode: .apiKey).count
+                let oauthCount = aiService.models(for: .openAI, authMode: .oauth).count
+                parts.append("\(apiCount) API · \(oauthCount) OAuth enhancement models")
+            } else {
+                let enhancementCount = aiService.availableModels(for: provider).count
+                parts.append(enhancementModelCountText(enhancementCount))
+            }
         }
 
         return parts.joined(separator: " · ")
