@@ -5,6 +5,7 @@ import os
 enum RecorderPanelStyle: String, CaseIterable, Identifiable {
     case notch
     case mini
+    case halo
 
     var id: String { rawValue }
 
@@ -14,6 +15,8 @@ enum RecorderPanelStyle: String, CaseIterable, Identifiable {
             return String(localized: "Notch")
         case .mini:
             return String(localized: "Mini")
+        case .halo:
+            return String(localized: "Halo")
         }
     }
 
@@ -23,10 +26,26 @@ enum RecorderPanelStyle: String, CaseIterable, Identifiable {
     }
 }
 
+enum RecorderPanelRouting {
+    static func effectiveStyle(
+        selectedStyle: RecorderPanelStyle,
+        outputMode: ModeOutputMode
+    ) -> RecorderPanelStyle {
+        guard selectedStyle == .halo else { return selectedStyle }
+        return outputMode == .paste ? .halo : .mini
+    }
+}
+
 @MainActor
 protocol RecorderPanelPresenting: AnyObject {
     var isRecorderPanelVisible: Bool { get }
+    var isHaloPanelActive: Bool { get }
     func dismissRecorderPanel() async
+    func reconcileRecorderPanel(for outputMode: ModeOutputMode)
+    func preparePasteReviewKeyboardHandling() -> Bool
+    func finishPasteReviewKeyboardHandling()
+    func presentPasteReview(_ review: PendingPasteReview)
+    func clearPasteReview()
 }
 
 @MainActor
@@ -34,10 +53,12 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
     @Published var recorderPanelStyle: RecorderPanelStyle = .stored {
         didSet {
             guard oldValue != recorderPanelStyle else { return }
-            rebuildVisiblePanel(previousStyle: oldValue)
             UserDefaults.standard.set(recorderPanelStyle.rawValue, forKey: "RecorderType")
+            handleStoredStyleChange()
         }
     }
+
+    @Published private(set) var effectiveRecorderPanelStyle: RecorderPanelStyle = .stored
 
     var recorderType: String {
         get { recorderPanelStyle.rawValue }
@@ -58,6 +79,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     private var notchWindowManager: NotchWindowManager?
     private var miniWindowManager: MiniWindowManager?
+    private var haloWindowManager: HaloWindowManager?
+    private weak var reviewShortcutController: (any RecorderReviewShortcutControlling)?
 
     private weak var engine: VoiceInkEngine?
     private var recorder: Recorder?
@@ -66,6 +89,10 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     init() {}
 
+    var isHaloPanelActive: Bool {
+        isRecorderPanelVisible && effectiveRecorderPanelStyle == .halo
+    }
+
     /// Call after VoiceInkEngine is created to break the circular init dependency.
     func configure(engine: VoiceInkEngine, recorder: Recorder) {
         self.engine = engine
@@ -73,12 +100,16 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         setupNotifications()
     }
 
+    func setReviewShortcutController(_ controller: any RecorderReviewShortcutControlling) {
+        reviewShortcutController = controller
+    }
+
     // MARK: - Recorder Panel Management
 
     private func showRecorderPanel() {
         guard let engine = engine, let recorder = recorder else { return }
 
-        switch recorderPanelStyle {
+        switch effectiveRecorderPanelStyle {
         case .notch:
             if notchWindowManager == nil {
                 notchWindowManager = NotchWindowManager(
@@ -127,15 +158,40 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
                 )
             }
             miniWindowManager?.show()
+        case .halo:
+            ensureHaloWindowManager(engine: engine, recorder: recorder).show()
         }
     }
 
+    @discardableResult
+    private func ensureHaloWindowManager(
+        engine: VoiceInkEngine,
+        recorder: Recorder
+    ) -> HaloWindowManager {
+        if let haloWindowManager {
+            return haloWindowManager
+        }
+
+        let manager = HaloWindowManager(engine: engine, recorder: recorder)
+        haloWindowManager = manager
+        return manager
+    }
+
     private func hideRecorderPanel() {
-        switch recorderPanelStyle {
+        hideRecorderPanel(style: effectiveRecorderPanelStyle)
+    }
+
+    private func hideRecorderPanel(
+        style: RecorderPanelStyle,
+        preservingHaloSession: Bool = false
+    ) {
+        switch style {
         case .notch:
             notchWindowManager?.hide()
         case .mini:
             miniWindowManager?.hide()
+        case .halo:
+            haloWindowManager?.hide(preservingSession: preservingHaloSession)
         }
     }
 
@@ -149,10 +205,59 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         case .mini:
             miniWindowManager?.destroyWindow()
             miniWindowManager = nil
+        case .halo:
+            haloWindowManager?.destroyWindow()
+            haloWindowManager = nil
         }
 
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 50_000_000)
+            showRecorderPanel()
+        }
+    }
+
+    private func handleStoredStyleChange() {
+        if engine?.recordingState == .reviewing {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.cancelPendingPasteReview()
+                self.effectiveRecorderPanelStyle = RecorderPanelRouting.effectiveStyle(
+                    selectedStyle: self.recorderPanelStyle,
+                    outputMode: ModeRuntimeResolver.outputConfiguration().outputMode
+                )
+            }
+            return
+        }
+
+        let previousStyle = effectiveRecorderPanelStyle
+        effectiveRecorderPanelStyle = RecorderPanelRouting.effectiveStyle(
+            selectedStyle: recorderPanelStyle,
+            outputMode: ModeRuntimeResolver.outputConfiguration().outputMode
+        )
+        if recorderPanelStyle == .halo,
+            isRecorderPanelVisible,
+            let engine,
+            let recorder
+        {
+            ensureHaloWindowManager(engine: engine, recorder: recorder).beginRecordingSession()
+        }
+        rebuildVisiblePanel(previousStyle: previousStyle)
+    }
+
+    func reconcileRecorderPanel(for outputMode: ModeOutputMode) {
+        let desiredStyle = RecorderPanelRouting.effectiveStyle(
+            selectedStyle: recorderPanelStyle,
+            outputMode: outputMode
+        )
+        guard desiredStyle != effectiveRecorderPanelStyle else { return }
+
+        let previousStyle = effectiveRecorderPanelStyle
+        if isRecorderPanelVisible {
+            hideRecorderPanel(style: previousStyle, preservingHaloSession: true)
+        }
+        effectiveRecorderPanelStyle = desiredStyle
+
+        if isRecorderPanelVisible {
             showRecorderPanel()
         }
     }
@@ -168,6 +273,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
                 await engine.toggleRecord(modeId: modeId)
             case .starting, .transcribing, .enhancing:
                 await cancelRecording()
+            case .reviewing:
+                return
             case .idle:
                 if engine.assistantSession.canSendFollowUp {
                     SoundManager.shared.playStartSound()
@@ -183,6 +290,21 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
             }
         } else {
             SoundManager.shared.playStartSound()
+            if recorderPanelStyle == .halo, let recorder {
+                ensureHaloWindowManager(engine: engine, recorder: recorder).beginRecordingSession()
+            }
+            let outputMode: ModeOutputMode
+            if let modeId,
+                let mode = ModeManager.shared.getConfiguration(with: modeId)
+            {
+                outputMode = mode.outputMode
+            } else {
+                outputMode = ModeRuntimeResolver.outputConfiguration().outputMode
+            }
+            effectiveRecorderPanelStyle = RecorderPanelRouting.effectiveStyle(
+                selectedStyle: recorderPanelStyle,
+                outputMode: outputMode
+            )
             isRecorderPanelVisible = true
             await engine.toggleRecord(modeId: modeId)
         }
@@ -191,8 +313,15 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
     func dismissRecorderPanel() async {
         guard let engine = engine else { return }
 
+        if engine.pendingPasteReview != nil {
+            await engine.cancelPendingPasteReview()
+            return
+        }
+
         hideRecorderPanel()
         isRecorderPanelVisible = false
+        haloWindowManager?.endRecordingSession()
+        finishPasteReviewKeyboardHandling()
         engine.assistantSession.reset()
     }
 
@@ -202,6 +331,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         await engine.resetRecordingSession()
         hideRecorderPanel()
         isRecorderPanelVisible = false
+        haloWindowManager?.endRecordingSession()
         engine.assistantSession.reset()
     }
 
@@ -209,6 +339,40 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         guard let engine = engine else { return }
         await engine.cancelRecording()
         await dismissRecorderPanel()
+    }
+
+    func approvePendingPasteReview() async {
+        await engine?.approvePendingPasteReview()
+    }
+
+    func cancelPendingPasteReview() async {
+        await engine?.cancelPendingPasteReview()
+    }
+
+    func preparePasteReviewKeyboardHandling() -> Bool {
+        guard isHaloPanelActive else { return false }
+        return reviewShortcutController?.prepareForPasteReview() == true
+    }
+
+    func finishPasteReviewKeyboardHandling() {
+        reviewShortcutController?.finishPasteReview()
+    }
+
+    func presentPasteReview(_ review: PendingPasteReview) {
+        guard isHaloPanelActive else { return }
+        haloWindowManager?.presentReview(
+            rawText: review.rawText,
+            finalText: review.finalText,
+            modeName: review.modeName,
+            providerLabel: review.providerLabel,
+            connectionLabel: review.connectionLabel,
+            modelLabel: review.modelLabel,
+            enhancementWarning: review.enhancementWarning
+        )
+    }
+
+    func clearPasteReview() {
+        haloWindowManager?.clearReview()
     }
 
     // MARK: - Notification Handling
@@ -239,9 +403,36 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
             switch engine?.recordingState {
             case .starting, .recording, .transcribing, .enhancing:
                 await cancelRecording()
+            case .reviewing:
+                await cancelPendingPasteReview()
             case .idle, .busy, nil:
                 await dismissRecorderPanel()
             }
         }
+    }
+}
+
+extension RecorderUIManager: PasteReviewDestinationProviding {
+    var pasteReviewDestinationSnapshot: PasteReviewDestinationSnapshot? {
+        haloWindowManager?.capturedDestinationSnapshot
+    }
+}
+
+extension RecorderUIManager: PasteReviewRecoveryPresenting {
+    func hidePasteReviewForDelivery() {
+        guard effectiveRecorderPanelStyle == .halo else { return }
+        haloWindowManager?.hide(preservingSession: true)
+    }
+
+    func restorePasteReviewAfterFailedDelivery() {
+        guard isRecorderPanelVisible,
+            effectiveRecorderPanelStyle == .halo,
+            let review = engine?.pendingPasteReview
+        else {
+            return
+        }
+
+        haloWindowManager?.show()
+        presentPasteReview(review)
     }
 }

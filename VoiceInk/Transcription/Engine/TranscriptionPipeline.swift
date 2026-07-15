@@ -25,17 +25,19 @@ class TranscriptionPipeline {
     private let modelContext: ModelContext
     private let serviceRegistry: TranscriptionServiceRegistry
     private let enhancementService: AIEnhancementService?
-    private let delivery = TranscriptionDelivery()
+    private let delivery: TranscriptionDelivery
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "TranscriptionPipeline")
 
     init(
         modelContext: ModelContext,
         serviceRegistry: TranscriptionServiceRegistry,
-        enhancementService: AIEnhancementService?
+        enhancementService: AIEnhancementService?,
+        pasteDeliveryService: (any PasteDeliveryServicing)? = nil
     ) {
         self.modelContext = modelContext
         self.serviceRegistry = serviceRegistry
         self.enhancementService = enhancementService
+        self.delivery = TranscriptionDelivery(pasteDeliveryService: pasteDeliveryService)
     }
 
     /// Run the full pipeline for a given transcription record.
@@ -58,10 +60,13 @@ class TranscriptionPipeline {
         enhancementConfiguration: @escaping () -> EnhancementRuntimeConfiguration?,
         recordingContextSnapshot: @escaping () async -> RecordingContextSnapshot? = { nil },
         outputConfiguration: @escaping () -> OutputRuntimeConfiguration,
+        onOutputConfigurationResolved: @escaping (OutputRuntimeConfiguration) -> Void = { _ in },
         onStateChange: @escaping (RecordingState) -> Void,
         shouldCancel: () -> Bool,
         onCancel: @escaping () async -> Void,
         onDismiss: @escaping () async -> Void,
+        shouldStagePasteReview: @escaping (OutputRuntimeConfiguration) -> Bool = { _ in false },
+        stagePasteReview: @escaping (PendingPasteReview) -> Bool = { _ in false },
         assistant: AssistantHooks = .inactive
     ) async {
         let model = transcriptionConfiguration.model
@@ -69,6 +74,8 @@ class TranscriptionPipeline {
         var responseError: String?
         var outputForDelivery: OutputRuntimeConfiguration?
         var responseConfig: EnhancementRuntimeConfiguration?
+        var enhancementConfigForDelivery: EnhancementRuntimeConfiguration?
+        var didUseRawEnhancementFallback = false
 
         func finishCanceledTranscription() async {
             await onCancel()
@@ -128,11 +135,12 @@ class TranscriptionPipeline {
 
             let formattingConfiguration = resolveFormattingConfiguration()
             let resolvedEnhancementConfiguration = enhancementConfiguration()
+            enhancementConfigForDelivery = resolvedEnhancementConfiguration
             let resolvedOutputConfiguration = outputConfiguration()
-            let modeMetadata = metadata(
-                for: formattingConfiguration.mode ?? resolvedEnhancementConfiguration?.mode
-                    ?? resolvedOutputConfiguration.mode ?? transcriptionConfiguration.mode
-            )
+            onOutputConfigurationResolved(resolvedOutputConfiguration)
+            let resolvedMode = formattingConfiguration.mode ?? resolvedEnhancementConfiguration?.mode
+                ?? resolvedOutputConfiguration.mode ?? transcriptionConfiguration.mode
+            let modeMetadata = metadata(for: resolvedMode)
 
             if formattingConfiguration.isTextFormattingEnabled {
                 text = ParagraphFormatter.format(text)
@@ -167,6 +175,15 @@ class TranscriptionPipeline {
                 let shouldSkipEnhancement =
                     !shouldRespondInRecorder && isSkipShortEnhancementEnabled
                     && WordCounter.count(in: text) <= shortEnhancementWordThreshold
+                let isEnhancementRequested = resolvedEnhancementConfiguration?.isEnabled == true
+                    || resolvedMode?.isAIEnhancementEnabled == true
+                let isEnhancementConfigured = resolvedEnhancementConfiguration.map { configuration in
+                    enhancementService?.isConfigured(for: configuration) == true
+                } == true
+
+                if isEnhancementRequested, !shouldSkipEnhancement, !isEnhancementConfigured {
+                    didUseRawEnhancementFallback = true
+                }
 
                 if let enhancementService,
                     let resolvedEnhancementConfiguration,
@@ -202,6 +219,7 @@ class TranscriptionPipeline {
                         transcription.aiRequestUserMessage = enhancementResult.userMessage
                         finalText = enhancementResult.text
                     } catch {
+                        didUseRawEnhancementFallback = true
                         let errorDescription = EnhancementFailureFormatter.description(for: error)
                         let isOAuthDisconnectError: Bool
                         if case .oauthDisconnected = error as? EnhancementError {
@@ -279,25 +297,41 @@ class TranscriptionPipeline {
             return
         }
 
+        let resolvedDeliveryOutput = outputForDelivery ?? outputConfiguration()
+        // Freeze review eligibility once. Delivery may suspend, so a later style
+        // change must not expose a review whose History record was not saved first.
+        let allowsPasteReview = shouldStagePasteReview(resolvedDeliveryOutput)
+        if allowsPasteReview {
+            // Halo becomes keyboard-actionable inside delivery. Persist History,
+            // metrics, and the completion notification before exposing Return/Esc.
+            saveTranscriptionAndPostCompletion()
+        }
+
         await delivery.deliver(
             TranscriptionDelivery.Request(
                 transcription: transcription,
                 text: finalText,
-                output: outputForDelivery ?? outputConfiguration(),
+                output: resolvedDeliveryOutput,
+                enhancementConfiguration: enhancementConfigForDelivery,
                 responseConfig: responseConfig,
                 responseError: responseError,
-                isAssistantFollowUp: assistant.isFollowUp
+                usedRawEnhancementFallback: didUseRawEnhancementFallback,
+                isAssistantFollowUp: assistant.isFollowUp,
+                allowsPasteReview: allowsPasteReview
             ),
             actions: TranscriptionDelivery.Actions(
                 setState: onStateChange,
                 dismiss: onDismiss,
                 sendFollowUp: assistant.sendFollowUp,
                 showResponse: assistant.showResponse,
-                failResponse: assistant.failResponse
+                failResponse: assistant.failResponse,
+                stagePasteReview: stagePasteReview
             )
         )
 
-        saveTranscriptionAndPostCompletion()
+        if !allowsPasteReview {
+            saveTranscriptionAndPostCompletion()
+        }
     }
 
     private func metadata(for mode: ModeConfig?) -> (name: String?, emoji: String?) {

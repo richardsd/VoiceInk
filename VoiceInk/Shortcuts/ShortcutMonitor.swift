@@ -3,8 +3,22 @@ import CoreGraphics
 import Foundation
 import os
 
+@MainActor
+protocol ShortcutMonitoring: AnyObject {
+    @discardableResult
+    func start(
+        shortcuts: [ShortcutAction: Shortcut],
+        interruptibleActions: Set<ShortcutAction>,
+        onKeyDown: @escaping (ShortcutAction, TimeInterval) -> Void,
+        onKeyUp: @escaping (ShortcutAction, TimeInterval) -> Void,
+        onShortcutInterrupted: ((ShortcutAction, TimeInterval) -> Void)?
+    ) -> Bool
+
+    func stop()
+}
+
 final class ShortcutMonitor {
-    fileprivate enum EventKind {
+    enum EventKind {
         case keyDown
         case keyUp
         case flagsChanged
@@ -40,22 +54,71 @@ final class ShortcutMonitor {
         onKeyUp: @escaping (ShortcutAction, TimeInterval) -> Void,
         onShortcutInterrupted: ((ShortcutAction, TimeInterval) -> Void)? = nil
     ) -> Bool {
+        guard configure(
+            shortcuts: shortcuts,
+            interruptibleActions: interruptibleActions,
+            onKeyDown: onKeyDown,
+            onKeyUp: onKeyUp,
+            onShortcutInterrupted: onShortcutInterrupted
+        ) else {
+            return true
+        }
+
+        return installEventTap()
+    }
+
+    /// Deterministic event-state seam used by non-UI tests. It exercises the
+    /// same matching and suppression path without requiring an Accessibility
+    /// event tap from the test runner.
+    func configureForEventSimulation(
+        shortcuts: [ShortcutAction: Shortcut],
+        interruptibleActions: Set<ShortcutAction> = [],
+        onKeyDown: @escaping (ShortcutAction, TimeInterval) -> Void,
+        onKeyUp: @escaping (ShortcutAction, TimeInterval) -> Void,
+        onShortcutInterrupted: ((ShortcutAction, TimeInterval) -> Void)? = nil
+    ) {
+        _ = configure(
+            shortcuts: shortcuts,
+            interruptibleActions: interruptibleActions,
+            onKeyDown: onKeyDown,
+            onKeyUp: onKeyUp,
+            onShortcutInterrupted: onShortcutInterrupted
+        )
+    }
+
+    func simulateEvent(
+        kind: EventKind,
+        keyCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags = [],
+        eventTime: TimeInterval
+    ) -> Bool {
+        handleEvent(
+            kind: kind,
+            keyCode: keyCode,
+            modifierFlags: modifierFlags,
+            eventTime: eventTime
+        )
+    }
+
+    @discardableResult
+    private func configure(
+        shortcuts: [ShortcutAction: Shortcut],
+        interruptibleActions: Set<ShortcutAction>,
+        onKeyDown: @escaping (ShortcutAction, TimeInterval) -> Void,
+        onKeyUp: @escaping (ShortcutAction, TimeInterval) -> Void,
+        onShortcutInterrupted: ((ShortcutAction, TimeInterval) -> Void)?
+    ) -> Bool {
         stop()
 
         for (action, shortcut) in shortcuts {
             self.shortcuts[action] = ShortcutState(shortcut: shortcut)
         }
 
-        guard !self.shortcuts.isEmpty else {
-            return true
-        }
-
         self.interruptibleActions = interruptibleActions
         self.onKeyDown = onKeyDown
         self.onKeyUp = onKeyUp
         self.onShortcutInterrupted = onShortcutInterrupted
-
-        return installEventTap()
+        return !self.shortcuts.isEmpty
     }
 
     func stop() {
@@ -340,6 +403,8 @@ final class ShortcutMonitor {
         mask | (CGEventMask(1) << Int(type.rawValue))
     }
 }
+
+extension ShortcutMonitor: ShortcutMonitoring {}
 
 private extension ShortcutMonitor.EventKind {
     init?(_ type: CGEventType) {

@@ -47,7 +47,7 @@ struct RecorderRecordButton: View {
             return .ready
         case .recording:
             return .recording
-        case .transcribing, .enhancing:
+        case .transcribing, .enhancing, .reviewing:
             return .processing
         }
     }
@@ -56,7 +56,7 @@ struct RecorderRecordButton: View {
         switch recordingState {
         case .idle, .recording:
             return false
-        case .starting, .transcribing, .enhancing, .busy:
+        case .starting, .transcribing, .enhancing, .reviewing, .busy:
             return true
         }
     }
@@ -135,6 +135,8 @@ struct RecorderRecordButton: View {
             return String(localized: "Transcribing recording")
         case .enhancing:
             return String(localized: "Enhancing recording")
+        case .reviewing:
+            return String(localized: "Review ready")
         case .busy:
             return String(localized: "Recorder unavailable")
         }

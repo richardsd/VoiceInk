@@ -4,14 +4,24 @@ import os
 @MainActor
 final class TranscriptionDelivery {
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "TranscriptionDelivery")
+    private let pasteDeliveryService: any PasteDeliveryServicing
+
+    init(pasteDeliveryService: (any PasteDeliveryServicing)? = nil) {
+        self.pasteDeliveryService = pasteDeliveryService ?? PasteDeliveryService()
+    }
 
     struct Request {
         let transcription: Transcription
         let text: String?
         let output: OutputRuntimeConfiguration
+        let enhancementConfiguration: EnhancementRuntimeConfiguration?
         let responseConfig: EnhancementRuntimeConfiguration?
         let responseError: String?
+        let usedRawEnhancementFallback: Bool
         let isAssistantFollowUp: Bool
+        /// Immutable pipeline decision proving History was completed before a
+        /// keyboard-actionable review can be staged.
+        let allowsPasteReview: Bool
     }
 
     struct Actions {
@@ -20,6 +30,23 @@ final class TranscriptionDelivery {
         let sendFollowUp: (String, Transcription) async -> Void
         let showResponse: (String, String?) async -> Void
         let failResponse: (String) async -> Void
+        let stagePasteReview: (PendingPasteReview) -> Bool
+
+        init(
+            setState: @escaping (RecordingState) -> Void,
+            dismiss: @escaping () async -> Void,
+            sendFollowUp: @escaping (String, Transcription) async -> Void,
+            showResponse: @escaping (String, String?) async -> Void,
+            failResponse: @escaping (String) async -> Void,
+            stagePasteReview: @escaping (PendingPasteReview) -> Bool = { _ in false }
+        ) {
+            self.setState = setState
+            self.dismiss = dismiss
+            self.sendFollowUp = sendFollowUp
+            self.showResponse = showResponse
+            self.failResponse = failResponse
+            self.stagePasteReview = stagePasteReview
+        }
     }
 
     func deliver(_ request: Request, actions: Actions) async {
@@ -46,7 +73,25 @@ final class TranscriptionDelivery {
         }
 
         if let text = request.text {
-            await paste(text, output: request.output, actions: actions)
+            let payload = pasteDeliveryService.prepare(text: text, output: request.output)
+
+            if request.output.outputMode == .paste, request.allowsPasteReview {
+                let review = makePendingReview(
+                    request: request,
+                    text: text,
+                    payload: payload
+                )
+                if actions.stagePasteReview(review) {
+                    pasteDeliveryService.notifyReviewReady()
+                    return
+                }
+            }
+
+            await pasteDeliveryService.deliverImmediately(
+                payload,
+                dismiss: actions.dismiss,
+                playStopSound: true
+            )
         } else {
             await actions.dismiss()
         }
@@ -154,26 +199,6 @@ final class TranscriptionDelivery {
         String(format: "%.3f", duration)
     }
 
-    private func paste(_ text: String, output: OutputRuntimeConfiguration, actions: Actions) async {
-        let textToPaste = deliverableText(from: text)
-        let appendSpace = UserDefaults.standard.bool(forKey: "AppendTrailingSpace")
-        let pastedText = textToPaste + (appendSpace ? " " : "")
-        SoundManager.shared.playStopSound()
-        await actions.dismiss()
-
-        let pasteTask = CursorPaster.startPasteAtCursor(pastedText)
-
-        let autoSendKey = output.outputMode == .paste ? output.autoSendKey : .none
-        Task { @MainActor in
-            _ = await pasteTask.value
-
-            if autoSendKey.isEnabled {
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                CursorPaster.performAutoSend(autoSendKey)
-            }
-        }
-    }
-
     private func deliverableText(from text: String) -> String {
         var textToDeliver = text
         if let restrictionMessage = LicenseViewModel.shared.usageRestrictionMessage {
@@ -184,5 +209,39 @@ final class TranscriptionDelivery {
         }
 
         return textToDeliver
+    }
+
+    private func makePendingReview(
+        request: Request,
+        text: String,
+        payload: PreparedPastePayload
+    ) -> PendingPasteReview {
+        let mode = request.output.mode
+        let provider = request.enhancementConfiguration?.provider
+            ?? mode?.selectedAIProvider.flatMap(AIProvider.init(rawValue:))
+        let authMode = request.enhancementConfiguration?.openAIAuthMode
+            ?? mode?.selectedOpenAIAuthMode.flatMap(OpenAIAuthMode.init(rawValue:))
+        let configuredModel: String?
+        if provider == .openAI, authMode == .oauth {
+            configuredModel = request.enhancementConfiguration?.modelName
+                ?? mode?.selectedOpenAIOAuthModel
+        } else {
+            configuredModel = request.enhancementConfiguration?.modelName
+                ?? mode?.selectedAIModel
+        }
+
+        return PendingPasteReview(
+            rawText: request.transcription.text,
+            finalText: text,
+            payload: payload,
+            modeName: mode?.name ?? request.transcription.modeName,
+            modeEmoji: mode?.icon.value ?? request.transcription.modeEmoji,
+            providerLabel: provider?.rawValue,
+            connectionLabel: provider == .openAI ? authMode?.rawValue : nil,
+            modelLabel: request.transcription.aiEnhancementModelName ?? configuredModel,
+            enhancementWarning: request.usedRawEnhancementFallback
+                ? String(localized: "Enhancement was unavailable. Review shows the raw transcript.")
+                : nil
+        )
     }
 }

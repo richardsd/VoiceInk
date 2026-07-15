@@ -3,19 +3,102 @@ import Carbon.HIToolbox
 import Foundation
 
 @MainActor
-final class RecorderPanelShortcutManager: ObservableObject {
+protocol RecorderReviewShortcutControlling: AnyObject {
+    func prepareForPasteReview() -> Bool
+    func finishPasteReview()
+}
+
+struct RecorderReviewShortcutLifecycle {
+    enum FinishDisposition: Equatable {
+        case inactive
+        case deferredUntilKeyUp
+        case restoreNow
+    }
+
+    private(set) var isHandlingReview = false
+    private(set) var actionAwaitingKeyUp: ShortcutAction?
+    private var finishRequested = false
+
+    var isAwaitingKeyUp: Bool { actionAwaitingKeyUp != nil }
+
+    mutating func begin() {
+        isHandlingReview = true
+        actionAwaitingKeyUp = nil
+        finishRequested = false
+    }
+
+    mutating func recordKeyDown(_ action: ShortcutAction) {
+        guard isHandlingReview,
+            action == .recorderPanelEscape || action == .cancelRecorder
+        else {
+            return
+        }
+        actionAwaitingKeyUp = action
+    }
+
+    mutating func requestFinish() -> FinishDisposition {
+        guard isHandlingReview else { return .inactive }
+        guard actionAwaitingKeyUp == nil else {
+            finishRequested = true
+            return .deferredUntilKeyUp
+        }
+        reset()
+        return .restoreNow
+    }
+
+    /// Returns true when the deferred review monitor can now be replaced. The
+    /// monitor sees and suppresses this release before its callbacks run.
+    mutating func recordKeyUp(_ action: ShortcutAction) -> Bool {
+        guard action == actionAwaitingKeyUp else { return false }
+        actionAwaitingKeyUp = nil
+        guard finishRequested else { return false }
+        reset()
+        return true
+    }
+
+    @discardableResult
+    mutating func forceFinish() -> Bool {
+        guard isHandlingReview else { return false }
+        reset()
+        return true
+    }
+
+    private mutating func reset() {
+        isHandlingReview = false
+        actionAwaitingKeyUp = nil
+        finishRequested = false
+    }
+}
+
+@MainActor
+final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortcutControlling {
+    enum EventPhase {
+        case keyDown
+        case keyUp
+    }
+
     private var recorderUIManager: RecorderUIManager
     private var visibilityTask: Task<Void, Never>?
     private var shortcutChangeObserver: NSObjectProtocol?
-    private let visibleRecorderMonitor = ShortcutMonitor()
+    private let visibleRecorderMonitor: any ShortcutMonitoring
+    private var reviewLifecycle = RecorderReviewShortcutLifecycle()
+    private var reviewReleaseSafetyTask: Task<Void, Never>?
+
+    private var isHandlingPasteReview: Bool {
+        reviewLifecycle.isHandlingReview
+    }
 
     // Double-tap Escape handling
     private var firstEscapePressTime: Date? = nil
     private let escapeDoublePressThreshold: TimeInterval = 1.5
     private var escapeTimeoutTask: Task<Void, Never>?
 
-    init(recorderUIManager: RecorderUIManager) {
+    init(
+        recorderUIManager: RecorderUIManager,
+        visibleRecorderMonitor: any ShortcutMonitoring = ShortcutMonitor()
+    ) {
         self.recorderUIManager = recorderUIManager
+        self.visibleRecorderMonitor = visibleRecorderMonitor
         setupShortcutChangeObserver()
         setupVisibilityObserver()
     }
@@ -45,6 +128,12 @@ final class RecorderPanelShortcutManager: ObservableObject {
                 if isVisible {
                     refreshVisibleShortcuts()
                 } else {
+                    // Escape and configured cancel actions resolve on key-down.
+                    // Keep the review monitor alive until it suppresses key-up.
+                    guard !reviewLifecycle.isAwaitingKeyUp else {
+                        resetEscapeState()
+                        continue
+                    }
                     visibleRecorderMonitor.stop()
                     resetEscapeState()
                 }
@@ -62,41 +151,92 @@ final class RecorderPanelShortcutManager: ObservableObject {
         escapeTimeoutTask = nil
     }
 
-    private func refreshVisibleShortcuts() {
+    @discardableResult
+    private func refreshVisibleShortcuts() -> Bool {
         guard recorderUIManager.isRecorderPanelVisible else {
             visibleRecorderMonitor.stop()
             resetEscapeState()
-            return
+            return false
         }
 
-        var shortcuts = ShortcutStore.shortcuts(for: ShortcutAction.recorderPanelStoredActions)
+        var shortcuts: [ShortcutAction: Shortcut]
 
-        if ShortcutStore.shortcut(for: .cancelRecorder) == nil {
-            shortcuts[.recorderPanelEscape] = .key(keyCode: UInt16(kVK_Escape), modifierFlags: [])
-        }
+        if isHandlingPasteReview {
+            shortcuts = [:]
+            if let cancelShortcut = ShortcutStore.shortcut(for: .cancelRecorder) {
+                shortcuts[.cancelRecorder] = cancelShortcut
+            }
+            shortcuts[.recorderPanelApply] = .key(
+                keyCode: UInt16(kVK_Return),
+                modifierFlags: []
+            )
+            shortcuts[.recorderPanelEscape] = .key(
+                keyCode: UInt16(kVK_Escape),
+                modifierFlags: []
+            )
+        } else {
+            shortcuts = ShortcutStore.shortcuts(for: ShortcutAction.recorderPanelStoredActions)
 
-        if canUseModeShortcuts {
-            for (index, keyCode) in Self.digitKeyCodes.enumerated() {
-                shortcuts[.recorderPanelMode(index)] = .key(
-                    keyCode: keyCode,
-                    modifierFlags: [.option]
-                )
+            if ShortcutStore.shortcut(for: .cancelRecorder) == nil {
+                shortcuts[.recorderPanelEscape] = .key(keyCode: UInt16(kVK_Escape), modifierFlags: [])
+            }
+
+            if canUseModeShortcuts {
+                for (index, keyCode) in Self.digitKeyCodes.enumerated() {
+                    shortcuts[.recorderPanelMode(index)] = .key(
+                        keyCode: keyCode,
+                        modifierFlags: [.option]
+                    )
+                }
             }
         }
 
-        visibleRecorderMonitor.start(
+        return visibleRecorderMonitor.start(
             shortcuts: shortcuts,
+            interruptibleActions: [],
             onKeyDown: { [weak self] action, _ in
                 Task { @MainActor in
+                    guard Self.shouldHandle(action, in: .keyDown) else { return }
                     await self?.handleRecorderPanelShortcut(action)
                 }
             },
-            onKeyUp: { _, _ in }
+            onKeyUp: { [weak self] action, _ in
+                Task { @MainActor in
+                    if self?.completeDeferredReviewRelease(for: action) == true {
+                        return
+                    }
+                    guard Self.shouldHandle(action, in: .keyUp) else { return }
+                    await self?.handleRecorderPanelShortcut(action)
+                }
+            },
+            onShortcutInterrupted: nil
         )
+    }
+
+    nonisolated static func shouldHandle(_ action: ShortcutAction, in phase: EventPhase) -> Bool {
+        switch phase {
+        case .keyDown:
+            return action != .recorderPanelApply
+        case .keyUp:
+            return action == .recorderPanelApply
+        }
     }
 
     private func handleRecorderPanelShortcut(_ action: ShortcutAction) async {
         guard recorderUIManager.isRecorderPanelVisible else { return }
+
+        if isHandlingPasteReview {
+            switch action {
+            case .recorderPanelApply:
+                await recorderUIManager.approvePendingPasteReview()
+            case .recorderPanelEscape, .cancelRecorder:
+                reviewLifecycle.recordKeyDown(action)
+                await recorderUIManager.cancelPendingPasteReview()
+            default:
+                break
+            }
+            return
+        }
 
         switch action {
         case .cancelRecorder:
@@ -108,6 +248,56 @@ final class RecorderPanelShortcutManager: ObservableObject {
             handleModeSelectionShortcut(index: index)
         default:
             break
+        }
+    }
+
+    func prepareForPasteReview() -> Bool {
+        reviewReleaseSafetyTask?.cancel()
+        reviewReleaseSafetyTask = nil
+        reviewLifecycle.begin()
+        resetEscapeState()
+
+        guard refreshVisibleShortcuts() else {
+            reviewLifecycle.forceFinish()
+            _ = refreshVisibleShortcuts()
+            return false
+        }
+
+        return true
+    }
+
+    func finishPasteReview() {
+        switch reviewLifecycle.requestFinish() {
+        case .inactive:
+            return
+        case .deferredUntilKeyUp:
+            scheduleReviewReleaseSafetyReset()
+        case .restoreNow:
+            reviewReleaseSafetyTask?.cancel()
+            reviewReleaseSafetyTask = nil
+            _ = refreshVisibleShortcuts()
+        }
+    }
+
+    private func completeDeferredReviewRelease(for action: ShortcutAction) -> Bool {
+        guard reviewLifecycle.recordKeyUp(action) else { return false }
+        reviewReleaseSafetyTask?.cancel()
+        reviewReleaseSafetyTask = nil
+        _ = refreshVisibleShortcuts()
+        return true
+    }
+
+    private func scheduleReviewReleaseSafetyReset() {
+        reviewReleaseSafetyTask?.cancel()
+        reviewReleaseSafetyTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            } catch {
+                return
+            }
+            guard let self, self.reviewLifecycle.forceFinish() else { return }
+            self.reviewReleaseSafetyTask = nil
+            _ = self.refreshVisibleShortcuts()
         }
     }
 
@@ -147,6 +337,7 @@ final class RecorderPanelShortcutManager: ObservableObject {
 
         let selectedConfig = availableConfigurations[index]
         modeManager.setActiveConfiguration(selectedConfig)
+        recorderUIManager.reconcileRecorderPanel(for: selectedConfig.outputMode)
     }
 
     deinit {
@@ -155,6 +346,7 @@ final class RecorderPanelShortcutManager: ObservableObject {
         }
 
         visibilityTask?.cancel()
+        reviewReleaseSafetyTask?.cancel()
         MainActor.assumeIsolated {
             visibleRecorderMonitor.stop()
             resetEscapeState()

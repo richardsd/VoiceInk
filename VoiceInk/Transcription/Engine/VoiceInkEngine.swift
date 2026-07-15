@@ -95,6 +95,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
     @Published var recordingState: RecordingState = .idle
     @Published var shouldCancelRecording = false
     @Published var partialTranscript: String = ""
+    @Published private(set) var pendingPasteReview: PendingPasteReview?
+    @Published private(set) var pasteReviewFeedback: PasteReviewFeedback?
+    @Published private(set) var pasteReviewSecondsRemaining: Int?
     var currentSession: TranscriptionSession?
     private var currentSessionTranscriptionConfiguration: TranscriptionRuntimeConfiguration?
     private var activeRecordingStartID: UUID?
@@ -105,6 +108,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private var activeRecordingContextStore: RecordingContextSnapshotStore?
     private var activeRecordingContextTasks: [Task<Void, Never>] = []
     private var voiceInkRefinePreparationTask: Task<Void, Never>?
+    private var pendingPasteReviewExpirationTask: Task<Void, Never>?
+    private var isResolvingPasteReview = false
+    private var pasteReviewResolutionGate = PasteReviewResolutionGate()
+    private var activePasteReviewDestination: PasteReviewDestinationSnapshot?
 
     let recorder = Recorder()
     var recordedFile: URL? = nil
@@ -120,6 +127,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
     let enhancementService: AIEnhancementService?
     let assistantSession = AssistantSession()
     let assistantChat: AssistantChatService?
+    private let pasteDeliveryService: any PasteDeliveryServicing
+    private let pasteReviewDestinationService: any PasteReviewDestinationServicing
     private let pipeline: TranscriptionPipeline
 
     let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "VoiceInkEngine")
@@ -128,7 +137,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         modelContext: ModelContext,
         whisperModelManager: WhisperModelManager,
         transcriptionModelManager: TranscriptionModelManager,
-        enhancementService: AIEnhancementService? = nil
+        enhancementService: AIEnhancementService? = nil,
+        pasteDeliveryService: (any PasteDeliveryServicing)? = nil,
+        pasteReviewDestinationService: (any PasteReviewDestinationServicing)? = nil
     ) {
         self.modelContext = modelContext
         self.whisperModelManager = whisperModelManager
@@ -152,10 +163,14 @@ class VoiceInkEngine: NSObject, ObservableObject {
             modelsDirectory: whisperModelManager.modelsDirectory,
             modelContext: modelContext
         )
+        let resolvedPasteDeliveryService = pasteDeliveryService ?? PasteDeliveryService()
+        self.pasteDeliveryService = resolvedPasteDeliveryService
+        self.pasteReviewDestinationService = pasteReviewDestinationService ?? PasteReviewDestinationService()
         self.pipeline = TranscriptionPipeline(
             modelContext: modelContext,
             serviceRegistry: serviceRegistry,
-            enhancementService: enhancementService
+            enhancementService: enhancementService,
+            pasteDeliveryService: resolvedPasteDeliveryService
         )
 
         super.init()
@@ -177,9 +192,23 @@ class VoiceInkEngine: NSObject, ObservableObject {
         return enhancementService
     }
 
+    var pasteReviewIsExpiringSoon: Bool {
+        pasteReviewSecondsRemaining.map(PasteReviewExpiration.isInWarningWindow) ?? false
+    }
+
     // MARK: - Toggle Record
 
     func toggleRecord(modeId: UUID? = nil, isAssistantFollowUp: Bool = false) async {
+        // Starting and stopping are only valid in the three interactive recorder
+        // states. In particular, a consumed Halo review remains `.busy` until
+        // both paste resolution and the originating pipeline cleanup finish.
+        guard recordingState == .idle
+            || recordingState == .starting
+            || recordingState == .recording
+        else {
+            return
+        }
+
         if recordingState == .starting {
             await cancelRecording()
             return
@@ -226,6 +255,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
             let recordingUseCase: RecordingUseCase = canContinueAssistantSession ? .assistantFollowUp : .newSession
 
             activePipelineTranscriptionID = nil
+            activePasteReviewDestination = recordingUseCase.isAssistantFollowUp
+                ? nil
+                : ((recorderUIManager as? any PasteReviewDestinationProviding)?.pasteReviewDestinationSnapshot
+                    ?? pasteReviewDestinationService.frontmostApplicationSnapshot())
             shouldCancelRecording = false
             partialTranscript = ""
             activeRecordingUseCase = recordingUseCase
@@ -289,6 +322,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
                             else {
                                 return
                             }
+
+                            self.recorderUIManager?.reconcileRecorderPanel(
+                                for: ModeRuntimeResolver.outputConfiguration().outputMode
+                            )
 
                             self.startRecordingContextCapture()
 
@@ -575,6 +612,10 @@ class VoiceInkEngine: NSObject, ObservableObject {
             outputConfiguration: {
                 ModeRuntimeResolver.outputConfiguration()
             },
+            onOutputConfigurationResolved: { [weak self] output in
+                guard let self, self.activePipelineTranscriptionID == transcriptionID else { return }
+                self.recorderUIManager?.reconcileRecorderPanel(for: output.outputMode)
+            },
             onStateChange: { [weak self] state in
                 guard let self, self.activePipelineTranscriptionID == transcriptionID else { return }
                 self.recordingState = state
@@ -591,6 +632,14 @@ class VoiceInkEngine: NSObject, ObservableObject {
             onDismiss: { [weak self] in
                 guard let self, self.activePipelineTranscriptionID == transcriptionID else { return }
                 await self.recorderUIManager?.dismissRecorderPanel()
+            },
+            shouldStagePasteReview: { [weak self] output in
+                output.outputMode == .paste
+                    && self?.recorderUIManager?.isHaloPanelActive == true
+            },
+            stagePasteReview: { [weak self] review in
+                guard let self, self.activePipelineTranscriptionID == transcriptionID else { return false }
+                return self.stagePasteReview(review)
             },
             assistant: TranscriptionPipeline.AssistantHooks(
                 isFollowUp: activePipelineUseCase.isAssistantFollowUp,
@@ -629,11 +678,16 @@ class VoiceInkEngine: NSObject, ObservableObject {
             recordedFile = nil
             shouldCancelRecording = false
             activePipelineUseCase = .newSession
+            activePasteReviewDestination = nil
             clearActiveRecordingContext()
         }
         canceledPipelineTranscriptionIDs.remove(transcriptionID)
 
         if didFinishActivePipeline
+            && PasteReviewLifecycle.canReturnToIdle(
+                hasActivePipeline: false,
+                isResolvingReview: isResolvingPasteReview
+            )
             && (recordingState == .transcribing || recordingState == .enhancing || recordingState == .busy)
         {
             recordingState = .idle
@@ -647,6 +701,207 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
         ModeManager.shared.setActiveConfiguration(triggeredMode)
         return processedText
+    }
+
+    // MARK: - Halo Paste Review
+
+    private func stagePasteReview(_ review: PendingPasteReview) -> Bool {
+        guard pendingPasteReview == nil,
+            recorderUIManager?.isHaloPanelActive == true,
+            recorderUIManager?.preparePasteReviewKeyboardHandling() == true
+        else {
+            return false
+        }
+
+        let capturedDestination = (recorderUIManager as? any PasteReviewDestinationProviding)?
+            .pasteReviewDestinationSnapshot
+            ?? activePasteReviewDestination
+            ?? pasteReviewDestinationService.frontmostApplicationSnapshot()
+        let stagedReview = review.withDestination(capturedDestination)
+        guard pasteReviewResolutionGate.stage(stagedReview.id) else {
+            recorderUIManager?.finishPasteReviewKeyboardHandling()
+            return false
+        }
+
+        pendingPasteReview = stagedReview
+        pasteReviewFeedback = nil
+        recordingState = .reviewing
+        recorderUIManager?.presentPasteReview(stagedReview)
+        schedulePasteReviewExpiration(for: stagedReview)
+        announcePasteReviewReady()
+        return true
+    }
+
+    func approvePendingPasteReview() async {
+        guard let review = pendingPasteReview,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id)
+        else {
+            return
+        }
+
+        guard !review.isExpired() else {
+            await cancelPendingPasteReview()
+            return
+        }
+
+        if let destination = review.destination {
+            let validation = await pasteReviewDestinationService.validate(destination)
+
+            // Validation suspends while AX is queried. A concurrent Escape or
+            // Apply may already have resolved this review, so re-check identity.
+            guard pendingPasteReview?.id == review.id,
+                pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id)
+            else {
+                return
+            }
+
+            if case .mismatch(let mismatch) = validation {
+                pasteReviewFeedback = .destinationChanged(mismatch)
+                return
+            }
+        }
+
+        guard let recoveryPresenter = recorderUIManager as? any PasteReviewRecoveryPresenting else {
+            pasteReviewFeedback = .deliveryUnavailable
+            return
+        }
+
+        guard pasteReviewResolutionGate.beginDelivery(review.id) else { return }
+        pendingPasteReviewExpirationTask?.cancel()
+        pendingPasteReviewExpirationTask = nil
+        pasteReviewSecondsRemaining = nil
+        pasteReviewFeedback = nil
+        isResolvingPasteReview = true
+        recordingState = .busy
+
+        let outcome = await pasteDeliveryService.deliver(
+            review.payload,
+            dismiss: {
+                recoveryPresenter.hidePasteReviewForDelivery()
+            },
+            playStopSound: false
+        )
+
+        switch outcome {
+        case .commandPosted:
+            guard pasteReviewResolutionGate.completeDelivery(review.id) else { return }
+            clearPendingPasteReviewPresentation()
+            await recorderUIManager?.dismissRecorderPanel()
+            finishPasteReviewResolution()
+
+        case .commandNotPosted:
+            guard pendingPasteReview?.id == review.id else { return }
+
+            guard !review.isExpired() else {
+                _ = pasteReviewResolutionGate.completeDelivery(review.id)
+                clearPendingPasteReviewPresentation()
+                await recorderUIManager?.dismissRecorderPanel()
+                finishPasteReviewResolution()
+                return
+            }
+
+            guard pasteReviewResolutionGate.restoreAfterFailure(review.id) else { return }
+            isResolvingPasteReview = false
+            recordingState = .reviewing
+            pasteReviewFeedback = .pasteFailed
+            schedulePasteReviewExpiration(for: review)
+            recoveryPresenter.restorePasteReviewAfterFailedDelivery()
+        }
+    }
+
+    func retryPendingPasteReview() async {
+        guard pasteReviewFeedback == .pasteFailed else { return }
+        await approvePendingPasteReview()
+    }
+
+    func copyPendingPasteReview() {
+        guard let review = pendingPasteReview,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id)
+        else {
+            return
+        }
+
+        pasteReviewFeedback = pasteDeliveryService.copy(review.payload)
+            ? .copied
+            : .copyFailed
+    }
+
+    func cancelPendingPasteReview() async {
+        guard let review = pendingPasteReview,
+            pasteReviewResolutionGate.cancel(review.id)
+        else {
+            return
+        }
+
+        isResolvingPasteReview = true
+        recordingState = .busy
+        clearPendingPasteReviewPresentation()
+        await recorderUIManager?.dismissRecorderPanel()
+        finishPasteReviewResolution()
+    }
+
+    private func finishPasteReviewResolution() {
+        isResolvingPasteReview = false
+        if PasteReviewLifecycle.canReturnToIdle(
+            hasActivePipeline: activePipelineTranscriptionID != nil,
+            isResolvingReview: isResolvingPasteReview
+        ), recordingState == .busy {
+            recordingState = .idle
+        }
+    }
+
+    private func clearPendingPasteReviewPresentation() {
+        pendingPasteReview = nil
+        pendingPasteReviewExpirationTask?.cancel()
+        pendingPasteReviewExpirationTask = nil
+        pasteReviewSecondsRemaining = nil
+        pasteReviewFeedback = nil
+        recorderUIManager?.clearPasteReview()
+        recorderUIManager?.finishPasteReviewKeyboardHandling()
+    }
+
+    private func discardPendingPasteReview() {
+        clearPendingPasteReviewPresentation()
+        pasteReviewResolutionGate.reset()
+        isResolvingPasteReview = false
+    }
+
+    private func schedulePasteReviewExpiration(for review: PendingPasteReview) {
+        pendingPasteReviewExpirationTask?.cancel()
+        pasteReviewSecondsRemaining = PasteReviewExpiration.secondsRemaining(until: review.expiresAt)
+        pendingPasteReviewExpirationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            while self.pendingPasteReview?.id == review.id,
+                self.pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id)
+            {
+                let seconds = PasteReviewExpiration.secondsRemaining(until: review.expiresAt)
+                self.pasteReviewSecondsRemaining = seconds
+
+                if seconds == 0 {
+                    await self.cancelPendingPasteReview()
+                    return
+                }
+
+                do {
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    private func announcePasteReviewReady() {
+        guard let application = NSApp else { return }
+        NSAccessibility.post(
+            element: application,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: String(localized: "Transcript review ready. Press Return to apply or Escape to cancel."),
+                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ]
+        )
     }
 
     // MARK: - Cancellation
@@ -663,6 +918,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
             partialTranscript = ""
             recordingState = .idle
             shouldFinishSessionImmediately = false
+        case .reviewing:
+            await cancelPendingPasteReview()
+            return
         case .idle, .busy:
             partialTranscript = ""
             shouldCancelRecording = false
@@ -676,6 +934,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     func resetRecordingSession() async {
+        discardPendingPasteReview()
         cancelCurrentSession()
         activeRecordingStartID = nil
         activePipelineTranscriptionID = nil
@@ -685,6 +944,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         assistantSession.reset()
         activeRecordingUseCase = .newSession
         activePipelineUseCase = .newSession
+        activePasteReviewDestination = nil
         clearActiveRecordingContext()
         await recorder.stopRecording()
         recordedFile = nil
@@ -711,6 +971,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         await saveCanceledRecording()
         recordedFile = nil
         partialTranscript = ""
+        activePasteReviewDestination = nil
         recordingState = .idle
         await cleanupResources()
     }

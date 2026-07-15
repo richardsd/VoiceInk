@@ -85,8 +85,13 @@ class RecordingShortcutManager: ObservableObject {
         }
     }
 
-    private static func canHandleShortcutAction(for recordingState: RecordingState) -> Bool {
-        recordingState != .transcribing && recordingState != .enhancing && recordingState != .busy
+    static func canHandleShortcutAction(for recordingState: RecordingState) -> Bool {
+        switch recordingState {
+        case .idle, .starting, .recording:
+            return true
+        case .transcribing, .enhancing, .reviewing, .busy:
+            return false
+        }
     }
 
     init(engine: VoiceInkEngine, recorderUIManager: RecorderUIManager) {
@@ -136,7 +141,11 @@ class RecordingShortcutManager: ObservableObject {
 
         self.engine = engine
         self.recorderUIManager = recorderUIManager
-        self.recorderPanelShortcutManager = RecorderPanelShortcutManager(recorderUIManager: recorderUIManager)
+        let recorderPanelShortcutManager = RecorderPanelShortcutManager(
+            recorderUIManager: recorderUIManager
+        )
+        self.recorderPanelShortcutManager = recorderPanelShortcutManager
+        recorderUIManager.setReviewShortcutController(recorderPanelShortcutManager)
         self.shortcutModeHandler = shortcutModeHandler
         self.primaryRecordingShortcutModeSource = primaryRecordingShortcutModeSource
         self.modeShortcutManager = ModeShortcutManager(
@@ -388,6 +397,11 @@ final class RecordingShortcutModeHandler {
         mode: RecordingShortcutManager.Mode,
         modeId: UUID? = nil
     ) async {
+        // Review owns the keyboard until its immutable payload is consumed.
+        // Returning before mutating shortcut state also prevents a blocked Mode
+        // shortcut from leaking hands-free state into the next recording.
+        guard recordingState() != .reviewing else { return }
+
         if interruptedRecordingActions.remove(action) != nil {
             return
         }
