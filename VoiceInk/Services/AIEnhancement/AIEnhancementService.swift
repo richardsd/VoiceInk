@@ -24,6 +24,7 @@ class AIEnhancementService: ObservableObject {
     private let aiService: AIService
     private let screenCaptureService: ScreenCaptureService
     private let customVocabularyService: CustomVocabularyService
+    private let codexOAuthClient: any CodexOAuthClientProtocol
     private var baseTimeout: TimeInterval {
         let stored = UserDefaults.standard.integer(forKey: "EnhancementTimeoutSeconds")
         return stored > 0 ? TimeInterval(stored) : 7
@@ -34,9 +35,14 @@ class AIEnhancementService: ObservableObject {
 
     @Published var lastCapturedClipboard: String?
 
-    init(aiService: AIService = AIService(), modelContext: ModelContext) {
+    init(
+        aiService: AIService = AIService(),
+        modelContext: ModelContext,
+        codexOAuthClient: any CodexOAuthClientProtocol = CodexOAuthClient()
+    ) {
         self.aiService = aiService
         self.modelContext = modelContext
+        self.codexOAuthClient = codexOAuthClient
         self.screenCaptureService = ScreenCaptureService()
         self.customVocabularyService = CustomVocabularyService.shared
 
@@ -360,73 +366,46 @@ class AIEnhancementService: ObservableObject {
     private func makeCodexOAuthRequest(formattedText: String, systemMessage: String, modelName: String) async throws -> String {
         try await aiService.refreshOAuthTokenIfNeeded(authMode: .oauth)
 
-        let url = URL(string: CodexConstants.responsesEndpoint)!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = baseTimeout
-
-        let authHeader = try aiService.authorizationHeader(for: .openAI, authMode: .oauth)
-        if !authHeader.isEmpty {
-            request.addValue(authHeader, forHTTPHeaderField: "Authorization")
+        guard let accessToken = try aiService.getOAuthAccessToken(authMode: .oauth), !accessToken.isEmpty else {
+            throw EnhancementError.notConfigured
         }
 
-        let requestBody: [String: Any] = [
-            "model": modelName,
-            "input": [
-                [
-                    "role": "user",
-                    "content": [
-                        ["type": "input_text", "text": formattedText]
-                    ]
-                ]
-            ],
-            "instructions": systemMessage,
-            "stream": true,
-            "store": false
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: requestBody)
-
-        let (byteStream, response) = try await URLSession.shared.bytes(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw EnhancementError.invalidResponse
-        }
-
-        guard httpResponse.statusCode == 200 else {
-            var errorData = Data()
-            for try await byte in byteStream { errorData.append(byte) }
-            let errorString = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-            if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+        do {
+            let result = try await codexOAuthClient.enhance(
+                formattedText: formattedText,
+                instructions: systemMessage,
+                model: modelName,
+                accessToken: accessToken,
+                timeout: baseTimeout
+            )
+            return AIEnhancementOutputFilter.filter(result)
+        } catch let error as CodexOAuthClientError {
+            switch error {
+            case .unauthorized:
                 let reason = "ChatGPT connection expired. Sign in again to continue AI enhancement."
                 await MainActor.run {
                     aiService.handleOAuthSessionInvalidation(reason: reason)
                 }
                 throw EnhancementError.oauthDisconnected(reason)
+            case .rateLimited:
+                throw EnhancementError.rateLimitExceeded
+            case .serverError:
+                throw EnhancementError.serverError
+            case .invalidResponse:
+                throw EnhancementError.invalidResponse
+            case .emptyResponse:
+                throw EnhancementError.enhancementFailed
+            case .httpError(let statusCode):
+                throw EnhancementError.customError(
+                    "ChatGPT Codex request failed (HTTP \(statusCode))."
+                )
             }
-            if httpResponse.statusCode == 429 { throw EnhancementError.rateLimitExceeded }
-            if (500...599).contains(httpResponse.statusCode) { throw EnhancementError.serverError }
-            throw EnhancementError.customError("HTTP \(httpResponse.statusCode): \(errorString)")
-        }
-
-        var outputText = ""
-        for try await line in byteStream.lines {
-            guard line.hasPrefix("data: ") else { continue }
-            let jsonString = String(line.dropFirst(6))
-            guard jsonString != "[DONE]",
-                  let jsonData = jsonString.data(using: .utf8),
-                  let event = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else { continue }
-
-            let eventType = event["type"] as? String ?? ""
-            if eventType == "response.output_text.delta", let delta = event["delta"] as? String {
-                outputText += delta
-            } else if eventType == "response.output_text.done", let fullText = event["text"] as? String {
-                outputText = fullText
+        } catch let error as URLError {
+            if error.code == .timedOut {
+                throw EnhancementError.timeout
             }
+            throw EnhancementError.networkError
         }
-
-        guard !outputText.isEmpty else { throw EnhancementError.enhancementFailed }
-        return AIEnhancementOutputFilter.filter(outputText.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private func mapLLMKitError(_ error: LLMKitError) -> EnhancementError {

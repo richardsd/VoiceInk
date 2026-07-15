@@ -12,6 +12,359 @@ import SwiftData
 
 struct VoiceInkTests {
 
+    @Test func openAIConnectionPolicyKeepsBothConnectionsIndependent() {
+        #expect(AIService.configuredOpenAIAuthModes(hasAPIKey: false, hasOAuthSession: false).isEmpty)
+        #expect(AIService.configuredOpenAIAuthModes(hasAPIKey: true, hasOAuthSession: false) == [.apiKey])
+        #expect(AIService.configuredOpenAIAuthModes(hasAPIKey: false, hasOAuthSession: true) == [.oauth])
+        #expect(AIService.configuredOpenAIAuthModes(hasAPIKey: true, hasOAuthSession: true) == [.oauth, .apiKey])
+
+        #expect(AIService.preferredOpenAIAuthMode(hasAPIKey: true, hasOAuthSession: true) == .oauth)
+        #expect(AIService.preferredOpenAIAuthMode(hasAPIKey: true, hasOAuthSession: false) == .apiKey)
+        #expect(AIService.preferredOpenAIAuthMode(hasAPIKey: false, hasOAuthSession: false) == .oauth)
+    }
+
+    @Test func codexOAuthCatalogUsesLunaAndRetainsLegacySelections() throws {
+        #expect(AIService.fallbackOpenAIOAuthModel == "gpt-5.6-luna")
+        #expect(CodexModels.sortedForPicker.first(where: \.isRecommended)?.id == "gpt-5.6-luna")
+        #expect(CodexModels.metadata(for: "gpt-5.6-sol")?.status == .current)
+        #expect(CodexModels.metadata(for: "gpt-5.6-terra")?.status == .current)
+        #expect(CodexModels.metadata(for: "gpt-5.5")?.status == .legacy)
+        #expect(CodexModels.metadata(for: "gpt-5.3-codex")?.status == .deprecated)
+        #expect(CodexModels.metadata(for: "gpt-5.2")?.status == .deprecated)
+
+        let savedMode = ModeConfig(
+            name: "Existing OAuth Mode",
+            isAIEnhancementEnabled: true,
+            selectedAIProvider: AIProvider.openAI.rawValue,
+            selectedOpenAIAuthMode: OpenAIAuthMode.oauth.rawValue,
+            selectedOpenAIOAuthModel: "gpt-5.5"
+        )
+        let encoded = try JSONEncoder().encode(savedMode)
+        let decoded = try JSONDecoder().decode(ModeConfig.self, from: encoded)
+        #expect(decoded.selectedOpenAIOAuthModel == "gpt-5.5")
+    }
+
+    @MainActor
+    @Test func explicitDisconnectedProviderIsNotSilentlyReplaced() {
+        let resolved = ModeRuntimeResolver.resolvedProvider(
+            providerName: AIProvider.openAI.rawValue,
+            connectedProviders: [.gemini]
+        )
+        #expect(resolved == .openAI)
+
+        let fallback = ModeRuntimeResolver.resolvedProvider(
+            providerName: nil,
+            connectedProviders: [.gemini]
+        )
+        #expect(fallback == .gemini)
+
+        let preservedModel = ModeRuntimeResolver.resolvedModelName(
+            configuredModelName: "saved-model-no-longer-in-catalog",
+            availableModels: ["gpt-5.6-luna"],
+            defaultModel: "gpt-5.6-luna"
+        )
+        #expect(preservedModel == "saved-model-no-longer-in-catalog")
+    }
+
+    @Test func codexCallbackParserAcceptsOnlyExpectedCallback() throws {
+        let validRequest = "GET /auth/callback?code=abc123&state=expected HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        #expect(
+            try CodexCallbackRequestParser.authorizationCode(
+                from: validRequest,
+                expectedState: "expected"
+            ) == "abc123"
+        )
+
+        #expect(callbackError(for: "POST /auth/callback?code=x&state=expected HTTP/1.1\r\n\r\n") == .unsupportedMethod)
+        #expect(callbackError(for: "GET /wrong?code=x&state=expected HTTP/1.1\r\n\r\n") == .invalidPath)
+        #expect(callbackError(for: "GET /auth/callback?code=x&state=wrong HTTP/1.1\r\n\r\n") == .invalidState)
+        #expect(callbackError(for: "GET /auth/callback?state=expected HTTP/1.1\r\n\r\n") == .missingCode)
+        #expect(
+            callbackError(for: "GET /auth/callback?error=access_denied&state=expected HTTP/1.1\r\n\r\n")
+                == .authorizationDenied
+        )
+    }
+
+    @Test func codexSSEParserHandlesStreamingAndMalformedEvents() throws {
+        let streamedResponse = Data(
+            """
+            data: {"type":"response.output_text.delta","delta":"Hello "}
+            data: this-is-not-json
+            data: {"type":"response.output_text.delta","delta":"world"}
+            data: [DONE]
+
+            """.utf8
+        )
+        #expect(try CodexSSEParser.parse(streamedResponse) == "Hello world")
+
+        let completedResponse = Data(
+            """
+            data: {"type":"response.output_text.delta","delta":"Partial"}
+            data: {"type":"response.output_text.done","text":"Final result"}
+
+            """.utf8
+        )
+        #expect(try CodexSSEParser.parse(completedResponse) == "Final result")
+
+        #expect(codexParserError(for: Data("data: malformed\n".utf8)) == .emptyResponse)
+    }
+
+    @Test func codexHTTPStatusMappingDoesNotExposeResponseBodies() {
+        #expect(CodexOAuthClient.error(forHTTPStatus: 401) == .unauthorized)
+        #expect(CodexOAuthClient.error(forHTTPStatus: 403) == .unauthorized)
+        #expect(CodexOAuthClient.error(forHTTPStatus: 429) == .rateLimited)
+        #expect(CodexOAuthClient.error(forHTTPStatus: 503) == .serverError)
+        #expect(CodexOAuthClient.error(forHTTPStatus: 418) == .httpError(418))
+    }
+
+    @Test func codexOAuthClientSendsPrivateStreamingRequest() async throws {
+        let capturedRequest = LockedBox<URLRequest?>(nil)
+        let session = MockHTTPSession { request in
+            capturedRequest.value = request
+            let response = HTTPURLResponse(
+                url: try #require(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "text/event-stream"]
+            )!
+            let data = Data(
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Polished\"}\n\n".utf8
+            )
+            return (response, data)
+        }
+
+        let client = CodexOAuthClient(session: session)
+        let result = try await client.enhance(
+            formattedText: "Raw transcript",
+            instructions: "Clean it up",
+            model: "gpt-5.6-luna",
+            accessToken: "test-access-token",
+            timeout: 12
+        )
+
+        #expect(result == "Polished")
+        let request = try #require(capturedRequest.value)
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-access-token")
+        #expect(request.timeoutInterval == 12)
+
+        let bodyData = try #require(request.httpBody)
+        let body = try #require(try JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+        #expect(body["model"] as? String == "gpt-5.6-luna")
+        #expect(body["stream"] as? Bool == true)
+        #expect(body["store"] as? Bool == false)
+    }
+
+    @Test func codexOAuthClientMapsHTTPAndNetworkFailures() async {
+        for (statusCode, expectedError) in [
+            (401, CodexOAuthClientError.unauthorized),
+            (403, CodexOAuthClientError.unauthorized),
+            (429, CodexOAuthClientError.rateLimited),
+            (500, CodexOAuthClientError.serverError),
+            (503, CodexOAuthClientError.serverError),
+        ] {
+            let session = MockHTTPSession { request in
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: statusCode,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return (response, Data("sensitive backend response".utf8))
+            }
+            let client = CodexOAuthClient(session: session)
+
+            do {
+                _ = try await client.enhance(
+                    formattedText: "Raw",
+                    instructions: "Clean",
+                    model: "gpt-5.6-luna",
+                    accessToken: "token",
+                    timeout: 1
+                )
+                #expect(Bool(false), "Expected HTTP \(statusCode) to fail")
+            } catch let error as CodexOAuthClientError {
+                #expect(error == expectedError)
+                #expect(error.localizedDescription.contains("sensitive backend response") == false)
+            } catch {
+                #expect(Bool(false), "Unexpected error type: \(type(of: error))")
+            }
+        }
+
+        for expectedCode in [URLError.timedOut, .notConnectedToInternet] {
+            let session = MockHTTPSession { _ in throw URLError(expectedCode) }
+            let client = CodexOAuthClient(session: session)
+
+            do {
+                _ = try await client.enhance(
+                    formattedText: "Raw",
+                    instructions: "Clean",
+                    model: "gpt-5.6-luna",
+                    accessToken: "token",
+                    timeout: 1
+                )
+                #expect(Bool(false), "Expected URL error \(expectedCode.rawValue)")
+            } catch let error as URLError {
+                #expect(error.code == expectedCode)
+            } catch {
+                #expect(Bool(false), "Unexpected error type: \(type(of: error))")
+            }
+        }
+    }
+
+    @Test func codexTokenRefreshIsInjectableAndSanitizesFailures() async throws {
+        let capturedRequest = LockedBox<URLRequest?>(nil)
+        let successSession = MockHTTPSession { request in
+            capturedRequest.value = request
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let data = Data(
+                "{\"access_token\":\"new-access\",\"refresh_token\":\"new-refresh\",\"expires_in\":3600}".utf8
+            )
+            return (response, data)
+        }
+
+        let tokens = try await CodexAuth.refreshAccessToken(
+            refreshToken: "old+refresh",
+            session: successSession
+        )
+        #expect(tokens.accessToken == "new-access")
+        #expect(tokens.refreshToken == "new-refresh")
+        #expect(tokens.expiresAt > Date())
+
+        let request = try #require(capturedRequest.value)
+        let formBody = try #require(request.httpBody.flatMap { String(data: $0, encoding: .utf8) })
+        #expect(formBody.contains("grant_type=refresh_token"))
+        #expect(formBody.contains("refresh_token=old%2Brefresh"))
+
+        let failureSession = MockHTTPSession { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 401,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (response, Data("sensitive raw backend response".utf8))
+        }
+
+        do {
+            _ = try await CodexAuth.refreshAccessToken(refreshToken: "secret", session: failureSession)
+            #expect(Bool(false), "Expected refresh failure")
+        } catch let error as CodexAuthError {
+            #expect(error.localizedDescription.contains("sensitive raw backend response") == false)
+            #expect(error.localizedDescription == "Token refresh failed: HTTP 401")
+        }
+    }
+
+    @MainActor
+    @Test func callbackServerCleansUpAfterTimeoutAndCancellation() async {
+        let timeoutServer = CodexCallbackServer(timeoutSeconds: 0.02)
+        do {
+            _ = try await timeoutServer.start(expectedState: "timeout-state")
+            #expect(Bool(false), "Expected callback timeout")
+        } catch let error as CallbackServerError {
+            #expect(error == .timeout)
+        } catch {
+            #expect(Bool(false), "Unexpected timeout error type: \(type(of: error))")
+        }
+        #expect(timeoutServer.isListening == false)
+
+        let cancellationServer = CodexCallbackServer(timeoutSeconds: 10)
+        let task = Task { @MainActor in
+            try await cancellationServer.start(expectedState: "cancel-state")
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            #expect(Bool(false), "Expected callback cancellation")
+        } catch let error as CallbackServerError {
+            #expect(error == .cancelled)
+        } catch {
+            #expect(Bool(false), "Unexpected cancellation error type: \(type(of: error))")
+        }
+        #expect(cancellationServer.isListening == false)
+    }
+
+    @MainActor
+    @Test func callbackServerRejectsInvalidRequestsThenCompletesOnce() async throws {
+        let server = CodexCallbackServer(timeoutSeconds: 2)
+        let callbackTask = Task { @MainActor in
+            try await server.start(expectedState: "expected-state")
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(server.isListening)
+
+        let wrongMethodResponse = try await sendCallbackRequest(
+            method: "POST",
+            path: "/auth/callback?code=wrong&state=expected-state"
+        )
+        #expect(wrongMethodResponse.statusCode == 405)
+        #expect(server.isListening)
+
+        let wrongPathResponse = try await sendCallbackRequest(
+            method: "GET",
+            path: "/wrong?code=wrong&state=expected-state"
+        )
+        #expect(wrongPathResponse.statusCode == 404)
+        #expect(server.isListening)
+
+        let wrongStateResponse = try await sendCallbackRequest(
+            method: "GET",
+            path: "/auth/callback?code=wrong&state=unexpected"
+        )
+        #expect(wrongStateResponse.statusCode == 400)
+        #expect(server.isListening)
+
+        let successResponse = try await sendCallbackRequest(
+            method: "GET",
+            path: "/auth/callback?code=valid-code&state=expected-state"
+        )
+        #expect(successResponse.statusCode == 200)
+        #expect(try await callbackTask.value == "valid-code")
+        #expect(server.isListening == false)
+    }
+
+    @Test func newOpenAIModePrefersOAuthAndLunaWithoutChangingAPIModel() {
+        let snapshot = ModeFormWarmupSnapshot(
+            connectedAIProviders: [.openAI],
+            aiModelsByProvider: [.openAI: ["gpt-5.4-mini"]],
+            selectedAIModelsByProvider: [.openAI: "gpt-5.4-mini"],
+            configuredOpenAIAuthModes: [.oauth, .apiKey],
+            openAIModelsByAuthMode: [
+                .oauth: CodexModels.sortedForPicker.map(\.id),
+                .apiKey: ["gpt-5.4-mini"],
+            ],
+            selectedOpenAIModelsByAuthMode: [
+                .oauth: "gpt-5.5",
+                .apiKey: "gpt-5.4-mini",
+            ],
+            defaultOpenAIModelsByAuthMode: [
+                .oauth: "gpt-5.6-luna",
+                .apiKey: "gpt-5.4-mini",
+            ],
+            preferredOpenAIAuthMode: .oauth,
+            usableTranscriptionModels: [],
+            allTranscriptionModels: [],
+            prompts: []
+        )
+        var draft = ModeConfigDraft(mode: .add, modeManager: .shared)
+        draft.selectedAIProvider = AIProvider.openAI.rawValue
+        draft.selectedAIModel = "gpt-5.4-mini"
+        draft.selectedOpenAIOAuthModel = "gpt-5.5"
+
+        draft.applyAddModeDefaults(snapshot: snapshot)
+
+        #expect(draft.selectedOpenAIAuthMode == OpenAIAuthMode.oauth.rawValue)
+        #expect(draft.selectedOpenAIOAuthModel == "gpt-5.6-luna")
+        #expect(draft.selectedAIModel == "gpt-5.4-mini")
+    }
+
     @Test func modeConfigDecodesLegacyPowerModeWithoutOpenAIFields() throws {
         let legacyConfigJSON = #"""
         {
@@ -64,7 +417,7 @@ struct VoiceInkTests {
             restoreDefault(originalPrompts, forKey: "customPrompts")
         }
 
-        let aiService = AIService()
+        let aiService = AIService(oauthTokenStore: InMemoryOAuthTokenStore())
         aiService.openAIAuthMode = .apiKey
         aiService.isOAuthAuthenticated = true
 
@@ -235,7 +588,8 @@ struct VoiceInkTests {
         let resolvedPrompt = PromptResolver.resolvedPromptText(for: childPrompt, in: [parentPrompt, childPrompt])
 
         #expect(resolvedPrompt.contains("Parent instructions\n\nChild instructions"))
-        #expect(resolvedPrompt.contains("TRANSCRIPTION ENHANCER"))
+        #expect(resolvedPrompt.contains("# System Instructions"))
+        #expect(resolvedPrompt.contains("<TASK_INSTRUCTIONS>"))
     }
 
     @Test func promptResolverRejectsCircularParentAssignment() {
@@ -306,4 +660,93 @@ struct VoiceInkTests {
         )
     }
 
+}
+
+private func callbackError(for request: String) -> CallbackServerError? {
+    do {
+        _ = try CodexCallbackRequestParser.authorizationCode(from: request, expectedState: "expected")
+        return nil
+    } catch let error as CallbackServerError {
+        return error
+    } catch {
+        return .invalidRequest
+    }
+}
+
+private func codexParserError(for data: Data) -> CodexOAuthClientError? {
+    do {
+        _ = try CodexSSEParser.parse(data)
+        return nil
+    } catch let error as CodexOAuthClientError {
+        return error
+    } catch {
+        return .invalidResponse
+    }
+}
+
+private func sendCallbackRequest(method: String, path: String) async throws -> HTTPURLResponse {
+    var request = URLRequest(
+        url: URL(string: "http://127.0.0.1:\(CodexConstants.redirectPort)\(path)")!
+    )
+    request.httpMethod = method
+    request.timeoutInterval = 1
+    let (_, response) = try await URLSession.shared.data(for: request)
+    return try #require(response as? HTTPURLResponse)
+}
+
+private final class LockedBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Value
+
+    init(_ value: Value) {
+        storedValue = value
+    }
+
+    var value: Value {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return storedValue
+        }
+        set {
+            lock.lock()
+            storedValue = newValue
+            lock.unlock()
+        }
+    }
+}
+
+private final class MockHTTPSession: OAuthHTTPSessionProtocol, @unchecked Sendable {
+    typealias Handler = (URLRequest) throws -> (HTTPURLResponse, Data)
+
+    private let handler: Handler
+
+    init(handler: @escaping Handler) {
+        self.handler = handler
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let (response, data) = try handler(request)
+        return (data, response)
+    }
+}
+
+private final class InMemoryOAuthTokenStore: OAuthTokenStore {
+    private var tokens: OAuthTokens?
+
+    init(tokens: OAuthTokens? = nil) {
+        self.tokens = tokens
+    }
+
+    func saveOAuthTokens(_ tokens: OAuthTokens) throws {
+        self.tokens = tokens
+    }
+
+    func retrieveOAuthTokens() throws -> OAuthTokens? {
+        tokens
+    }
+
+    func deleteOAuthTokens() throws {
+        tokens = nil
+    }
 }

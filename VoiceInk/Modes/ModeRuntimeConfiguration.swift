@@ -113,7 +113,7 @@ enum ModeRuntimeResolver {
         )
         let provider = resolvedProvider(
             providerName: mode?.selectedAIProvider,
-            aiService: aiService
+            connectedProviders: aiService.connectedProviders
         )
         let openAIAuthMode = resolvedOpenAIAuthMode(
             provider: provider,
@@ -181,18 +181,18 @@ enum ModeRuntimeResolver {
         return enhancementService.allPrompts.first { $0.id == uuid }
     }
 
-    private static func resolvedProvider(
+    static func resolvedProvider(
         providerName: String?,
-        aiService: AIService
+        connectedProviders: [AIProvider]
     ) -> AIProvider? {
         if let providerName,
             let provider = AIProvider(rawValue: providerName),
-            aiService.connectedProviders.contains(provider)
+            provider.supportsEnhancement
         {
             return provider
         }
 
-        return aiService.connectedProviders.first
+        return connectedProviders.first
     }
 
     private static func resolvedOpenAIAuthMode(
@@ -239,17 +239,28 @@ enum ModeRuntimeResolver {
         }
 
         let models = aiService.models(for: provider, authMode: openAIAuthMode)
+        return resolvedModelName(
+            configuredModelName: configuredModelName,
+            availableModels: models,
+            defaultModel: aiService.defaultModel(for: provider, authMode: openAIAuthMode)
+        )
+    }
+
+    static func resolvedModelName(
+        configuredModelName: String?,
+        availableModels: [String],
+        defaultModel: String
+    ) -> String {
         if let configuredModelName,
-            !configuredModelName.isEmpty,
-            (models.isEmpty || models.contains(configuredModelName))
+            !configuredModelName.isEmpty
         {
             return configuredModelName
         }
 
-        if let firstModel = models.first {
+        if let firstModel = availableModels.first {
             return firstModel
         }
 
-        return aiService.defaultModel(for: provider, authMode: openAIAuthMode)
+        return defaultModel
     }
 }

@@ -6,7 +6,7 @@
 //  Sources:
 //  - https://developers.openai.com/api/docs/models
 //  - https://developers.openai.com/api/docs/models/all
-//  Last synced: 2026-05-05
+//  Last synced: 2026-07-15
 //  Update checklist:
 //  1) Verify model IDs in OpenAI docs match `id` values below
 //  2) Update `status`/`isRecommended` when models are promoted or deprecated
@@ -67,15 +67,47 @@ struct CodexModelMetadata: Codable, Equatable {
 
 enum CodexModels {
     static let fallbackModels: [CodexModelMetadata] = [
+        // Current GPT-5.6 family recommended for ChatGPT sign-in.
+        CodexModelMetadata(
+            id: "gpt-5.6-sol",
+            displayName: "GPT-5.6 Sol",
+            description: "Flagship model for complex, open-ended work that needs maximum depth and polish.",
+            tier: .plus,
+            status: .current,
+            releaseDate: "2026-07",
+            isRecommended: false,
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.6-sol"
+        ),
+        CodexModelMetadata(
+            id: "gpt-5.6-terra",
+            displayName: "GPT-5.6 Terra",
+            description: "Balanced everyday model for strong reasoning and tool use with lower latency.",
+            tier: .plus,
+            status: .current,
+            releaseDate: "2026-07",
+            isRecommended: false,
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.6-terra"
+        ),
+        CodexModelMetadata(
+            id: "gpt-5.6-luna",
+            displayName: "GPT-5.6 Luna",
+            description: "Fast model for clear, repeatable transformations such as transcript cleanup.",
+            tier: .plus,
+            status: .current,
+            releaseDate: "2026-07",
+            isRecommended: true,
+            documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+        ),
+
         // Current recommended frontier models
         CodexModelMetadata(
             id: "gpt-5.5",
             displayName: "GPT-5.5",
-            description: "OpenAI's flagship model for complex reasoning and coding.",
+            description: "Previous-generation frontier model retained for compatibility.",
             tier: .plus,
-            status: .current,
+            status: .legacy,
             releaseDate: "2026-05",
-            isRecommended: true,
+            isRecommended: false,
             documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.5"
         ),
         CodexModelMetadata(
@@ -133,9 +165,9 @@ enum CodexModels {
         CodexModelMetadata(
             id: "gpt-5.3-codex",
             displayName: "GPT-5.3-Codex",
-            description: "Current coding-specialized Codex model for agentic software engineering tasks.",
+            description: "Deprecated coding-specialized model retained for compatibility with saved selections.",
             tier: .plus,
-            status: .current,
+            status: .deprecated,
             releaseDate: "2026-02",
             isRecommended: false,
             documentationURL: "https://developers.openai.com/api/docs/models/gpt-5.3-codex"
@@ -165,9 +197,9 @@ enum CodexModels {
         CodexModelMetadata(
             id: "gpt-5.2",
             displayName: "GPT-5.2",
-            description: "Previous GPT-5.2 model retained for compatibility.",
+            description: "Deprecated ChatGPT-sign-in model retained for compatibility.",
             tier: .plus,
-            status: .legacy,
+            status: .deprecated,
             releaseDate: "2025-11",
             isRecommended: false,
             documentationURL: "https://developers.openai.com/api/docs/models/all"

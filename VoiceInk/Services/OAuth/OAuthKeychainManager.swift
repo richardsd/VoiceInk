@@ -9,48 +9,24 @@ import Foundation
 import Security
 import os
 
-class OAuthKeychainManager {
+protocol OAuthTokenStore {
+    func saveOAuthTokens(_ tokens: OAuthTokens) throws
+    func retrieveOAuthTokens() throws -> OAuthTokens?
+    func deleteOAuthTokens() throws
+}
+
+class OAuthKeychainManager: OAuthTokenStore {
     static let shared = OAuthKeychainManager()
     
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "OAuthKeychainManager")
     
     private init() {}
     
-    // MARK: - Access Control
-    
-    /// Creates an Access Control List (ACL) that trusts only this app.
-    /// This prevents keychain password prompts by explicitly allowing our app to access items.
-    private func createAccessControl() throws -> SecAccess {
-        var access: SecAccess?
-        
-        // Create trusted application for this app (nil = current application)
-        var trustedApp: SecTrustedApplication?
-        let appStatus = SecTrustedApplicationCreateFromPath(nil, &trustedApp)
-        guard appStatus == errSecSuccess, let trustedApp = trustedApp else {
-            throw KeychainError.failedToCreateAccess(appStatus)
-        }
-        
-        // Create access control with the trusted app
-        let trustedAppList = [trustedApp] as CFArray
-        let status = SecAccessCreate(
-            "VoiceInk OAuth Tokens" as CFString,
-            trustedAppList,
-            &access
-        )
-        
-        guard status == errSecSuccess, let access = access else {
-            throw KeychainError.failedToCreateAccess(status)
-        }
-        
-        return access
-    }
-    
     enum KeychainError: LocalizedError {
         case failedToSave(OSStatus)
         case failedToRead(OSStatus)
         case failedToDelete(OSStatus)
         case noDataFound
-        case failedToCreateAccess(OSStatus)
         
         var errorDescription: String? {
             switch self {
@@ -62,8 +38,6 @@ class OAuthKeychainManager {
                 return "Failed to delete from Keychain: \(status)"
             case .noDataFound:
                 return "No data found in Keychain"
-            case .failedToCreateAccess(let status):
-                return "Failed to create access control: \(status)"
             }
         }
     }
@@ -80,22 +54,22 @@ class OAuthKeychainManager {
             throw KeychainError.failedToSave(-1)
         }
         
-        // Create access control that trusts this app (eliminates password prompts)
-        let access = try createAccessControl()
-        
-        let query: [String: Any] = [
+        let itemIdentity: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
             kSecAttrService as String: "com.prakashjoshipax.voiceink.oauth",
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
-            kSecAttrAccess as String: access  // ACL that allows our app without prompts
         ]
+        let itemToAdd: [String: Any] = itemIdentity.merging([
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecAttrSynchronizable as String: false,
+        ]) { _, new in new }
         
-        // Try to delete existing first
-        SecItemDelete(query as CFDictionary)
+        // Match only by the stable service/account identifiers so sessions written
+        // with the legacy accessibility policy can be replaced in place.
+        SecItemDelete(itemIdentity as CFDictionary)
         
-        let status = SecItemAdd(query as CFDictionary, nil)
+        let status = SecItemAdd(itemToAdd as CFDictionary, nil)
         guard status == errSecSuccess else {
             logger.error("Failed to save keychain item for key: \(key), status: \(status)")
             throw KeychainError.failedToSave(status)
