@@ -57,8 +57,23 @@ struct EnhancementRuntimeConfiguration {
 struct OutputRuntimeConfiguration {
     let mode: ModeConfig?
     let outputMode: ModeOutputMode
+    let haloDeliveryPolicy: HaloDeliveryPolicy
     let autoSendKey: AutoSendKey
     let customCommand: ModeCustomCommand?
+
+    init(
+        mode: ModeConfig?,
+        outputMode: ModeOutputMode,
+        haloDeliveryPolicy: HaloDeliveryPolicy = .alwaysReview,
+        autoSendKey: AutoSendKey,
+        customCommand: ModeCustomCommand?
+    ) {
+        self.mode = mode
+        self.outputMode = outputMode
+        self.haloDeliveryPolicy = haloDeliveryPolicy
+        self.autoSendKey = autoSendKey
+        self.customCommand = customCommand
+    }
 }
 
 enum ModeTranscriptionModelResolution {
@@ -199,6 +214,7 @@ enum ModeRuntimeResolver {
         return OutputRuntimeConfiguration(
             mode: mode,
             outputMode: mode?.outputMode ?? .paste,
+            haloDeliveryPolicy: mode?.haloDeliveryPolicy ?? .alwaysReview,
             autoSendKey: mode?.autoSendKey ?? .none,
             customCommand: mode?.customCommand
         )

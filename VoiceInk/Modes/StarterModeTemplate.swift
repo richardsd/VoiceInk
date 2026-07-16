@@ -24,6 +24,10 @@ struct StarterModeTemplate: Identifiable {
     let useScreenCapture: Bool
     let isDefault: Bool
 
+    var haloDeliveryPolicy: HaloDeliveryPolicy {
+        outputMode == .paste ? .reviewWhenNeeded : .alwaysReview
+    }
+
     var featureLabels: [String] {
         var labels = ["Transcription", "Realtime"]
 

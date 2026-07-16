@@ -726,6 +726,19 @@ struct ModeConfigFormView: View {
             }
 
             if draft.outputMode.usesPasteOptions {
+                Picker(selection: $draft.haloDeliveryPolicy) {
+                    ForEach(HaloDeliveryPolicy.allCases) { policy in
+                        Text(policy.displayName).tag(policy)
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Halo Result")
+                        InfoTip(
+                            "Choose whether Halo pauses for review or pastes immediately. Mini and Notch recorder styles ignore this setting."
+                        )
+                    }
+                }
+
                 Picker(selection: $draft.autoSendKey) {
                     ForEach(AutoSendKey.allCases, id: \.self) { key in
                         Text(key.displayName).tag(key)

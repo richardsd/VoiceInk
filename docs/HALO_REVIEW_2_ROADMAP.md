@@ -19,8 +19,8 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 | Story | Status | Depends on | Milestone deliverable |
 | --- | --- | --- | --- |
 | HR2-00 | **Done** | — | This roadmap, dependency graph, acceptance criteria, and verification gates |
-| HR2-01 | Ready | HR2-00 | Mode policy persistence, defaults, runtime configuration, and Mode UI |
-| HR2-02 | Ready | HR2-01 | Decision resolver, destination-safe direct delivery, raw-fallback policy, and recovery review |
+| HR2-01 | **Done** | HR2-00 | Mode policy persistence, defaults, runtime configuration, and Mode UI |
+| HR2-02 | **In Progress** | HR2-01 | Decision resolver, destination-safe direct delivery, raw-fallback policy, and recovery review |
 | HR2-03 | Ready | HR2-02 | Session override shortcut, status chips, and Pasted confirmation pulse |
 | HR2-04 | Ready | HR2-01 | Review session, revision, reducer, and inactivity-lifecycle foundation |
 | HR2-05 | Ready | HR2-02, HR2-04 | `finalizedText`, delivery finalization, History consumers, and CSV export |
@@ -40,11 +40,11 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 
 ### HR2-01 — Delivery policy
 
-- [ ] `ModeConfig` persists Codable `alwaysReview`, `reviewWhenNeeded`, and `pasteImmediately` values.
-- [ ] Missing saved values decode as `alwaysReview`; new and starter Paste Modes explicitly use `reviewWhenNeeded`.
-- [ ] The Mode editor exposes **Halo Result** under Paste options and preserves it across output-type changes.
-- [ ] Runtime configuration carries the policy and resolves it again after trigger-word Mode selection.
-- [ ] Mini and Notch continue to ignore the policy.
+- [x] `ModeConfig` persists Codable `alwaysReview`, `reviewWhenNeeded`, and `pasteImmediately` values.
+- [x] Missing saved values decode as `alwaysReview`; new and starter Paste Modes explicitly use `reviewWhenNeeded`.
+- [x] The Mode editor exposes **Halo Result** under Paste options and preserves it across output-type changes.
+- [x] Runtime configuration carries the policy and resolves it again after trigger-word Mode selection.
+- [x] Mini and Notch continue to ignore the policy.
 
 ### HR2-02 — Safe direct delivery
 

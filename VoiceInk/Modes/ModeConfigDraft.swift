@@ -22,6 +22,7 @@ struct ModeConfigDraft {
     var selectedOpenAIAuthMode: String?
     var selectedOpenAIOAuthModel: String?
     var outputMode: ModeOutputMode
+    var haloDeliveryPolicy: HaloDeliveryPolicy
     var autoSendKey: AutoSendKey
     var customCommand: String
     var isDefault: Bool
@@ -55,6 +56,7 @@ struct ModeConfigDraft {
             selectedOpenAIAuthMode = inheritedConfig?.selectedOpenAIAuthMode ?? UserDefaults.standard.string(forKey: "openAIAuthMode")
             selectedOpenAIOAuthModel = inheritedConfig?.selectedOpenAIOAuthModel ?? UserDefaults.standard.string(forKey: "openAIOAuthModel")
             outputMode = .paste
+            haloDeliveryPolicy = .reviewWhenNeeded
             autoSendKey = .none
             customCommand = inheritedConfig?.customCommand?.command ?? ""
             isDefault = false
@@ -84,6 +86,7 @@ struct ModeConfigDraft {
             selectedOpenAIAuthMode = latestConfig.selectedOpenAIAuthMode
             selectedOpenAIOAuthModel = latestConfig.selectedOpenAIOAuthModel
             outputMode = latestConfig.outputMode
+            haloDeliveryPolicy = latestConfig.haloDeliveryPolicy
             autoSendKey = latestConfig.autoSendKey
             customCommand = latestConfig.customCommand?.command ?? ""
             isDefault = latestConfig.isDefault
@@ -212,6 +215,7 @@ struct ModeConfigDraft {
                 selectedOpenAIAuthMode: selectedOpenAIAuthMode,
                 selectedOpenAIOAuthModel: selectedOpenAIOAuthModel,
                 outputMode: outputMode,
+                haloDeliveryPolicy: haloDeliveryPolicy,
                 autoSendKey: savedAutoSendKey,
                 customCommand: savedCustomCommand,
                 isDefault: savedIsDefault
@@ -239,6 +243,7 @@ struct ModeConfigDraft {
             updatedConfig.selectedOpenAIAuthMode = selectedOpenAIAuthMode
             updatedConfig.selectedOpenAIOAuthModel = selectedOpenAIOAuthModel
             updatedConfig.outputMode = outputMode
+            updatedConfig.haloDeliveryPolicy = haloDeliveryPolicy
             updatedConfig.autoSendKey = savedAutoSendKey
             updatedConfig.customCommand = savedCustomCommand
             updatedConfig.isDefault = savedIsDefault

@@ -136,6 +136,7 @@ enum OnboardingV2Migration {
             selectedOpenAIAuthMode: defaults.string(forKey: "openAIAuthMode"),
             selectedOpenAIOAuthModel: defaults.string(forKey: "openAIOAuthModel"),
             outputMode: .paste,
+            haloDeliveryPolicy: .alwaysReview,
             autoSendKey: .none,
             isEnabled: true,
             isDefault: true

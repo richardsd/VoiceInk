@@ -50,6 +50,25 @@ enum ModeOutputMode: String, Codable, CaseIterable {
     }
 }
 
+enum HaloDeliveryPolicy: String, Codable, CaseIterable, Hashable, Identifiable {
+    case alwaysReview
+    case reviewWhenNeeded
+    case pasteImmediately
+
+    var id: Self { self }
+
+    var displayName: String {
+        switch self {
+        case .alwaysReview:
+            return String(localized: "Always Review")
+        case .reviewWhenNeeded:
+            return String(localized: "Review When Needed")
+        case .pasteImmediately:
+            return String(localized: "Paste Immediately")
+        }
+    }
+}
+
 struct ModeCustomCommand: Codable, Equatable {
     var command: String
 
@@ -87,13 +106,14 @@ struct ModeConfig: Codable, Identifiable, Equatable {
     var selectedOpenAIAuthMode: String?
     var selectedOpenAIOAuthModel: String?
     var outputMode: ModeOutputMode = .paste
+    var haloDeliveryPolicy: HaloDeliveryPolicy = .alwaysReview
     var autoSendKey: AutoSendKey = .none
     var customCommand: ModeCustomCommand?
     var isEnabled: Bool = true
     var isDefault: Bool = false
 
     enum CodingKeys: String, CodingKey {
-        case id, name, icon, appConfigs, urlConfigs, triggerGroups, triggerWords, isAIEnhancementEnabled, selectedPrompt, isRealtimeTranscriptionEnabled, selectedLanguage, isTextFormattingEnabled, punctuationCleanupMode, removePunctuation, lowercaseTranscription, useClipboardContext, useSelectedTextContext, useScreenCapture, selectedAIProvider, selectedAIModel, selectedOpenAIAuthMode, selectedOpenAIOAuthModel, outputMode, isAutoSendEnabled, autoSendKey, customCommand, isEnabled, isDefault
+        case id, name, icon, appConfigs, urlConfigs, triggerGroups, triggerWords, isAIEnhancementEnabled, selectedPrompt, isRealtimeTranscriptionEnabled, selectedLanguage, isTextFormattingEnabled, punctuationCleanupMode, removePunctuation, lowercaseTranscription, useClipboardContext, useSelectedTextContext, useScreenCapture, selectedAIProvider, selectedAIModel, selectedOpenAIAuthMode, selectedOpenAIOAuthModel, outputMode, haloDeliveryPolicy, isAutoSendEnabled, autoSendKey, customCommand, isEnabled, isDefault
         case legacyEmoji = "emoji"
         case selectedWhisperModel
         case selectedTranscriptionModelName
@@ -105,7 +125,8 @@ struct ModeConfig: Codable, Identifiable, Equatable {
          selectedTranscriptionModelName: String? = nil, isRealtimeTranscriptionEnabled: Bool = true, selectedLanguage: String? = nil, useClipboardContext: Bool = false, useSelectedTextContext: Bool = true, useScreenCapture: Bool = false,
          isTextFormattingEnabled: Bool = false, punctuationCleanupMode: PunctuationCleanupMode = .keep, lowercaseTranscription: Bool = false,
           selectedAIProvider: String? = nil, selectedAIModel: String? = nil, selectedOpenAIAuthMode: String? = nil,
-          selectedOpenAIOAuthModel: String? = nil, outputMode: ModeOutputMode = .paste, autoSendKey: AutoSendKey = .none,
+          selectedOpenAIOAuthModel: String? = nil, outputMode: ModeOutputMode = .paste,
+          haloDeliveryPolicy: HaloDeliveryPolicy = .alwaysReview, autoSendKey: AutoSendKey = .none,
           customCommand: ModeCustomCommand? = nil, isEnabled: Bool = true, isDefault: Bool = false) {
         self.id = id
         self.name = name
@@ -121,6 +142,7 @@ struct ModeConfig: Codable, Identifiable, Equatable {
         self.useScreenCapture = useScreenCapture
         self.autoSendKey = autoSendKey
         self.outputMode = outputMode
+        self.haloDeliveryPolicy = haloDeliveryPolicy
         self.customCommand = customCommand
         self.selectedAIProvider = selectedAIProvider
         self.selectedAIModel = selectedAIModel
@@ -194,6 +216,9 @@ struct ModeConfig: Codable, Identifiable, Equatable {
         selectedOpenAIAuthMode = try container.decodeIfPresent(String.self, forKey: .selectedOpenAIAuthMode)
         selectedOpenAIOAuthModel = try container.decodeIfPresent(String.self, forKey: .selectedOpenAIOAuthModel)
         outputMode = try container.decodeIfPresent(ModeOutputMode.self, forKey: .outputMode) ?? .paste
+        haloDeliveryPolicy =
+            try container.decodeIfPresent(HaloDeliveryPolicy.self, forKey: .haloDeliveryPolicy)
+            ?? .alwaysReview
         customCommand = try container.decodeIfPresent(ModeCustomCommand.self, forKey: .customCommand)
         // Migrate from old isAutoSendEnabled bool to new autoSendKey enum
         if let rawValue = try container.decodeIfPresent(String.self, forKey: .autoSendKey),
@@ -242,6 +267,7 @@ struct ModeConfig: Codable, Identifiable, Equatable {
         try container.encodeIfPresent(selectedOpenAIAuthMode, forKey: .selectedOpenAIAuthMode)
         try container.encodeIfPresent(selectedOpenAIOAuthModel, forKey: .selectedOpenAIOAuthModel)
         try container.encode(outputMode, forKey: .outputMode)
+        try container.encode(haloDeliveryPolicy, forKey: .haloDeliveryPolicy)
         try container.encode(autoSendKey, forKey: .autoSendKey)
         try container.encodeIfPresent(customCommand, forKey: .customCommand)
         try container.encodeIfPresent(selectedTranscriptionModelName, forKey: .selectedTranscriptionModelName)
