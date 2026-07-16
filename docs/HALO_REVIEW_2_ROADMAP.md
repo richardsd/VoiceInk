@@ -24,8 +24,8 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 | HR2-03 | **Done** | HR2-02 | Session override shortcut, status chips, and Pasted confirmation pulse |
 | HR2-04 | **Done** | HR2-01 | Review session, revision, reducer, and inactivity-lifecycle foundation |
 | HR2-05 | **Done** | HR2-02, HR2-04 | `finalizedText`, delivery finalization, History consumers, and CSV export |
-| HR2-06 | **In Progress** | HR2-04 | Pure grouped word-diff engine and accessible representation |
-| HR2-07 | Ready | HR2-06 | Final/Changes/Original UI, lens shortcuts, revision navigation, and panel sizing |
+| HR2-06 | **Done** | HR2-04 | Pure grouped word-diff engine and accessible representation |
+| HR2-07 | **In Progress** | HR2-06 | Final/Changes/Original UI, lens shortcuts, revision navigation, and panel sizing |
 | HR2-08 | Ready | HR2-04 | Refinement protocol, prompt builder, provider/auth reuse, cancellation, and mocks |
 | HR2-09 | Ready | HR2-05, HR2-07, HR2-08 | Refinement Orbit UI, revision creation, parent comparison, and timeout integration |
 | HR2-10 | Ready | HR2-03, HR2-09 | Cross-feature hardening, localization, compatibility audit, full tests, and manual checklist |
@@ -86,11 +86,11 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 
 ### HR2-06 — Change Lens engine
 
-- [ ] The pure tokenizer preserves words, punctuation, whitespace, Unicode, emoji, and line breaks.
-- [ ] Adjacent insertions and removals are grouped into readable phrase-level edits.
-- [ ] Diff output represents unchanged, added, and removed content with accessible labels.
-- [ ] Identical, empty, multiline, and long inputs are covered by unit tests.
-- [ ] Background diff consumers can discard cancelled or stale results.
+- [x] The pure tokenizer preserves words, punctuation, whitespace, Unicode, emoji, and line breaks.
+- [x] Adjacent insertions and removals are grouped into readable phrase-level edits.
+- [x] Diff output represents unchanged, added, and removed content with accessible labels.
+- [x] Identical, empty, multiline, and long inputs are covered by unit tests.
+- [x] Background diff consumers can discard cancelled or stale results.
 
 ### HR2-07 — Review lenses and navigation
 
