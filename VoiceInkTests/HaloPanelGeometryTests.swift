@@ -114,7 +114,7 @@ struct HaloPanelGeometryTests {
             HaloPanelPositioner.stableSide(
                 anchorRect: anchor,
                 preferredScreenID: nil,
-                maximumPanelHeight: 280,
+                maximumPanelHeight: 380,
                 screens: [primary]
             )
         )
@@ -131,7 +131,7 @@ struct HaloPanelGeometryTests {
         )
         let expanded = try #require(
             HaloPanelPositioner.placement(
-                panelSize: CGSize(width: 440, height: 280),
+                panelSize: CGSize(width: 500, height: 380),
                 anchorRect: anchor,
                 preferredScreenID: nil,
                 preferredSide: side,

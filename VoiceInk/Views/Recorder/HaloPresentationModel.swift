@@ -59,10 +59,68 @@ struct HaloReviewPresentation: Equatable, Sendable {
     }
 }
 
+/// Stable identity for the text currently occupying the review viewport.
+/// SwiftUI can use this value to recreate its scroll position whenever the
+/// selected revision or lens changes, without reacting to countdown updates.
+struct HaloReviewViewportIdentity: Equatable, Hashable, Sendable {
+    let sessionID: UUID
+    let revisionID: UUID
+    let lens: HaloReviewLens
+}
+
+/// A review-state projection that is safe for presentation code. The source
+/// `HaloReviewState` also owns destination, prepared paste, and frozen context
+/// data; none of those implementation details should reach the view layer.
+private struct HaloReviewPresentationSnapshot: Equatable, Sendable {
+    let sessionID: UUID
+    let revisionID: UUID
+    let selectedRevisionText: String
+    let originalText: String
+    let comparisonBaseText: String
+    let selectedRevisionIndex: Int
+    let revisionCount: Int
+    let lens: HaloReviewLens
+    let selectedRevisionAction: HaloReviewRevisionAction
+    let canRefine: Bool
+    let isRefining: Bool
+    let noticeMessage: String?
+    let enhancementWarning: String?
+
+    var canMovePrevious: Bool {
+        !isRefining && selectedRevisionIndex > 0
+    }
+
+    var canMoveNext: Bool {
+        !isRefining && selectedRevisionIndex + 1 < revisionCount
+    }
+
+    var viewportIdentity: HaloReviewViewportIdentity {
+        HaloReviewViewportIdentity(
+            sessionID: sessionID,
+            revisionID: revisionID,
+            lens: lens
+        )
+    }
+
+    var diffRequestKey: HaloReviewDiffRequestKey {
+        HaloReviewDiffRequestKey(
+            sessionID: sessionID,
+            revisionID: revisionID,
+            original: comparisonBaseText,
+            revised: selectedRevisionText
+        )
+    }
+}
+
 /// UI-only state for the Halo. It deliberately contains labels instead of
 /// provider objects or credentials, which keeps its chips read-only and safe.
 @MainActor
 final class HaloPresentationModel: ObservableObject {
+    typealias ReviewDiffComputer = @Sendable (
+        _ original: String,
+        _ revised: String
+    ) async -> HaloReviewDiffResult
+
     @Published private(set) var phase: HaloPresentationPhase = .listening
     @Published private(set) var metadata = HaloPresentationMetadata()
     @Published private(set) var review: HaloReviewPresentation?
@@ -70,6 +128,78 @@ final class HaloPresentationModel: ObservableObject {
     @Published private(set) var reviewSecondsRemaining: Int?
     @Published private(set) var isReviewDelivering = false
     @Published private(set) var deliveryOverride: HaloSessionDeliveryOverride?
+    @Published private(set) var diffResult: HaloReviewDiffResult?
+    @Published private(set) var isComputingDiff = false
+
+    @Published private var reviewSnapshot: HaloReviewPresentationSnapshot?
+
+    private let reviewDiffComputer: ReviewDiffComputer
+    private var reviewDiffTask: Task<Void, Never>?
+    private var reviewDiffRequestGate = HaloReviewDiffRequestGate()
+    private var completedDiffKey: HaloReviewDiffRequestKey?
+    private var completedDiffResult: HaloReviewDiffResult?
+
+    init(
+        reviewDiffComputer: @escaping ReviewDiffComputer = { original, revised in
+            HaloReviewDiffEngine.compare(original: original, revised: revised)
+        }
+    ) {
+        self.reviewDiffComputer = reviewDiffComputer
+    }
+
+    var reviewLens: HaloReviewLens {
+        reviewSnapshot?.lens ?? .final
+    }
+
+    var selectedRevisionText: String {
+        reviewSnapshot?.selectedRevisionText ?? review?.finalText ?? ""
+    }
+
+    var originalText: String {
+        reviewSnapshot?.originalText ?? review?.rawText ?? ""
+    }
+
+    var comparisonBaseText: String {
+        reviewSnapshot?.comparisonBaseText ?? originalText
+    }
+
+    /// Zero-based index of the selected revision. It is zero when no review is
+    /// active so view code can render `index + 1` without optional arithmetic.
+    var selectedRevisionIndex: Int {
+        reviewSnapshot?.selectedRevisionIndex ?? 0
+    }
+
+    var revisionCount: Int {
+        reviewSnapshot?.revisionCount ?? (review == nil ? 0 : 1)
+    }
+
+    var canMovePrevious: Bool {
+        reviewSnapshot?.canMovePrevious ?? false
+    }
+
+    var canMoveNext: Bool {
+        reviewSnapshot?.canMoveNext ?? false
+    }
+
+    var reviewViewportIdentity: HaloReviewViewportIdentity? {
+        reviewSnapshot?.viewportIdentity
+    }
+
+    var selectedRevisionAction: HaloReviewRevisionAction? {
+        reviewSnapshot?.selectedRevisionAction
+    }
+
+    var canRefine: Bool {
+        reviewSnapshot?.canRefine ?? false
+    }
+
+    var isRefining: Bool {
+        reviewSnapshot?.isRefining ?? false
+    }
+
+    var reviewNoticeMessage: String? {
+        reviewSnapshot?.noticeMessage
+    }
 
     func setPhase(_ phase: HaloPresentationPhase) {
         self.phase = phase
@@ -121,7 +251,57 @@ final class HaloPresentationModel: ObservableObject {
         phase = .reviewing
     }
 
+    /// Projects the reducer-owned review state into presentation-only values.
+    /// The diff key deliberately excludes expiry/countdown data, so periodic
+    /// status refreshes cannot restart an in-flight or completed comparison.
+    func updateReviewState(_ state: HaloReviewState?) {
+        guard let state, let selectedRevision = state.selectedRevision else {
+            clearReview()
+            return
+        }
+
+        let selectedIndex = state.selectedRevisionIndex ?? 0
+        let snapshot = HaloReviewPresentationSnapshot(
+            sessionID: state.session.id,
+            revisionID: selectedRevision.id,
+            selectedRevisionText: selectedRevision.text,
+            originalText: state.session.rawText,
+            comparisonBaseText: state.comparisonBaseText,
+            selectedRevisionIndex: selectedIndex,
+            revisionCount: state.revisions.count,
+            lens: state.lens,
+            selectedRevisionAction: selectedRevision.action,
+            canRefine: state.canRefine,
+            isRefining: state.isRefining,
+            noticeMessage: state.notice?.message,
+            enhancementWarning: state.session.enhancementWarning
+        )
+
+        if reviewSnapshot != snapshot {
+            reviewSnapshot = snapshot
+        }
+
+        let updatedReview = HaloReviewPresentation(
+            rawText: snapshot.originalText,
+            finalText: snapshot.selectedRevisionText,
+            enhancementWarning: snapshot.enhancementWarning
+        )
+        if review != updatedReview {
+            review = updatedReview
+        }
+
+        metadata.modeName = state.session.metadata.modeName ?? metadata.modeName
+        metadata.providerLabel = state.session.metadata.providerLabel ?? metadata.providerLabel
+        metadata.connectionLabel = state.session.metadata.connectionLabel ?? metadata.connectionLabel
+        metadata.modelLabel = state.session.metadata.modelLabel ?? metadata.modelLabel
+        phase = .reviewing
+
+        updateDiff(for: snapshot)
+    }
+
     func clearReview() {
+        cancelReviewDiff(clearCache: true)
+        reviewSnapshot = nil
         review = nil
         reviewFeedback = nil
         reviewSecondsRemaining = nil
@@ -139,6 +319,7 @@ final class HaloPresentationModel: ObservableObject {
     }
 
     func reset() {
+        cancelReviewDiff(clearCache: true)
         phase = .listening
         metadata = HaloPresentationMetadata()
         review = nil
@@ -146,5 +327,79 @@ final class HaloPresentationModel: ObservableObject {
         reviewSecondsRemaining = nil
         isReviewDelivering = false
         deliveryOverride = nil
+        reviewSnapshot = nil
+    }
+
+    private func updateDiff(for snapshot: HaloReviewPresentationSnapshot) {
+        guard snapshot.lens == .changes else {
+            cancelReviewDiff(clearCache: false)
+            diffResult = nil
+            return
+        }
+
+        let key = snapshot.diffRequestKey
+        if completedDiffKey == key, let completedDiffResult {
+            cancelReviewDiff(clearCache: false)
+            if diffResult != completedDiffResult {
+                diffResult = completedDiffResult
+            }
+            return
+        }
+
+        // A reducer update may only refresh a notice or inactivity deadline.
+        // Keep the current background work when its text identity is unchanged.
+        if reviewDiffRequestGate.activeKey == key, reviewDiffTask != nil {
+            return
+        }
+
+        cancelReviewDiff(clearCache: false)
+        let requestID = reviewDiffRequestGate.begin(key)
+        isComputingDiff = true
+        diffResult = nil
+        let computer = reviewDiffComputer
+
+        reviewDiffTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard !Task.isCancelled else { return }
+            let result = await computer(key.original, key.revised)
+            guard !Task.isCancelled else { return }
+            await self?.acceptDiffResult(
+                result,
+                requestID: requestID,
+                key: key
+            )
+        }
+    }
+
+    private func acceptDiffResult(
+        _ result: HaloReviewDiffResult,
+        requestID: UUID,
+        key: HaloReviewDiffRequestKey
+    ) {
+        guard reviewDiffRequestGate.accepts(requestID: requestID, key: key),
+            reviewSnapshot?.lens == .changes,
+            reviewSnapshot?.diffRequestKey == key
+        else {
+            return
+        }
+
+        reviewDiffTask = nil
+        reviewDiffRequestGate.invalidate()
+        completedDiffKey = key
+        completedDiffResult = result
+        diffResult = result
+        isComputingDiff = false
+    }
+
+    private func cancelReviewDiff(clearCache: Bool) {
+        reviewDiffTask?.cancel()
+        reviewDiffTask = nil
+        reviewDiffRequestGate.invalidate()
+        isComputingDiff = false
+
+        if clearCache {
+            completedDiffKey = nil
+            completedDiffResult = nil
+            diffResult = nil
+        }
     }
 }

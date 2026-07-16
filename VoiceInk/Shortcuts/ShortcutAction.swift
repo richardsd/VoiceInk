@@ -13,6 +13,11 @@ enum ShortcutAction: Hashable {
     case recorderPanelEscape
     case recorderPanelApply
     case recorderPanelToggleHaloDelivery
+    case recorderPanelReviewFinal
+    case recorderPanelReviewChanges
+    case recorderPanelReviewOriginal
+    case recorderPanelPreviousRevision
+    case recorderPanelNextRevision
     case recorderPanelMode(Int)
 
     var userDefaultsKey: String {
@@ -21,7 +26,15 @@ enum ShortcutAction: Hashable {
 
     var isStored: Bool {
         switch self {
-        case .recorderPanelEscape, .recorderPanelApply, .recorderPanelToggleHaloDelivery, .recorderPanelMode:
+        case .recorderPanelEscape,
+            .recorderPanelApply,
+            .recorderPanelToggleHaloDelivery,
+            .recorderPanelReviewFinal,
+            .recorderPanelReviewChanges,
+            .recorderPanelReviewOriginal,
+            .recorderPanelPreviousRevision,
+            .recorderPanelNextRevision,
+            .recorderPanelMode:
             return false
         default:
             return true
@@ -54,6 +67,16 @@ enum ShortcutAction: Hashable {
             return "recorderPanelApply"
         case .recorderPanelToggleHaloDelivery:
             return "recorderPanelToggleHaloDelivery"
+        case .recorderPanelReviewFinal:
+            return "recorderPanelReviewFinal"
+        case .recorderPanelReviewChanges:
+            return "recorderPanelReviewChanges"
+        case .recorderPanelReviewOriginal:
+            return "recorderPanelReviewOriginal"
+        case .recorderPanelPreviousRevision:
+            return "recorderPanelPreviousRevision"
+        case .recorderPanelNextRevision:
+            return "recorderPanelNextRevision"
         case .recorderPanelMode(let index):
             return "recorderPanelMode_\(index)"
         }
@@ -93,6 +116,16 @@ enum ShortcutAction: Hashable {
             return String(localized: "Apply Recorder Review")
         case .recorderPanelToggleHaloDelivery:
             return String(localized: "Toggle Halo Result Delivery")
+        case .recorderPanelReviewFinal:
+            return String(localized: "Show Final Halo Result")
+        case .recorderPanelReviewChanges:
+            return String(localized: "Show Halo Result Changes")
+        case .recorderPanelReviewOriginal:
+            return String(localized: "Show Original Halo Transcript")
+        case .recorderPanelPreviousRevision:
+            return String(localized: "Previous Halo Revision")
+        case .recorderPanelNextRevision:
+            return String(localized: "Next Halo Revision")
         case .recorderPanelMode(let index):
             return String(format: String(localized: "Select Mode %@"), Self.displayNumber(forRecorderPanelIndex: index))
         }

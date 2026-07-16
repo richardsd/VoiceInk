@@ -78,6 +78,97 @@ struct RecorderPanelShortcutTests {
                 in: .keyUp
             )
         )
+        #expect(
+            RecorderPanelShortcutManager.shouldHandle(
+                .recorderPanelReviewChanges,
+                in: .keyDown
+            )
+        )
+        #expect(
+            !RecorderPanelShortcutManager.shouldHandle(
+                .recorderPanelReviewChanges,
+                in: .keyUp
+            )
+        )
+    }
+
+    @Test func reviewLensAndRevisionShortcutsAreNonPersistedAndMapped() {
+        let shortcuts = RecorderPanelShortcutManager.pasteReviewShortcuts(
+            cancelShortcut: nil
+        )
+
+        #expect(!ShortcutAction.recorderPanelReviewFinal.isStored)
+        #expect(!ShortcutAction.recorderPanelReviewChanges.isStored)
+        #expect(!ShortcutAction.recorderPanelReviewOriginal.isStored)
+        #expect(!ShortcutAction.recorderPanelPreviousRevision.isStored)
+        #expect(!ShortcutAction.recorderPanelNextRevision.isStored)
+        #expect(
+            shortcuts[.recorderPanelReviewFinal]
+                == .key(keyCode: UInt16(kVK_ANSI_1), modifierFlags: [.command])
+        )
+        #expect(
+            shortcuts[.recorderPanelReviewChanges]
+                == .key(keyCode: UInt16(kVK_ANSI_2), modifierFlags: [.command])
+        )
+        #expect(
+            shortcuts[.recorderPanelReviewOriginal]
+                == .key(keyCode: UInt16(kVK_ANSI_3), modifierFlags: [.command])
+        )
+        #expect(
+            shortcuts[.recorderPanelPreviousRevision]
+                == .key(keyCode: UInt16(kVK_ANSI_LeftBracket), modifierFlags: [.command])
+        )
+        #expect(
+            shortcuts[.recorderPanelNextRevision]
+                == .key(keyCode: UInt16(kVK_ANSI_RightBracket), modifierFlags: [.command])
+        )
+    }
+
+    @Test func configuredCancelWinsAReviewShortcutCollision() {
+        let configuredCancel = Shortcut.key(
+            keyCode: UInt16(kVK_ANSI_2),
+            modifierFlags: [.command]
+        )
+        let shortcuts = RecorderPanelShortcutManager.pasteReviewShortcuts(
+            cancelShortcut: configuredCancel
+        )
+
+        #expect(shortcuts[.cancelRecorder] == configuredCancel)
+        #expect(shortcuts[.recorderPanelReviewChanges] == nil)
+        #expect(shortcuts[.recorderPanelReviewFinal] != nil)
+        #expect(shortcuts[.recorderPanelApply] != nil)
+    }
+
+    @Test func configuredCancelAlsoWinsApplyAndEscapeCollisions() {
+        let returnShortcut = Shortcut.key(
+            keyCode: UInt16(kVK_Return),
+            modifierFlags: []
+        )
+        let returnShortcuts = RecorderPanelShortcutManager.pasteReviewShortcuts(
+            cancelShortcut: returnShortcut
+        )
+        #expect(returnShortcuts[.cancelRecorder] == returnShortcut)
+        #expect(returnShortcuts[.recorderPanelApply] == nil)
+
+        let commandReturnShortcut = Shortcut.key(
+            keyCode: UInt16(kVK_Return),
+            modifierFlags: [.command]
+        )
+        let commandReturnShortcuts = RecorderPanelShortcutManager.pasteReviewShortcuts(
+            cancelShortcut: commandReturnShortcut
+        )
+        #expect(commandReturnShortcuts[.cancelRecorder] == commandReturnShortcut)
+        #expect(commandReturnShortcuts[.recorderPanelToggleHaloDelivery] == nil)
+
+        let escapeShortcut = Shortcut.key(
+            keyCode: UInt16(kVK_Escape),
+            modifierFlags: []
+        )
+        let escapeShortcuts = RecorderPanelShortcutManager.pasteReviewShortcuts(
+            cancelShortcut: escapeShortcut
+        )
+        #expect(escapeShortcuts[.cancelRecorder] == escapeShortcut)
+        #expect(escapeShortcuts[.recorderPanelEscape] == nil)
     }
 
     @MainActor
@@ -149,6 +240,44 @@ struct RecorderPanelShortcutTests {
     }
 
     @MainActor
+    @Test func reviewLensAndRevisionKeysSuppressBothTransitions() {
+        let monitor = ShortcutMonitor()
+        monitor.configureForEventSimulation(
+            shortcuts: RecorderPanelShortcutManager.pasteReviewShortcuts(
+                cancelShortcut: nil
+            ),
+            onKeyDown: { _, _ in },
+            onKeyUp: { _, _ in }
+        )
+
+        let keyCodes = [
+            UInt16(kVK_ANSI_1),
+            UInt16(kVK_ANSI_2),
+            UInt16(kVK_ANSI_3),
+            UInt16(kVK_ANSI_LeftBracket),
+            UInt16(kVK_ANSI_RightBracket),
+        ]
+        for (index, keyCode) in keyCodes.enumerated() {
+            #expect(
+                monitor.simulateEvent(
+                    kind: .keyDown,
+                    keyCode: keyCode,
+                    modifierFlags: [.command],
+                    eventTime: TimeInterval(index * 2 + 1)
+                )
+            )
+            #expect(
+                monitor.simulateEvent(
+                    kind: .keyUp,
+                    keyCode: keyCode,
+                    modifierFlags: [.command],
+                    eventTime: TimeInterval(index * 2 + 2)
+                )
+            )
+        }
+    }
+
+    @MainActor
     @Test func failedReviewEventTapLeavesReviewMouseOnlyWithoutNormalShortcuts() {
         let recorderUIManager = RecorderUIManager()
         recorderUIManager.isRecorderPanelVisible = true
@@ -162,5 +291,7 @@ struct RecorderPanelShortcutTests {
         #expect(monitor.startCalls.count == 1)
         #expect(monitor.startCalls[0].shortcuts[.recorderPanelApply] != nil)
         #expect(monitor.startCalls[0].shortcuts[.recorderPanelEscape] != nil)
+        #expect(monitor.startCalls[0].shortcuts[.recorderPanelReviewFinal] != nil)
+        #expect(monitor.startCalls[0].shortcuts[.recorderPanelPreviousRevision] != nil)
     }
 }

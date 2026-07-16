@@ -162,21 +162,8 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
         var shortcuts: [ShortcutAction: Shortcut]
 
         if isHandlingPasteReview {
-            shortcuts = [:]
-            if let cancelShortcut = ShortcutStore.shortcut(for: .cancelRecorder) {
-                shortcuts[.cancelRecorder] = cancelShortcut
-            }
-            shortcuts[.recorderPanelApply] = .key(
-                keyCode: UInt16(kVK_Return),
-                modifierFlags: []
-            )
-            shortcuts[.recorderPanelToggleHaloDelivery] = .key(
-                keyCode: UInt16(kVK_Return),
-                modifierFlags: [.command]
-            )
-            shortcuts[.recorderPanelEscape] = .key(
-                keyCode: UInt16(kVK_Escape),
-                modifierFlags: []
+            shortcuts = Self.pasteReviewShortcuts(
+                cancelShortcut: ShortcutStore.shortcut(for: .cancelRecorder)
             )
         } else {
             shortcuts = ShortcutStore.shortcuts(for: ShortcutAction.recorderPanelStoredActions)
@@ -235,6 +222,59 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
         }
     }
 
+    /// Returns the complete non-persisted review shortcut set. A configured
+    /// Cancel shortcut wins any physical-key collision so one press can never
+    /// both cancel and mutate or apply the pending review.
+    nonisolated static func pasteReviewShortcuts(
+        cancelShortcut: Shortcut?
+    ) -> [ShortcutAction: Shortcut] {
+        var shortcuts: [ShortcutAction: Shortcut] = [:]
+        if let cancelShortcut {
+            shortcuts[.cancelRecorder] = cancelShortcut
+        }
+
+        let builtInShortcuts: [(ShortcutAction, Shortcut)] = [
+            (
+                .recorderPanelApply,
+                .key(keyCode: UInt16(kVK_Return), modifierFlags: [])
+            ),
+            (
+                .recorderPanelToggleHaloDelivery,
+                .key(keyCode: UInt16(kVK_Return), modifierFlags: [.command])
+            ),
+            (
+                .recorderPanelEscape,
+                .key(keyCode: UInt16(kVK_Escape), modifierFlags: [])
+            ),
+            (
+                .recorderPanelReviewFinal,
+                .key(keyCode: UInt16(kVK_ANSI_1), modifierFlags: [.command])
+            ),
+            (
+                .recorderPanelReviewChanges,
+                .key(keyCode: UInt16(kVK_ANSI_2), modifierFlags: [.command])
+            ),
+            (
+                .recorderPanelReviewOriginal,
+                .key(keyCode: UInt16(kVK_ANSI_3), modifierFlags: [.command])
+            ),
+            (
+                .recorderPanelPreviousRevision,
+                .key(keyCode: UInt16(kVK_ANSI_LeftBracket), modifierFlags: [.command])
+            ),
+            (
+                .recorderPanelNextRevision,
+                .key(keyCode: UInt16(kVK_ANSI_RightBracket), modifierFlags: [.command])
+            ),
+        ]
+
+        for (action, shortcut) in builtInShortcuts
+        where cancelShortcut?.conflicts(with: shortcut) != true {
+            shortcuts[action] = shortcut
+        }
+        return shortcuts
+    }
+
     private func handleRecorderPanelShortcut(_ action: ShortcutAction) async {
         guard recorderUIManager.isRecorderPanelVisible else { return }
 
@@ -245,6 +285,16 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
             case .recorderPanelEscape, .cancelRecorder:
                 reviewLifecycle.recordKeyDown(action)
                 await recorderUIManager.cancelPendingPasteReview()
+            case .recorderPanelReviewFinal:
+                recorderUIManager.selectHaloReviewLens(.final)
+            case .recorderPanelReviewChanges:
+                recorderUIManager.selectHaloReviewLens(.changes)
+            case .recorderPanelReviewOriginal:
+                recorderUIManager.selectHaloReviewLens(.original)
+            case .recorderPanelPreviousRevision:
+                recorderUIManager.moveHaloReviewRevision(by: -1)
+            case .recorderPanelNextRevision:
+                recorderUIManager.moveHaloReviewRevision(by: 1)
             default:
                 break
             }

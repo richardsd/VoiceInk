@@ -6,7 +6,7 @@ enum HaloPanelMetrics {
     static let compact = CGSize(width: 240, height: 48)
     static let liveTranscript = CGSize(width: 360, height: 124)
     static let enhancing = CGSize(width: 320, height: 72)
-    static let review = CGSize(width: 440, height: 280)
+    static let review = CGSize(width: 500, height: 380)
     static let confirmation = CGSize(width: 132, height: 44)
 
     static func size(
@@ -297,6 +297,12 @@ final class HaloWindowManager {
                     await engine?.retryPendingPasteReview()
                 }
             },
+            onSelectReviewLens: { [weak engine] lens in
+                engine?.selectHaloReviewLens(lens)
+            },
+            onMoveReviewRevision: { [weak engine] offset in
+                engine?.moveHaloReviewRevision(by: offset)
+            },
             onReviewInteractiveRegionsChange: { [weak newPanel] regions in
                 newPanel?.updateReviewInteractiveRegions(regions)
             }
@@ -337,6 +343,16 @@ final class HaloWindowManager {
             .removeDuplicates()
             .sink { [weak self] deliveryOverride in
                 self?.presentation.updateDeliveryOverride(deliveryOverride)
+            }
+            .store(in: &cancellables)
+
+        engine.$haloReviewState
+            .sink { [weak self] reviewState in
+                guard let self else { return }
+                self.presentation.updateReviewState(reviewState)
+                if reviewState != nil {
+                    self.panel?.beginReviewInteraction()
+                }
             }
             .store(in: &cancellables)
 

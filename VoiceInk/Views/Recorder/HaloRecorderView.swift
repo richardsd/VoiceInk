@@ -11,6 +11,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     let onCancel: () -> Void
     let onCopy: () -> Void
     let onRetry: () -> Void
+    let onSelectReviewLens: (HaloReviewLens) -> Void
+    let onMoveReviewRevision: (Int) -> Void
     let onReviewInteractiveRegionsChange: ([CGRect]) -> Void
 
     private let coral = Color(red: 0.96, green: 0.34, blue: 0.29)
@@ -24,6 +26,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         onCancel: @escaping () -> Void,
         onCopy: @escaping () -> Void,
         onRetry: @escaping () -> Void,
+        onSelectReviewLens: @escaping (HaloReviewLens) -> Void,
+        onMoveReviewRevision: @escaping (Int) -> Void,
         onReviewInteractiveRegionsChange: @escaping ([CGRect]) -> Void
     ) {
         self.stateProvider = stateProvider
@@ -33,6 +37,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         self.onCancel = onCancel
         self.onCopy = onCopy
         self.onRetry = onRetry
+        self.onSelectReviewLens = onSelectReviewLens
+        self.onMoveReviewRevision = onMoveReviewRevision
         self.onReviewInteractiveRegionsChange = onReviewInteractiveRegionsChange
     }
 
@@ -230,6 +236,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             metadataRow
 
             if let review = presentation.review {
+                reviewNavigation
                 reviewTextViewport(review)
 
                 if let warning = sanitized(review.enhancementWarning), !warning.isEmpty {
@@ -254,7 +261,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                     title: showsRetry ? String(localized: "Retry") : String(localized: "Apply"),
                     systemImage: nil,
                     emphasized: true,
-                    isDisabled: presentation.isReviewDelivering,
+                    isDisabled: presentation.isReviewDelivering || presentation.isRefining,
                     action: showsRetry ? onRetry : onApply
                 )
                 HaloReviewActionButton(
@@ -270,13 +277,35 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                     title: String(localized: "Copy"),
                     systemImage: "doc.on.doc",
                     emphasized: false,
-                    isDisabled: presentation.isReviewDelivering,
+                    isDisabled: presentation.isReviewDelivering || presentation.isRefining,
                     action: onCopy
                 )
                 Spacer(minLength: 0)
                 Text("Saved to History")
                     .font(HaloTypography.tertiary)
                     .foregroundStyle(Color.white.opacity(0.38))
+            }
+        }
+    }
+
+    private var reviewNavigation: some View {
+        HStack(spacing: 8) {
+            HaloReviewLensSelector(
+                selection: presentation.reviewLens,
+                onSelect: onSelectReviewLens
+            )
+
+            Spacer(minLength: 4)
+
+            if presentation.revisionCount > 0 {
+                HaloReviewRevisionNavigator(
+                    index: presentation.selectedRevisionIndex,
+                    count: presentation.revisionCount,
+                    canMovePrevious: presentation.canMovePrevious,
+                    canMoveNext: presentation.canMoveNext,
+                    isDisabled: presentation.isReviewDelivering || presentation.isRefining,
+                    onMove: onMoveReviewRevision
+                )
             }
         }
     }
@@ -310,35 +339,17 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     private func reviewTextViewport(_ review: HaloReviewPresentation) -> some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 9) {
-                    if review.showsRawText {
-                        Text(review.rawText)
-                            .font(HaloTypography.reviewRaw)
-                            .foregroundStyle(Color.white.opacity(0.52))
-                            .lineSpacing(2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        Rectangle()
-                            .fill(Color.white.opacity(0.10))
-                            .frame(height: 1)
-                    }
-
-                    Text(review.finalText)
-                        .font(HaloTypography.reviewFinal)
-                        .foregroundStyle(Color.white.opacity(0.94))
-                        .lineSpacing(3)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .id(HaloReviewScrollAnchor.enhancedTextStart)
-                }
-                .textSelection(.enabled)
-                .padding(12)
+                reviewLensContent(review)
+                    .id(HaloReviewScrollAnchor.viewportStart)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .textSelection(.enabled)
+                    .padding(12)
             }
             .onAppear {
-                // The enhanced result is the review's primary content. Start at
-                // its first line while leaving the raw transcript available above.
-                DispatchQueue.main.async {
-                    proxy.scrollTo(HaloReviewScrollAnchor.enhancedTextStart, anchor: .top)
-                }
+                scrollReviewToStart(proxy)
+            }
+            .onChange(of: presentation.reviewViewportIdentity) {
+                scrollReviewToStart(proxy)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -349,6 +360,56 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.5)
         }
         .haloReviewInteractiveRegion()
+    }
+
+    @ViewBuilder
+    private func reviewLensContent(_ review: HaloReviewPresentation) -> some View {
+        switch presentation.reviewLens {
+        case .final:
+            Text(selectedRevisionText(fallback: review))
+                .font(HaloTypography.reviewFinal)
+                .foregroundStyle(Color.white.opacity(0.94))
+                .lineSpacing(3)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .accessibilityLabel(Text("Final transcript"))
+                .accessibilityValue(Text(selectedRevisionText(fallback: review)))
+
+        case .changes:
+            if presentation.isComputingDiff {
+                HaloReviewDiffProgressView()
+                    .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
+            } else if let result = presentation.diffResult {
+                HaloReviewRedlineView(result: result)
+            } else {
+                Text("No changes to show")
+                    .font(HaloTypography.reviewRaw)
+                    .foregroundStyle(Color.white.opacity(0.54))
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+
+        case .original:
+            Text(originalText(fallback: review))
+                .font(HaloTypography.reviewRaw)
+                .foregroundStyle(Color.white.opacity(0.72))
+                .lineSpacing(2)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .accessibilityLabel(Text("Original transcript"))
+                .accessibilityValue(Text(originalText(fallback: review)))
+        }
+    }
+
+    private func scrollReviewToStart(_ proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            proxy.scrollTo(HaloReviewScrollAnchor.viewportStart, anchor: .top)
+        }
+    }
+
+    private func selectedRevisionText(fallback review: HaloReviewPresentation) -> String {
+        presentation.revisionCount > 0 ? presentation.selectedRevisionText : review.finalText
+    }
+
+    private func originalText(fallback review: HaloReviewPresentation) -> String {
+        presentation.originalText.isEmpty ? review.rawText : presentation.originalText
     }
 
     @ViewBuilder
@@ -619,6 +680,192 @@ private struct HaloReviewActionButton: View {
     }
 }
 
+private struct HaloReviewLensSelector: View {
+    let selection: HaloReviewLens
+    let onSelect: (HaloReviewLens) -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(HaloReviewLens.allCases) { lens in
+                let isSelected = lens == selection
+
+                Button {
+                    onSelect(lens)
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(lens.displayName)
+                            .font(HaloTypography.action)
+                        Text(shortcut(for: lens))
+                            .font(HaloTypography.tertiary)
+                            .foregroundStyle(
+                                isSelected
+                                    ? Color.white.opacity(0.62)
+                                    : Color.white.opacity(0.34)
+                            )
+                    }
+                    .foregroundStyle(
+                        isSelected
+                            ? Color.white.opacity(0.94)
+                            : Color.white.opacity(0.54)
+                    )
+                    .frame(minWidth: 70)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 5)
+                    .background(isSelected ? AppTheme.Accent.fillStrong : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(lens.displayName))
+                .accessibilityValue(Text(isSelected ? "Selected" : ""))
+                .accessibilityHint(Text("Keyboard shortcut: \(shortcut(for: lens))"))
+            }
+        }
+        .padding(2)
+        .background(Color.white.opacity(0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.065), lineWidth: 0.5)
+        }
+        .haloReviewInteractiveRegion()
+    }
+
+    private func shortcut(for lens: HaloReviewLens) -> String {
+        switch lens {
+        case .final:
+            return "⌘1"
+        case .changes:
+            return "⌘2"
+        case .original:
+            return "⌘3"
+        }
+    }
+}
+
+private struct HaloReviewRevisionNavigator: View {
+    let index: Int
+    let count: Int
+    let canMovePrevious: Bool
+    let canMoveNext: Bool
+    let isDisabled: Bool
+    let onMove: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            navigationButton(
+                systemImage: "chevron.left",
+                shortcut: "⌘[",
+                direction: -1,
+                isAvailable: canMovePrevious
+            )
+
+            Text("\(index + 1) of \(count)")
+                .font(HaloTypography.tertiary)
+                .foregroundStyle(Color.white.opacity(0.48))
+                .monospacedDigit()
+                .frame(minWidth: 40)
+                .accessibilityLabel(Text("Version \(index + 1) of \(count)"))
+
+            navigationButton(
+                systemImage: "chevron.right",
+                shortcut: "⌘]",
+                direction: 1,
+                isAvailable: canMoveNext
+            )
+        }
+        .haloReviewInteractiveRegion()
+    }
+
+    private func navigationButton(
+        systemImage: String,
+        shortcut: String,
+        direction: Int,
+        isAvailable: Bool
+    ) -> some View {
+        Button {
+            onMove(direction)
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.62))
+                .frame(width: 24, height: 24)
+                .background(Color.white.opacity(0.065))
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled || !isAvailable)
+        .opacity(isDisabled || !isAvailable ? 0.35 : 1)
+        .accessibilityLabel(Text(direction < 0 ? "Previous version" : "Next version"))
+        .accessibilityHint(Text("Keyboard shortcut: \(shortcut)"))
+    }
+}
+
+private struct HaloReviewDiffProgressView: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(AppTheme.Accent.strong)
+            Text("Comparing changes")
+                .font(HaloTypography.reviewDestination)
+                .foregroundStyle(Color.white.opacity(0.54))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Comparing transcript changes"))
+    }
+}
+
+private struct HaloReviewRedlineView: View {
+    let result: HaloReviewDiffResult
+
+    var body: some View {
+        Text(attributedText)
+            .font(HaloTypography.reviewFinal)
+            .lineSpacing(3)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(accessibilityDescription))
+            .accessibilityValue(Text(result.revisedText))
+    }
+
+    private var attributedText: AttributedString {
+        var output = AttributedString()
+
+        for group in result.groups {
+            for segment in group.segments {
+                var run = AttributedString(segment.text)
+
+                switch segment.operation {
+                case .unchanged:
+                    run.foregroundColor = Color.white.opacity(0.90)
+                case .addition:
+                    run.foregroundColor = Color(red: 0.37, green: 0.70, blue: 1.0)
+                    run.backgroundColor = AppTheme.Accent.fill.opacity(0.34)
+                case .removal:
+                    let removalColor = Color(red: 0.96, green: 0.42, blue: 0.37)
+                    run.foregroundColor = removalColor.opacity(0.76)
+                    run.backgroundColor = removalColor.opacity(0.075)
+                    run.strikethroughStyle = .single
+                }
+
+                output.append(run)
+            }
+        }
+
+        return output
+    }
+
+    private var accessibilityDescription: String {
+        let descriptions = result.groups
+            .map(\.accessibilityLabel)
+            .filter { !$0.isEmpty }
+        return descriptions.isEmpty
+            ? String(localized: "No changes")
+            : descriptions.joined(separator: ". ")
+    }
+}
+
 private struct HaloLiveTranscriptView: View {
     let text: String
 
@@ -661,7 +908,7 @@ private enum HaloLiveTranscriptAnchor {
 }
 
 private enum HaloReviewScrollAnchor {
-    static let enhancedTextStart = "halo-review-enhanced-text-start"
+    static let viewportStart = "halo-review-viewport-start"
 }
 
 private enum HaloTypography {

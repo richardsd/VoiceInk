@@ -93,7 +93,8 @@ struct HaloReviewStateTests {
         let retainedIDs = state.revisions.map(\.id)
         #expect(state.revisions.count == 6)
         #expect(!state.canRefine)
-        #expect(state.beginRefinement(action: .formal) == nil)
+        let rejectedRefinement = state.beginRefinement(action: .formal)
+        #expect(rejectedRefinement == nil)
         #expect(state.revisions.map(\.id) == retainedIDs)
         #expect(state.notice == .revisionLimitReached)
     }
@@ -139,6 +140,45 @@ struct HaloReviewStateTests {
                 state: &state,
                 action: .timeout(at: start.addingTimeInterval(1_120))
             ) == .expired
+        )
+    }
+
+    @Test func revisionNavigationOnlyResetsInactivityWhenMovementIsAccepted() throws {
+        let start = Date(timeIntervalSince1970: 2_000)
+        var state = makeState(raw: "Raw", final: "Initial", now: start)
+        let parent = try #require(state.selectedRevision)
+        let possibleRequest = state.beginRefinement(
+            action: .clearer,
+            at: start.addingTimeInterval(1)
+        )
+        let request = try #require(possibleRequest)
+        _ = state.completeRefinement(
+            requestID: request.id,
+            revision: makeRevision(
+                text: "Second",
+                parentID: parent.id,
+                action: .refinement(.clearer)
+            ),
+            at: start.addingTimeInterval(2)
+        )
+
+        let expirationBeforeRejectedMovement = state.expiresAt
+        let rejected = HaloReviewReducer.reduce(
+            state: &state,
+            action: .moveRevision(1, at: start.addingTimeInterval(40))
+        )
+        #expect(rejected == .ignored)
+        #expect(state.expiresAt == expirationBeforeRejectedMovement)
+
+        let accepted = HaloReviewReducer.reduce(
+            state: &state,
+            action: .moveRevision(-1, at: start.addingTimeInterval(60))
+        )
+        #expect(accepted == .none)
+        #expect(state.selectedRevisionID == parent.id)
+        #expect(
+            state.expiresAt
+                == start.addingTimeInterval(60 + HaloReviewState.inactivityLifetime)
         )
     }
 

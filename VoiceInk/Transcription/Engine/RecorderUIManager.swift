@@ -362,6 +362,16 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         engine?.toggleHaloSessionDeliveryOverride()
     }
 
+    @discardableResult
+    func selectHaloReviewLens(_ lens: HaloReviewLens) -> Bool {
+        engine?.selectHaloReviewLens(lens) ?? false
+    }
+
+    @discardableResult
+    func moveHaloReviewRevision(by offset: Int) -> Bool {
+        engine?.moveHaloReviewRevision(by: offset) ?? false
+    }
+
     func preparePasteReviewKeyboardHandling() -> Bool {
         guard isHaloPanelActive else { return false }
         return reviewShortcutController?.prepareForPasteReview() == true

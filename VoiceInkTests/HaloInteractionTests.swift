@@ -6,10 +6,10 @@ struct HaloInteractionTests {
     @Test func convertsAppKitBottomLeftPointIntoSwiftUITopLeftPoint() {
         let converted = HaloInteractionCoordinateConverter.swiftUIPoint(
             fromAppKitPoint: CGPoint(x: 32, y: 70),
-            contentHeight: 280
+            contentHeight: 380
         )
 
-        #expect(converted == CGPoint(x: 32, y: 210))
+        #expect(converted == CGPoint(x: 32, y: 310))
     }
 
     @Test func hitTesterAcceptsPointsInsideAnyInteractiveRegion() {

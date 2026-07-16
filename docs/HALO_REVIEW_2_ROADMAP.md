@@ -25,8 +25,8 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 | HR2-04 | **Done** | HR2-01 | Review session, revision, reducer, and inactivity-lifecycle foundation |
 | HR2-05 | **Done** | HR2-02, HR2-04 | `finalizedText`, delivery finalization, History consumers, and CSV export |
 | HR2-06 | **Done** | HR2-04 | Pure grouped word-diff engine and accessible representation |
-| HR2-07 | **In Progress** | HR2-06 | Final/Changes/Original UI, lens shortcuts, revision navigation, and panel sizing |
-| HR2-08 | Ready | HR2-04 | Refinement protocol, prompt builder, provider/auth reuse, cancellation, and mocks |
+| HR2-07 | **Done** | HR2-06 | Final/Changes/Original UI, lens shortcuts, revision navigation, and panel sizing |
+| HR2-08 | **In Progress** | HR2-04 | Refinement protocol, prompt builder, provider/auth reuse, cancellation, and mocks |
 | HR2-09 | Ready | HR2-05, HR2-07, HR2-08 | Refinement Orbit UI, revision creation, parent comparison, and timeout integration |
 | HR2-10 | Ready | HR2-03, HR2-09 | Cross-feature hardening, localization, compatibility audit, full tests, and manual checklist |
 
@@ -94,12 +94,12 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 
 ### HR2-07 — Review lenses and navigation
 
-- [ ] Review opens on Final at the first line of the selected revision in an approximately 500×380 panel.
-- [ ] Final, Changes, and Original lenses are selectable; Changes compares revision 1 to raw and later revisions to their parent.
-- [ ] Additions are blue, removals muted coral with restrained strikethrough, and unchanged text off-white.
-- [ ] Command-1/2/3 select lenses and Command-bracket navigates revisions.
-- [ ] Return and Command-Return apply; Escape cancels review unless it first cancels an active refinement.
-- [ ] Selective interaction and event-tap failure remain safe and mouse-operable.
+- [x] Review opens on Final at the first line of the selected revision in an approximately 500×380 panel.
+- [x] Final, Changes, and Original lenses are selectable; Changes compares revision 1 to raw and later revisions to their parent.
+- [x] Additions are blue, removals muted coral with restrained strikethrough, and unchanged text off-white.
+- [x] Command-1/2/3 select lenses and Command-bracket navigates revisions.
+- [x] Return and Command-Return apply; Escape cancels review unless it first cancels an active refinement.
+- [x] Selective interaction and event-tap failure remain safe and mouse-operable.
 
 ### HR2-08 — Refinement service
 

@@ -990,6 +990,61 @@ class VoiceInkEngine: NSObject, ObservableObject {
         await approvePendingPasteReview()
     }
 
+    @discardableResult
+    func selectHaloReviewLens(
+        _ lens: HaloReviewLens,
+        at date: Date = Date()
+    ) -> Bool {
+        guard recordingState == .reviewing,
+            let review = pendingPasteReview,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
+            var state = haloReviewState,
+            state.session.id == review.id,
+            !state.isExpired,
+            state.lens != lens
+        else {
+            return false
+        }
+
+        let effect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .selectLens(lens, at: date)
+        )
+        guard effect != .ignored else { return false }
+
+        haloReviewState = state
+        schedulePasteReviewInactivity(for: review.id)
+        return true
+    }
+
+    @discardableResult
+    func moveHaloReviewRevision(
+        by offset: Int,
+        at date: Date = Date()
+    ) -> Bool {
+        guard offset != 0,
+            recordingState == .reviewing,
+            let review = pendingPasteReview,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
+            var state = haloReviewState,
+            state.session.id == review.id,
+            !state.isExpired,
+            !state.isRefining
+        else {
+            return false
+        }
+
+        let effect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .moveRevision(offset, at: date)
+        )
+        guard effect != .ignored else { return false }
+
+        haloReviewState = state
+        schedulePasteReviewInactivity(for: review.id)
+        return true
+    }
+
     func copyPendingPasteReview() {
         guard let review = pendingPasteReview,
             pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id)
