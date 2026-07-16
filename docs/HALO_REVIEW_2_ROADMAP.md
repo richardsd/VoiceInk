@@ -26,8 +26,8 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 | HR2-05 | **Done** | HR2-02, HR2-04 | `finalizedText`, delivery finalization, History consumers, and CSV export |
 | HR2-06 | **Done** | HR2-04 | Pure grouped word-diff engine and accessible representation |
 | HR2-07 | **Done** | HR2-06 | Final/Changes/Original UI, lens shortcuts, revision navigation, and panel sizing |
-| HR2-08 | **In Progress** | HR2-04 | Refinement protocol, prompt builder, provider/auth reuse, cancellation, and mocks |
-| HR2-09 | Ready | HR2-05, HR2-07, HR2-08 | Refinement Orbit UI, revision creation, parent comparison, and timeout integration |
+| HR2-08 | **Done** | HR2-04 | Refinement protocol, prompt builder, provider/auth reuse, cancellation, and mocks |
+| HR2-09 | **In Progress** | HR2-05, HR2-07, HR2-08 | Refinement Orbit UI, revision creation, parent comparison, and timeout integration |
 | HR2-10 | Ready | HR2-03, HR2-09 | Cross-feature hardening, localization, compatibility audit, full tests, and manual checklist |
 
 ## Story acceptance criteria
@@ -103,12 +103,12 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 
 ### HR2-08 — Refinement service
 
-- [ ] `HaloRefinementServicing` is injectable and exposes exactly Shorter, Clearer, Friendlier, Formal, and Fix terms.
-- [ ] Requests combine raw text, selected revision, original Mode requirements, vocabulary, frozen context, and one action.
-- [ ] Requests require a complete replacement with no commentary or invented facts.
-- [ ] Provider, authentication route, and model are reused exactly; no provider or credential fallback occurs.
-- [ ] Only one request runs at a time and supports cancellation and stale-result rejection.
-- [ ] Empty, unchanged, unauthorized, rate-limited, timeout, network, malformed, and backend outcomes are sanitized and tested.
+- [x] `HaloRefinementServicing` is injectable and exposes exactly Shorter, Clearer, Friendlier, Formal, and Fix terms.
+- [x] Requests combine raw text, selected revision, original Mode requirements, vocabulary, frozen context, and one action.
+- [x] Requests require a complete replacement with no commentary or invented facts.
+- [x] Provider, authentication route, and model are reused exactly; no provider or credential fallback occurs.
+- [x] Request identity supports cancellation and reducer-level stale-result rejection; engine one-at-a-time orchestration is completed in HR2-09.
+- [x] Empty, unchanged, unauthorized, rate-limited, timeout, network, malformed, and backend outcomes are sanitized and tested.
 
 ### HR2-09 — Refinement Orbit
 
