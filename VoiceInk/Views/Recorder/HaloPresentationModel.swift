@@ -6,6 +6,7 @@ enum HaloPresentationPhase: Equatable, Sendable {
     case transcribing
     case enhancing
     case reviewing
+    case confirmed
 
     static func resolve(recordingState: RecordingState) -> HaloPresentationPhase {
         switch recordingState {
@@ -68,6 +69,7 @@ final class HaloPresentationModel: ObservableObject {
     @Published private(set) var reviewFeedback: PasteReviewFeedback?
     @Published private(set) var reviewSecondsRemaining: Int?
     @Published private(set) var isReviewDelivering = false
+    @Published private(set) var deliveryOverride: HaloSessionDeliveryOverride?
 
     func setPhase(_ phase: HaloPresentationPhase) {
         self.phase = phase
@@ -78,6 +80,16 @@ final class HaloPresentationModel: ObservableObject {
 
     func setCapturedApplication(_ applicationName: String?) {
         metadata.applicationName = applicationName
+    }
+
+    func updateDeliveryOverride(_ deliveryOverride: HaloSessionDeliveryOverride?) {
+        self.deliveryOverride = deliveryOverride
+    }
+
+    func presentPasteConfirmation() {
+        clearReview()
+        deliveryOverride = nil
+        phase = .confirmed
     }
 
     func updateMetadata(_ updated: HaloPresentationMetadata) {
@@ -133,5 +145,6 @@ final class HaloPresentationModel: ObservableObject {
         reviewFeedback = nil
         reviewSecondsRemaining = nil
         isReviewDelivering = false
+        deliveryOverride = nil
     }
 }

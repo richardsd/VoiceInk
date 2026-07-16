@@ -66,4 +66,31 @@ struct HaloDeliveryDecisionTests {
             }
         }
     }
+
+    @Test func commandReturnToggleArmsThePolicyOppositeAndSecondPressClearsIt() {
+        #expect(
+            HaloSessionDeliveryOverrideResolver.toggled(
+                current: nil,
+                policy: .alwaysReview
+            ) == .forceDirect
+        )
+        #expect(
+            HaloSessionDeliveryOverrideResolver.toggled(
+                current: nil,
+                policy: .reviewWhenNeeded
+            ) == .forceDirect
+        )
+        #expect(
+            HaloSessionDeliveryOverrideResolver.toggled(
+                current: nil,
+                policy: .pasteImmediately
+            ) == .forceReview
+        )
+        #expect(
+            HaloSessionDeliveryOverrideResolver.toggled(
+                current: .forceDirect,
+                policy: .pasteImmediately
+            ) == nil
+        )
+    }
 }

@@ -21,8 +21,8 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 | HR2-00 | **Done** | — | This roadmap, dependency graph, acceptance criteria, and verification gates |
 | HR2-01 | **Done** | HR2-00 | Mode policy persistence, defaults, runtime configuration, and Mode UI |
 | HR2-02 | **Done** | HR2-01 | Decision resolver, destination-safe direct delivery, raw-fallback policy, and recovery review |
-| HR2-03 | **In Progress** | HR2-02 | Session override shortcut, status chips, and Pasted confirmation pulse |
-| HR2-04 | Ready | HR2-01 | Review session, revision, reducer, and inactivity-lifecycle foundation |
+| HR2-03 | **Done** | HR2-02 | Session override shortcut, status chips, and Pasted confirmation pulse |
+| HR2-04 | **In Progress** | HR2-01 | Review session, revision, reducer, and inactivity-lifecycle foundation |
 | HR2-05 | Ready | HR2-02, HR2-04 | `finalizedText`, delivery finalization, History consumers, and CSV export |
 | HR2-06 | Ready | HR2-04 | Pure grouped word-diff engine and accessible representation |
 | HR2-07 | Ready | HR2-06 | Final/Changes/Original UI, lens shortcuts, revision navigation, and panel sizing |
@@ -58,12 +58,12 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 
 ### HR2-03 — Session override and confirmation
 
-- [ ] During active Halo processing, `Command-Return` toggles a non-persisted force-direct or force-review override.
-- [ ] Explicit overrides survive late trigger-word Mode selection; otherwise the final Mode policy wins.
-- [ ] Halo shows **Quick Apply armed** or **Review this result** while the override is set.
-- [ ] Review treats Return and Command-Return as Apply.
-- [ ] Override state resets on delivery, cancellation, timeout, style change, reset, and new recording.
-- [ ] Successful direct paste shows one non-key, mouse-transparent **Pasted** pulse for about 450 ms.
+- [x] During active Halo processing, `Command-Return` toggles a non-persisted force-direct or force-review override.
+- [x] Explicit overrides survive late trigger-word Mode selection; otherwise the final Mode policy wins.
+- [x] Halo shows **Quick Apply armed** or **Review this result** while the override is set.
+- [x] Review treats Return and Command-Return as Apply.
+- [x] Override state resets on delivery, cancellation, timeout, style change, reset, and new recording.
+- [x] Successful direct paste shows one non-key, mouse-transparent **Pasted** pulse for about 450 ms.
 
 ### HR2-04 — Review foundation
 

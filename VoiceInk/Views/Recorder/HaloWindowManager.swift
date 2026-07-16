@@ -7,6 +7,7 @@ enum HaloPanelMetrics {
     static let liveTranscript = CGSize(width: 360, height: 124)
     static let enhancing = CGSize(width: 320, height: 72)
     static let review = CGSize(width: 440, height: 280)
+    static let confirmation = CGSize(width: 132, height: 44)
 
     static func size(
         for phase: HaloPresentationPhase,
@@ -21,6 +22,8 @@ enum HaloPanelMetrics {
             return enhancing
         case .reviewing:
             return review
+        case .confirmed:
+            return confirmation
         }
     }
 }
@@ -42,6 +45,7 @@ final class HaloWindowManager {
     private var stablePlacementSide: HaloPanelPlacementSide?
     private var isShowRequested = false
     private var hasPartialTranscript = false
+    private var isShowingPasteConfirmation = false
 
     private let engine: VoiceInkEngine
     private let recorder: Recorder
@@ -78,6 +82,7 @@ final class HaloWindowManager {
         anchorResolutionTask?.cancel()
         anchorResolutionTask = nil
         hasPartialTranscript = false
+        isShowingPasteConfirmation = false
         anchorSession.begin()
         stablePlacementSide = nil
         presentation.reset()
@@ -204,6 +209,7 @@ final class HaloWindowManager {
         anchorResolutionTask?.cancel()
         anchorResolutionTask = nil
         hasPartialTranscript = false
+        isShowingPasteConfirmation = false
         panel?.endReviewInteraction()
         anchorSession.end()
         stablePlacementSide = nil
@@ -229,6 +235,7 @@ final class HaloWindowManager {
         modelLabel: String?,
         enhancementWarning: String?
     ) {
+        isShowingPasteConfirmation = false
         presentation.presentReview(
             rawText: rawText,
             finalText: finalText,
@@ -250,6 +257,15 @@ final class HaloWindowManager {
     func clearReview() {
         panel?.endReviewInteraction()
         presentation.clearReview()
+    }
+
+    func presentPasteConfirmation() {
+        isShowingPasteConfirmation = true
+        isShowRequested = true
+        panel?.endReviewInteraction()
+        presentation.presentPasteConfirmation()
+        initializeWindowIfNeeded()
+        positionAndShowPanel(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
     private func initializeWindowIfNeeded() {
@@ -299,6 +315,7 @@ final class HaloWindowManager {
             .removeDuplicates()
             .sink { [weak self] state in
                 guard let self else { return }
+                guard !self.isShowingPasteConfirmation else { return }
                 let phase: HaloPresentationPhase = self.engine.pendingPasteReview == nil
                     ? .resolve(recordingState: state)
                     : .reviewing
@@ -313,6 +330,13 @@ final class HaloWindowManager {
                 }
                 self.updateModeMetadata()
                 self.resizeVisiblePanel(animated: true)
+            }
+            .store(in: &cancellables)
+
+        engine.$haloSessionDeliveryOverride
+            .removeDuplicates()
+            .sink { [weak self] deliveryOverride in
+                self?.presentation.updateDeliveryOverride(deliveryOverride)
             }
             .store(in: &cancellables)
 

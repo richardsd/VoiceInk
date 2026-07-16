@@ -56,3 +56,16 @@ enum HaloDeliveryDecisionResolver {
         }
     }
 }
+
+enum HaloSessionDeliveryOverrideResolver {
+    static func toggled(
+        current: HaloSessionDeliveryOverride?,
+        policy: HaloDeliveryPolicy
+    ) -> HaloSessionDeliveryOverride? {
+        if current != nil {
+            return nil
+        }
+
+        return policy == .pasteImmediately ? .forceReview : .forceDirect
+    }
+}

@@ -92,6 +92,9 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         case .reviewing:
             reviewingContent
                 .transition(phaseTransition)
+        case .confirmed:
+            confirmationContent
+                .transition(phaseTransition)
         }
     }
 
@@ -119,7 +122,11 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
 
                 Spacer(minLength: 4)
 
-                destinationLabel
+                if overrideStatusLabel != nil {
+                    overrideStatusChip
+                } else {
+                    destinationLabel
+                }
             }
 
             if let visiblePartialTranscript {
@@ -150,7 +157,11 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             }
 
             Spacer(minLength: 6)
-            progressIndicator(speed: 0.2)
+            if overrideStatusLabel != nil {
+                overrideStatusChip
+            } else {
+                progressIndicator(speed: 0.2)
+            }
         }
     }
 
@@ -169,8 +180,26 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 progressIndicator(speed: 0.22)
             }
 
-            chipRow
+            HStack(spacing: 5) {
+                if overrideStatusLabel != nil {
+                    overrideStatusChip
+                }
+                chipRow
+            }
         }
+    }
+
+    private var confirmationContent: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(AppTheme.Status.positive)
+            Text("Pasted")
+                .font(HaloTypography.statusTitle)
+                .foregroundStyle(Color.white.opacity(0.94))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
     }
 
     private var reviewingContent: some View {
@@ -352,6 +381,24 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         .filter { !$0.isEmpty }
     }
 
+    private var overrideStatusLabel: String? {
+        switch presentation.deliveryOverride {
+        case .forceDirect:
+            return String(localized: "Quick Apply armed")
+        case .forceReview:
+            return String(localized: "Review this result")
+        case nil:
+            return nil
+        }
+    }
+
+    @ViewBuilder
+    private var overrideStatusChip: some View {
+        if let overrideStatusLabel {
+            HaloOverrideChip(label: overrideStatusLabel)
+        }
+    }
+
     @ViewBuilder
     private var destinationLabel: some View {
         let appName = sanitized(presentation.metadata.applicationName)
@@ -447,6 +494,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             return String(localized: "VoiceInk is enhancing the transcription")
         case .reviewing:
             return String(localized: "Transcript ready. Press Return to apply or Escape to cancel.")
+        case .confirmed:
+            return String(localized: "Transcript pasted")
         }
     }
 
@@ -482,6 +531,30 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         return String(trimmed.prefix(36))
+    }
+}
+
+private struct HaloOverrideChip: View {
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "command")
+                .font(.system(size: 8, weight: .bold))
+            Text(label)
+                .lineLimit(1)
+        }
+        .font(HaloTypography.chip)
+        .foregroundStyle(AppTheme.Accent.strong)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(AppTheme.Accent.fill)
+        .clipShape(Capsule())
+        .overlay {
+            Capsule()
+                .strokeBorder(AppTheme.Accent.border.opacity(0.7), lineWidth: 0.5)
+        }
+        .accessibilityLabel(Text(label))
     }
 }
 

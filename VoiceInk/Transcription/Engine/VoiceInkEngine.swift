@@ -197,6 +197,35 @@ class VoiceInkEngine: NSObject, ObservableObject {
         pasteReviewSecondsRemaining.map(PasteReviewExpiration.isInWarningWindow) ?? false
     }
 
+    var haloSessionDeliveryOverrideLabel: String? {
+        switch haloSessionDeliveryOverride {
+        case .forceDirect:
+            return String(localized: "Quick Apply armed")
+        case .forceReview:
+            return String(localized: "Review this result")
+        case nil:
+            return nil
+        }
+    }
+
+    func toggleHaloSessionDeliveryOverride() {
+        guard recorderUIManager?.isHaloPanelActive == true else { return }
+        switch recordingState {
+        case .starting, .recording, .transcribing, .enhancing:
+            let policy = ModeRuntimeResolver.outputConfiguration().haloDeliveryPolicy
+            haloSessionDeliveryOverride = HaloSessionDeliveryOverrideResolver.toggled(
+                current: haloSessionDeliveryOverride,
+                policy: policy
+            )
+        case .idle, .busy, .reviewing:
+            break
+        }
+    }
+
+    func clearHaloSessionDeliveryOverride() {
+        haloSessionDeliveryOverride = nil
+    }
+
     // MARK: - Toggle Record
 
     func toggleRecord(modeId: UUID? = nil, isAssistantFollowUp: Bool = false) async {
@@ -813,7 +842,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                     type: .warning
                 )
             }
-            await recorderUIManager?.dismissRecorderPanel()
+            recorderUIManager?.showHaloPasteConfirmation()
             return true
 
         case .commandNotPosted:
@@ -1005,6 +1034,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     // MARK: - Cancellation
 
     func cancelRecording() async {
+        haloSessionDeliveryOverride = nil
         let shouldFinishSessionImmediately: Bool
         switch recordingState {
         case .starting, .recording:
@@ -1032,6 +1062,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     func resetRecordingSession() async {
+        haloSessionDeliveryOverride = nil
         discardPendingPasteReview()
         cancelCurrentSession()
         activeRecordingStartID = nil

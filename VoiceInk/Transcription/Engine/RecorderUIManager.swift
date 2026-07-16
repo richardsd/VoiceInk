@@ -46,6 +46,7 @@ protocol RecorderPanelPresenting: AnyObject {
     func finishPasteReviewKeyboardHandling()
     func presentPasteReview(_ review: PendingPasteReview)
     func clearPasteReview()
+    func showHaloPasteConfirmation()
 }
 
 @MainActor
@@ -81,6 +82,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
     private var miniWindowManager: MiniWindowManager?
     private var haloWindowManager: HaloWindowManager?
     private weak var reviewShortcutController: (any RecorderReviewShortcutControlling)?
+    private var haloPasteConfirmationTask: Task<Void, Never>?
 
     private weak var engine: VoiceInkEngine?
     private var recorder: Recorder?
@@ -217,6 +219,9 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
     }
 
     private func handleStoredStyleChange() {
+        haloPasteConfirmationTask?.cancel()
+        haloPasteConfirmationTask = nil
+        engine?.clearHaloSessionDeliveryOverride()
         if engine?.recordingState == .reviewing {
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -319,6 +324,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         }
 
         hideRecorderPanel()
+        haloPasteConfirmationTask?.cancel()
+        haloPasteConfirmationTask = nil
         isRecorderPanelVisible = false
         haloWindowManager?.endRecordingSession()
         finishPasteReviewKeyboardHandling()
@@ -329,6 +336,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         guard let engine = engine else { return }
         logger.notice("Resetting recording state on launch")
         await engine.resetRecordingSession()
+        haloPasteConfirmationTask?.cancel()
+        haloPasteConfirmationTask = nil
         hideRecorderPanel()
         isRecorderPanelVisible = false
         haloWindowManager?.endRecordingSession()
@@ -347,6 +356,10 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     func cancelPendingPasteReview() async {
         await engine?.cancelPendingPasteReview()
+    }
+
+    func toggleHaloSessionDeliveryOverride() {
+        engine?.toggleHaloSessionDeliveryOverride()
     }
 
     func preparePasteReviewKeyboardHandling() -> Bool {
@@ -373,6 +386,31 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     func clearPasteReview() {
         haloWindowManager?.clearReview()
+    }
+
+    func showHaloPasteConfirmation() {
+        guard isRecorderPanelVisible,
+            effectiveRecorderPanelStyle == .halo
+        else {
+            Task { @MainActor [weak self] in
+                await self?.dismissRecorderPanel()
+            }
+            return
+        }
+
+        finishPasteReviewKeyboardHandling()
+        haloWindowManager?.presentPasteConfirmation()
+        haloPasteConfirmationTask?.cancel()
+        haloPasteConfirmationTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(450))
+            } catch {
+                return
+            }
+            guard let self else { return }
+            self.haloPasteConfirmationTask = nil
+            await self.dismissRecorderPanel()
+        }
     }
 
     // MARK: - Notification Handling

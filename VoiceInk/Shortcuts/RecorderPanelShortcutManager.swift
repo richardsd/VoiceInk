@@ -170,12 +170,23 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
                 keyCode: UInt16(kVK_Return),
                 modifierFlags: []
             )
+            shortcuts[.recorderPanelToggleHaloDelivery] = .key(
+                keyCode: UInt16(kVK_Return),
+                modifierFlags: [.command]
+            )
             shortcuts[.recorderPanelEscape] = .key(
                 keyCode: UInt16(kVK_Escape),
                 modifierFlags: []
             )
         } else {
             shortcuts = ShortcutStore.shortcuts(for: ShortcutAction.recorderPanelStoredActions)
+
+            if recorderUIManager.isHaloPanelActive {
+                shortcuts[.recorderPanelToggleHaloDelivery] = .key(
+                    keyCode: UInt16(kVK_Return),
+                    modifierFlags: [.command]
+                )
+            }
 
             if ShortcutStore.shortcut(for: .cancelRecorder) == nil {
                 shortcuts[.recorderPanelEscape] = .key(keyCode: UInt16(kVK_Escape), modifierFlags: [])
@@ -217,8 +228,10 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
         switch phase {
         case .keyDown:
             return action != .recorderPanelApply
+                && action != .recorderPanelToggleHaloDelivery
         case .keyUp:
             return action == .recorderPanelApply
+                || action == .recorderPanelToggleHaloDelivery
         }
     }
 
@@ -227,7 +240,7 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
 
         if isHandlingPasteReview {
             switch action {
-            case .recorderPanelApply:
+            case .recorderPanelApply, .recorderPanelToggleHaloDelivery:
                 await recorderUIManager.approvePendingPasteReview()
             case .recorderPanelEscape, .cancelRecorder:
                 reviewLifecycle.recordKeyDown(action)
@@ -246,6 +259,8 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
             await handleEscapeShortcut()
         case .recorderPanelMode(let index):
             handleModeSelectionShortcut(index: index)
+        case .recorderPanelToggleHaloDelivery:
+            recorderUIManager.toggleHaloSessionDeliveryOverride()
         default:
             break
         }
@@ -258,8 +273,10 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
         resetEscapeState()
 
         guard refreshVisibleShortcuts() else {
-            reviewLifecycle.forceFinish()
-            _ = refreshVisibleShortcuts()
+            // Keep the logical review lifecycle active without installing the
+            // normal recorder shortcuts. Mouse controls remain available and
+            // finishing the review restores the ordinary shortcut set.
+            visibleRecorderMonitor.stop()
             return false
         }
 

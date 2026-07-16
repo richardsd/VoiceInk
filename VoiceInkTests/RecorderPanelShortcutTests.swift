@@ -66,6 +66,18 @@ struct RecorderPanelShortcutTests {
                 in: .keyUp
             )
         )
+        #expect(
+            !RecorderPanelShortcutManager.shouldHandle(
+                .recorderPanelToggleHaloDelivery,
+                in: .keyDown
+            )
+        )
+        #expect(
+            RecorderPanelShortcutManager.shouldHandle(
+                .recorderPanelToggleHaloDelivery,
+                in: .keyUp
+            )
+        )
     }
 
     @MainActor
@@ -80,6 +92,10 @@ struct RecorderPanelShortcutTests {
                 .recorderPanelEscape: .key(
                     keyCode: UInt16(kVK_Escape),
                     modifierFlags: []
+                ),
+                .recorderPanelToggleHaloDelivery: .key(
+                    keyCode: UInt16(kVK_Return),
+                    modifierFlags: [.command]
                 ),
             ],
             onKeyDown: { _, _ in },
@@ -114,10 +130,26 @@ struct RecorderPanelShortcutTests {
                 eventTime: 4
             )
         )
+        #expect(
+            monitor.simulateEvent(
+                kind: .keyDown,
+                keyCode: UInt16(kVK_Return),
+                modifierFlags: [.command],
+                eventTime: 5
+            )
+        )
+        #expect(
+            monitor.simulateEvent(
+                kind: .keyUp,
+                keyCode: UInt16(kVK_Return),
+                modifierFlags: [.command],
+                eventTime: 6
+            )
+        )
     }
 
     @MainActor
-    @Test func failedReviewEventTapRestoresNormalRecorderShortcuts() {
+    @Test func failedReviewEventTapLeavesReviewMouseOnlyWithoutNormalShortcuts() {
         let recorderUIManager = RecorderUIManager()
         recorderUIManager.isRecorderPanelVisible = true
         let monitor = FailingShortcutMonitor()
@@ -127,9 +159,8 @@ struct RecorderPanelShortcutTests {
         )
 
         #expect(!manager.prepareForPasteReview())
-        #expect(monitor.startCalls.count == 2)
+        #expect(monitor.startCalls.count == 1)
         #expect(monitor.startCalls[0].shortcuts[.recorderPanelApply] != nil)
         #expect(monitor.startCalls[0].shortcuts[.recorderPanelEscape] != nil)
-        #expect(monitor.startCalls[1].shortcuts[.recorderPanelApply] == nil)
     }
 }

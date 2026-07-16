@@ -37,5 +37,11 @@ struct HaloPresentationLayoutTests {
                 hasVisiblePartialTranscript: true
             ) == CGSize(width: 440, height: 280)
         )
+        #expect(
+            HaloPanelMetrics.size(
+                for: .confirmed,
+                hasVisiblePartialTranscript: true
+            ) == CGSize(width: 132, height: 44)
+        )
     }
 }
