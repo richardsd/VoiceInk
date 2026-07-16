@@ -38,21 +38,17 @@ struct TranscriptionHistoryView: View {
 
         if let timestamp = timestamp {
             if !searchText.isEmpty {
-                descriptor.predicate = #Predicate<Transcription> { transcription in
-                    (transcription.text.localizedStandardContains(searchText)
-                        || (transcription.enhancedText?.localizedStandardContains(searchText) ?? false))
-                        && transcription.timestamp < timestamp
-                }
+                descriptor.predicate = TranscriptionHistorySearch.predicate(
+                    matching: searchText,
+                    before: timestamp
+                )
             } else {
                 descriptor.predicate = #Predicate<Transcription> { transcription in
                     transcription.timestamp < timestamp
                 }
             }
         } else if !searchText.isEmpty {
-            descriptor.predicate = #Predicate<Transcription> { transcription in
-                transcription.text.localizedStandardContains(searchText)
-                    || (transcription.enhancedText?.localizedStandardContains(searchText) ?? false)
-            }
+            descriptor.predicate = TranscriptionHistorySearch.predicate(matching: searchText)
         }
 
         descriptor.fetchLimit = pageSize
@@ -493,10 +489,7 @@ struct TranscriptionHistoryView: View {
             var allDescriptor = FetchDescriptor<Transcription>()
 
             if !searchText.isEmpty {
-                allDescriptor.predicate = #Predicate<Transcription> { transcription in
-                    transcription.text.localizedStandardContains(searchText)
-                        || (transcription.enhancedText?.localizedStandardContains(searchText) ?? false)
-                }
+                allDescriptor.predicate = TranscriptionHistorySearch.predicate(matching: searchText)
             }
 
             allDescriptor.propertiesToFetch = [\.id]

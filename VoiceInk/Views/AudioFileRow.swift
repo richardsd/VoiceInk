@@ -23,7 +23,7 @@ struct AudioFileRow: View {
         if isExpanded {
             return displayText
         }
-        return item.transcription?.enhancedText ?? item.transcription?.text ?? ""
+        return item.transcription?.displayedResultText ?? ""
     }
 
     var body: some View {
@@ -101,7 +101,7 @@ struct AudioFileRow: View {
                 .truncationMode(.middle)
 
             if !isExpanded, let transcription = item.transcription {
-                Text(transcription.enhancedText ?? transcription.text)
+                Text(transcription.displayedResultText)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }

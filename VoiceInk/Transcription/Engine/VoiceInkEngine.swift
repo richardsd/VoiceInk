@@ -865,6 +865,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
             },
             playStopSound: true
         )
+        HaloTranscriptionFinalizer.finalizeIfCommandPosted(
+            outcome: outcome,
+            transcriptionID: review.transcriptionID,
+            payload: review.payload,
+            modelContext: modelContext
+        )
 
         switch outcome {
         case .commandPosted:
@@ -942,6 +948,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 recoveryPresenter.hidePasteReviewForDelivery()
             },
             playStopSound: false
+        )
+        HaloTranscriptionFinalizer.finalizeIfCommandPosted(
+            outcome: outcome,
+            transcriptionID: review.transcriptionID,
+            payload: payload,
+            modelContext: modelContext
         )
 
         switch outcome {

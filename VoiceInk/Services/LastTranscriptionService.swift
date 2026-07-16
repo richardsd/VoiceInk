@@ -29,14 +29,7 @@ class LastTranscriptionService: ObservableObject {
             return
         }
 
-        // Prefer enhanced text; fallback to original text
-        let textToCopy: String = {
-            if let enhancedText = lastTranscription.enhancedText, !enhancedText.isEmpty {
-                return enhancedText
-            } else {
-                return lastTranscription.text
-            }
-        }()
+        let textToCopy = lastTranscription.displayedResultText
 
         let success = ClipboardManager.copyToClipboard(textToCopy)
 
@@ -84,14 +77,7 @@ class LastTranscriptionService: ObservableObject {
             return
         }
 
-        // Prefer enhanced text; if unavailable, fallback to original text (which may contain an error message)
-        let textToPaste: String = {
-            if let enhancedText = lastTranscription.enhancedText, !enhancedText.isEmpty {
-                return enhancedText
-            } else {
-                return lastTranscription.text
-            }
-        }()
+        let textToPaste = lastTranscription.displayedResultText
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             CursorPaster.pasteAtCursor(textToPaste)
@@ -139,9 +125,7 @@ class LastTranscriptionService: ObservableObject {
                 )
                 let newTranscription = result.transcription
 
-                let textToCopy =
-                    result.enhancementFailure == nil && newTranscription.enhancedText?.isEmpty == false
-                    ? newTranscription.enhancedText! : newTranscription.text
+                let textToCopy = newTranscription.displayedResultText
                 ClipboardManager.copyToClipboard(textToCopy)
 
                 if let enhancementFailure = result.enhancementFailure {

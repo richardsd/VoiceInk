@@ -24,10 +24,22 @@ struct TranscriptionDetailView: View {
                         isEnhanced: false
                     )
 
-                    if let enhancedText = transcription.enhancedText {
+                    if let enhancedText = transcription.usableEnhancedText,
+                        enhancedText != transcription.text
+                    {
                         MessageBubble(
                             label: "Enhanced",
                             text: enhancedText,
+                            isEnhanced: true
+                        )
+                    }
+
+                    if let finalizedText = transcription.finalizedText,
+                        finalizedText != (transcription.usableEnhancedText ?? transcription.text)
+                    {
+                        MessageBubble(
+                            label: "Final",
+                            text: finalizedText,
                             isEnhanced: true
                         )
                     }

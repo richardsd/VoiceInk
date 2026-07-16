@@ -23,8 +23,8 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 | HR2-02 | **Done** | HR2-01 | Decision resolver, destination-safe direct delivery, raw-fallback policy, and recovery review |
 | HR2-03 | **Done** | HR2-02 | Session override shortcut, status chips, and Pasted confirmation pulse |
 | HR2-04 | **Done** | HR2-01 | Review session, revision, reducer, and inactivity-lifecycle foundation |
-| HR2-05 | **In Progress** | HR2-02, HR2-04 | `finalizedText`, delivery finalization, History consumers, and CSV export |
-| HR2-06 | Ready | HR2-04 | Pure grouped word-diff engine and accessible representation |
+| HR2-05 | **Done** | HR2-02, HR2-04 | `finalizedText`, delivery finalization, History consumers, and CSV export |
+| HR2-06 | **In Progress** | HR2-04 | Pure grouped word-diff engine and accessible representation |
 | HR2-07 | Ready | HR2-06 | Final/Changes/Original UI, lens shortcuts, revision navigation, and panel sizing |
 | HR2-08 | Ready | HR2-04 | Refinement protocol, prompt builder, provider/auth reuse, cancellation, and mocks |
 | HR2-09 | Ready | HR2-05, HR2-07, HR2-08 | Refinement Orbit UI, revision creation, parent comparison, and timeout integration |
@@ -76,13 +76,13 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 
 ### HR2-05 — Finalized History
 
-- [ ] `Transcription.finalizedText` is optional and compatible with existing SwiftData stores.
-- [ ] It is written only after a Halo paste command posts successfully.
-- [ ] Copy, cancellation, expiration, and failed delivery do not finalize a transcription.
-- [ ] User-facing result consumers prefer `finalizedText ?? enhancedText ?? text`.
-- [ ] History details distinguish Original, Enhanced, and Final when values differ.
-- [ ] CSV appends a `Final Transcript` column without reordering existing columns.
-- [ ] Refinements do not duplicate initial enhancement metrics.
+- [x] `Transcription.finalizedText` is optional and compatible with existing SwiftData stores.
+- [x] It is written only after a Halo paste command posts successfully.
+- [x] Copy, cancellation, expiration, and failed delivery do not finalize a transcription.
+- [x] User-facing result consumers prefer `finalizedText ?? enhancedText ?? text`.
+- [x] History details distinguish Original, Enhanced, and Final when values differ.
+- [x] CSV appends a `Final Transcript` column without reordering existing columns.
+- [x] Refinements do not duplicate initial enhancement metrics.
 
 ### HR2-06 — Change Lens engine
 

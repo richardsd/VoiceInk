@@ -37,21 +37,17 @@ struct InlineHistoryView: View {
 
         if let timestamp = timestamp {
             if !searchText.isEmpty {
-                descriptor.predicate = #Predicate<Transcription> { transcription in
-                    (transcription.text.localizedStandardContains(searchText)
-                        || (transcription.enhancedText?.localizedStandardContains(searchText) ?? false))
-                        && transcription.timestamp < timestamp
-                }
+                descriptor.predicate = TranscriptionHistorySearch.predicate(
+                    matching: searchText,
+                    before: timestamp
+                )
             } else {
                 descriptor.predicate = #Predicate<Transcription> { transcription in
                     transcription.timestamp < timestamp
                 }
             }
         } else if !searchText.isEmpty {
-            descriptor.predicate = #Predicate<Transcription> { transcription in
-                transcription.text.localizedStandardContains(searchText)
-                    || (transcription.enhancedText?.localizedStandardContains(searchText) ?? false)
-            }
+            descriptor.predicate = TranscriptionHistorySearch.predicate(matching: searchText)
         }
 
         descriptor.fetchLimit = pageSize
@@ -437,10 +433,7 @@ struct InlineHistoryView: View {
             var allDescriptor = FetchDescriptor<Transcription>()
 
             if !searchText.isEmpty {
-                allDescriptor.predicate = #Predicate<Transcription> { transcription in
-                    transcription.text.localizedStandardContains(searchText)
-                        || (transcription.enhancedText?.localizedStandardContains(searchText) ?? false)
-                }
+                allDescriptor.predicate = TranscriptionHistorySearch.predicate(matching: searchText)
             }
 
             allDescriptor.propertiesToFetch = [\.id]
@@ -478,14 +471,38 @@ private struct HistoryCardRow: View {
     let onToggleCheck: () -> Void
     let onShowInfo: () -> Void
 
-    @State private var selectedTab: TranscriptionTab = .original
+    @State private var selectedTab: HistoryTranscriptionStage = .final
+
+    private var availableStages: [HistoryTranscriptionStage] {
+        var stages: [HistoryTranscriptionStage] = [.original]
+
+        if let enhancedText = transcription.usableEnhancedText,
+            enhancedText != transcription.text
+        {
+            stages.append(.enhanced)
+        }
+
+        if let finalizedText = transcription.finalizedText,
+            finalizedText != (transcription.usableEnhancedText ?? transcription.text)
+        {
+            stages.append(.final)
+        }
+
+        return stages
+    }
+
+    private var effectiveSelectedStage: HistoryTranscriptionStage {
+        availableStages.contains(selectedTab) ? selectedTab : (availableStages.last ?? .original)
+    }
 
     private var displayText: String {
-        switch selectedTab {
+        switch effectiveSelectedStage {
         case .original:
             return transcription.text
         case .enhanced:
-            return transcription.enhancedText ?? ""
+            return transcription.usableEnhancedText ?? ""
+        case .final:
+            return transcription.finalizedText ?? transcription.displayedResultText
         }
     }
 
@@ -518,7 +535,7 @@ private struct HistoryCardRow: View {
                         .foregroundColor(.secondary)
 
                     if !isExpanded {
-                        Text(transcription.enhancedText ?? transcription.text)
+                        Text(transcription.displayedResultText)
                             .font(.system(size: 13))
                             .lineLimit(2)
                             .foregroundColor(.primary)
@@ -548,9 +565,9 @@ private struct HistoryCardRow: View {
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Tabs
-            if transcription.enhancedText != nil {
+            if availableStages.count > 1 {
                 HStack(spacing: 4) {
-                    ForEach(TranscriptionTab.allCases, id: \.self) { tab in
+                    ForEach(availableStages, id: \.self) { tab in
                         Button {
                             withAnimation(.easeInOut(duration: 0.15)) {
                                 selectedTab = tab
@@ -558,12 +575,12 @@ private struct HistoryCardRow: View {
                         } label: {
                             Text(LocalizedStringKey(tab.rawValue))
                                 .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(selectedTab == tab ? .primary : .secondary)
+                                .foregroundColor(effectiveSelectedStage == tab ? .primary : .secondary)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 4)
                                 .background(
                                     Capsule()
-                                        .fill(selectedTab == tab ? AppTheme.Surface.controlActive : Color.clear)
+                                        .fill(effectiveSelectedStage == tab ? AppTheme.Surface.controlActive : Color.clear)
                                 )
                         }
                         .buttonStyle(.plain)
@@ -602,4 +619,10 @@ private struct HistoryCardRow: View {
             }
         }
     }
+}
+
+private enum HistoryTranscriptionStage: String, CaseIterable {
+    case original = "Original"
+    case enhanced = "Enhanced"
+    case final = "Final"
 }

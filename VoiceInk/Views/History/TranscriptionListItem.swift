@@ -38,7 +38,7 @@ struct TranscriptionListItem: View {
                     }
                 }
 
-                Text(transcription.enhancedText ?? transcription.text)
+                Text(transcription.displayedResultText)
                     .font(.system(size: 12, weight: .regular))
                     .lineLimit(2)
                     .foregroundColor(.primary)

@@ -45,13 +45,7 @@ private struct DashboardTranscriptCardRow: View {
     }
 
     private var displayText: String {
-        if let enhancedText = transcription.enhancedText,
-            Self.isUsableEnhancedText(enhancedText)
-        {
-            return enhancedText
-        }
-
-        return transcription.text
+        transcription.displayedResultText
     }
 
     private var metadataText: String {
@@ -128,13 +122,6 @@ private struct DashboardTranscriptCardRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
         }
-    }
-
-    private static func isUsableEnhancedText(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-
-        return trimmed.range(of: "Enhancement failed:", options: [.caseInsensitive, .anchored]) == nil
     }
 
     private static func normalizedPreviewText(_ text: String) -> String {
