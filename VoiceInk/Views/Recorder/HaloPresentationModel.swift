@@ -68,6 +68,11 @@ struct HaloReviewViewportIdentity: Equatable, Hashable, Sendable {
     let lens: HaloReviewLens
 }
 
+enum HaloReviewNoticeTone: Equatable, Sendable {
+    case neutral
+    case warning
+}
+
 /// A review-state projection that is safe for presentation code. The source
 /// `HaloReviewState` also owns destination, prepared paste, and frozen context
 /// data; none of those implementation details should reach the view layer.
@@ -83,7 +88,10 @@ private struct HaloReviewPresentationSnapshot: Equatable, Sendable {
     let selectedRevisionAction: HaloReviewRevisionAction
     let canRefine: Bool
     let isRefining: Bool
+    let activeRefinementAction: HaloRefinementAction?
+    let hasReachedRevisionLimit: Bool
     let noticeMessage: String?
+    let noticeTone: HaloReviewNoticeTone?
     let enhancementWarning: String?
 
     var canMovePrevious: Bool {
@@ -197,8 +205,20 @@ final class HaloPresentationModel: ObservableObject {
         reviewSnapshot?.isRefining ?? false
     }
 
+    var activeRefinementAction: HaloRefinementAction? {
+        reviewSnapshot?.activeRefinementAction
+    }
+
+    var hasReachedRevisionLimit: Bool {
+        reviewSnapshot?.hasReachedRevisionLimit ?? false
+    }
+
     var reviewNoticeMessage: String? {
         reviewSnapshot?.noticeMessage
+    }
+
+    var reviewNoticeTone: HaloReviewNoticeTone? {
+        reviewSnapshot?.noticeTone
     }
 
     func setPhase(_ phase: HaloPresentationPhase) {
@@ -261,6 +281,11 @@ final class HaloPresentationModel: ObservableObject {
         }
 
         let selectedIndex = state.selectedRevisionIndex ?? 0
+        let hasReachedRevisionLimit = state.revisions.count >= HaloReviewState.maximumRevisionCount
+        let notice = reviewNoticePresentation(
+            state.notice,
+            hasReachedRevisionLimit: hasReachedRevisionLimit
+        )
         let snapshot = HaloReviewPresentationSnapshot(
             sessionID: state.session.id,
             revisionID: selectedRevision.id,
@@ -271,9 +296,12 @@ final class HaloPresentationModel: ObservableObject {
             revisionCount: state.revisions.count,
             lens: state.lens,
             selectedRevisionAction: selectedRevision.action,
-            canRefine: state.canRefine,
+            canRefine: state.canRefine && state.session.enhancementConfiguration != nil,
             isRefining: state.isRefining,
-            noticeMessage: state.notice?.message,
+            activeRefinementAction: state.refinementRequest?.action,
+            hasReachedRevisionLimit: hasReachedRevisionLimit,
+            noticeMessage: notice.message,
+            noticeTone: notice.tone,
             enhancementWarning: state.session.enhancementWarning
         )
 
@@ -400,6 +428,28 @@ final class HaloPresentationModel: ObservableObject {
             completedDiffKey = nil
             completedDiffResult = nil
             diffResult = nil
+        }
+    }
+
+    private func reviewNoticePresentation(
+        _ notice: HaloReviewNotice?,
+        hasReachedRevisionLimit: Bool
+    ) -> (message: String?, tone: HaloReviewNoticeTone?) {
+        switch notice {
+        case .emptyRefinement, .unchangedRefinement, .refinementCancelled:
+            return (notice?.message, .neutral)
+        case .refinementFailed, .revisionLimitReached:
+            return (notice?.message, .warning)
+        case .copied, .copyFailed, nil:
+            if hasReachedRevisionLimit {
+                return (
+                    HaloReviewNotice.revisionLimitReached.message,
+                    .warning
+                )
+            }
+            // Copy feedback already has a dedicated presentation lane. Avoid
+            // repeating the same outcome as a reducer notice.
+            return (nil, nil)
         }
     }
 }

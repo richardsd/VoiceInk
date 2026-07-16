@@ -111,6 +111,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private var activeRecordingContextTasks: [Task<Void, Never>] = []
     private var voiceInkRefinePreparationTask: Task<Void, Never>?
     private var pendingPasteReviewExpirationTask: Task<Void, Never>?
+    private var haloRefinementTask: Task<Void, Never>?
+    private var activeHaloRefinementRequestID: UUID?
     private var isResolvingPasteReview = false
     private var pasteReviewResolutionGate = PasteReviewResolutionGate()
     private var activePasteReviewDestination: PasteReviewDestinationSnapshot?
@@ -131,6 +133,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     let assistantChat: AssistantChatService?
     private let pasteDeliveryService: any PasteDeliveryServicing
     private let pasteReviewDestinationService: any PasteReviewDestinationServicing
+    private let haloRefinementService: (any HaloRefinementServicing)?
     private let pipeline: TranscriptionPipeline
 
     let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "VoiceInkEngine")
@@ -141,7 +144,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
         transcriptionModelManager: TranscriptionModelManager,
         enhancementService: AIEnhancementService? = nil,
         pasteDeliveryService: (any PasteDeliveryServicing)? = nil,
-        pasteReviewDestinationService: (any PasteReviewDestinationServicing)? = nil
+        pasteReviewDestinationService: (any PasteReviewDestinationServicing)? = nil,
+        haloRefinementService: (any HaloRefinementServicing)? = nil
     ) {
         self.modelContext = modelContext
         self.whisperModelManager = whisperModelManager
@@ -168,6 +172,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
         let resolvedPasteDeliveryService = pasteDeliveryService ?? PasteDeliveryService()
         self.pasteDeliveryService = resolvedPasteDeliveryService
         self.pasteReviewDestinationService = pasteReviewDestinationService ?? PasteReviewDestinationService()
+        self.haloRefinementService = haloRefinementService
+            ?? enhancementService.map(HaloRefinementService.init(enhancementService:))
         self.pipeline = TranscriptionPipeline(
             modelContext: modelContext,
             serviceRegistry: serviceRegistry,
@@ -768,7 +774,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         }
     }
 
-    private func stagePasteReview(
+    /// Internal to support deterministic review-orchestration tests without
+    /// Accessibility access, keyboard events, or a live transcription run.
+    func stagePasteReview(
         _ review: PendingPasteReview,
         feedback: PasteReviewFeedback? = nil,
         notifyReady: Bool
@@ -899,13 +907,23 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     func approvePendingPasteReview() async {
         guard let review = pendingPasteReview,
-            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id)
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
+            let reviewState = haloReviewState,
+            reviewState.session.id == review.id,
+            !reviewState.isRefining,
+            let approvedRevision = reviewState.selectedRevision
         else {
             return
         }
 
-        guard haloReviewState?.isExpired != true,
-            (haloReviewState?.secondsRemaining() ?? 1) > 0
+        // Bind this Apply action to exactly one immutable revision before AX
+        // destination validation suspends. A refinement that starts or selects
+        // a replacement while validation is in flight requires a fresh Apply.
+        let approvedRevisionID = approvedRevision.id
+        let payload = approvedRevision.payload
+
+        guard !reviewState.isExpired,
+            reviewState.secondsRemaining() > 0
         else {
             await cancelPendingPasteReview()
             return
@@ -914,10 +932,14 @@ class VoiceInkEngine: NSObject, ObservableObject {
         if let destination = review.destination {
             let validation = await pasteReviewDestinationService.validate(destination)
 
-            // Validation suspends while AX is queried. A concurrent Escape or
-            // Apply may already have resolved this review, so re-check identity.
+            // Validation suspends while AX is queried. Re-check both review and
+            // revision identity so Apply cannot cross a refinement boundary.
             guard pendingPasteReview?.id == review.id,
-                pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id)
+                pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
+                let currentState = haloReviewState,
+                currentState.session.id == review.id,
+                !currentState.isRefining,
+                currentState.selectedRevision?.id == approvedRevisionID
             else {
                 return
             }
@@ -941,7 +963,6 @@ class VoiceInkEngine: NSObject, ObservableObject {
         isResolvingPasteReview = true
         recordingState = .busy
 
-        let payload = haloReviewState?.selectedRevision?.payload ?? review.payload
         let outcome = await pasteDeliveryService.deliver(
             payload,
             dismiss: {
@@ -1045,9 +1066,225 @@ class VoiceInkEngine: NSObject, ObservableObject {
         return true
     }
 
+    @discardableResult
+    func beginHaloRefinement(
+        _ action: HaloRefinementAction,
+        at date: Date = Date()
+    ) -> Bool {
+        guard recordingState == .reviewing,
+            let review = pendingPasteReview,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
+            let service = haloRefinementService,
+            var state = haloReviewState,
+            state.session.id == review.id,
+            !state.isExpired,
+            !state.isRefining,
+            let configuration = state.session.enhancementConfiguration,
+            let selectedRevision = state.selectedRevision
+        else {
+            return false
+        }
+
+        // The timer updates once per second, so its published `isExpired` flag
+        // can briefly lag the authoritative deadline. Reject and materialize
+        // expiry here before any frozen context reaches the refinement service.
+        guard date < state.expiresAt else {
+            _ = HaloReviewReducer.reduce(
+                state: &state,
+                action: .timeout(at: date)
+            )
+            haloReviewState = state
+            pasteReviewSecondsRemaining = 0
+            return false
+        }
+
+        let requestID = UUID()
+        let effect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .beginRefinement(action, requestID: requestID, at: date)
+        )
+        guard case .refinementStarted(let reviewRequest) = effect else {
+            haloReviewState = state
+            return false
+        }
+
+        let request = HaloRefinementRequest(
+            reviewRequest: reviewRequest,
+            rawTranscript: state.session.rawText,
+            selectedRevisionText: selectedRevision.text,
+            configuration: configuration,
+            contextSnapshot: state.session.frozenContext
+        )
+
+        haloReviewState = state
+        pasteReviewSecondsRemaining = nil
+        schedulePasteReviewInactivity(for: review.id)
+
+        // The reducer permits only one request. The explicit ID additionally
+        // prevents a late cancelled task from clearing a newer task handle.
+        haloRefinementTask?.cancel()
+        activeHaloRefinementRequestID = requestID
+        haloRefinementTask = Task { @MainActor [weak self] in
+            do {
+                let result = try await service.refine(request)
+                self?.completeHaloRefinement(
+                    result,
+                    expectedRequestID: requestID,
+                    reviewID: review.id,
+                    at: Date()
+                )
+            } catch {
+                self?.failHaloRefinement(
+                    requestID: requestID,
+                    reviewID: review.id,
+                    error: error,
+                    at: Date()
+                )
+            }
+        }
+        return true
+    }
+
+    @discardableResult
+    func cancelHaloRefinementIfActive(at date: Date = Date()) -> Bool {
+        guard recordingState == .reviewing,
+            let review = pendingPasteReview,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
+            var state = haloReviewState,
+            state.session.id == review.id,
+            state.isRefining
+        else {
+            return false
+        }
+
+        let effect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .cancelRefinement(at: date)
+        )
+        guard effect != .ignored else { return false }
+
+        stopActiveHaloRefinementTask()
+        haloReviewState = state
+        schedulePasteReviewInactivity(for: review.id)
+        return true
+    }
+
+    private func completeHaloRefinement(
+        _ result: HaloRefinementResult,
+        expectedRequestID: UUID,
+        reviewID: UUID,
+        at date: Date
+    ) {
+        guard activeHaloRefinementRequestID == expectedRequestID,
+            let review = pendingPasteReview,
+            review.id == reviewID,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: reviewID),
+            var state = haloReviewState,
+            state.session.id == reviewID,
+            let refinementRequest = state.refinementRequest,
+            refinementRequest.id == expectedRequestID
+        else {
+            return
+        }
+
+        // A service implementation must echo both immutable request IDs. Treat
+        // a mismatch as a malformed response for the expected active request;
+        // otherwise the reducer would remain permanently stuck in refining.
+        guard result.requestID == expectedRequestID,
+            result.baseRevisionID == refinementRequest.baseRevisionID
+        else {
+            failHaloRefinement(
+                requestID: expectedRequestID,
+                reviewID: reviewID,
+                error: HaloRefinementError.malformedResponse,
+                at: date
+            )
+            return
+        }
+
+        let payload = pasteDeliveryService.prepare(
+            text: result.replacementText,
+            output: state.session.output
+        )
+        let revision = HaloReviewRevision(
+            parentID: result.baseRevisionID,
+            action: .refinement(refinementRequest.action),
+            text: result.replacementText,
+            metadata: state.session.metadata,
+            payload: payload
+        )
+        _ = HaloReviewReducer.reduce(
+            state: &state,
+            action: .completeRefinement(
+                requestID: result.requestID,
+                revision: revision,
+                at: date
+            )
+        )
+
+        clearHaloRefinementTaskHandle(ifMatching: result.requestID)
+        haloReviewState = state
+        schedulePasteReviewInactivity(for: reviewID)
+    }
+
+    private func failHaloRefinement(
+        requestID: UUID,
+        reviewID: UUID,
+        error: Error,
+        at date: Date
+    ) {
+        guard activeHaloRefinementRequestID == requestID,
+            let review = pendingPasteReview,
+            review.id == reviewID,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: reviewID),
+            var state = haloReviewState,
+            state.session.id == reviewID,
+            state.refinementRequest?.id == requestID
+        else {
+            return
+        }
+
+        let sanitized = (error as? HaloRefinementError)
+            ?? HaloRefinementError.sanitized(error)
+        let notice: HaloReviewNotice
+        if sanitized == .cancelled {
+            notice = .refinementCancelled
+        } else {
+            notice = .refinementFailed(
+                sanitized.errorDescription
+                    ?? String(localized: "The refinement could not be completed. Your current version is unchanged.")
+            )
+        }
+        _ = HaloReviewReducer.reduce(
+            state: &state,
+            action: .failRefinement(
+                requestID: requestID,
+                notice: notice,
+                at: date
+            )
+        )
+
+        clearHaloRefinementTaskHandle(ifMatching: requestID)
+        haloReviewState = state
+        schedulePasteReviewInactivity(for: reviewID)
+    }
+
+    private func clearHaloRefinementTaskHandle(ifMatching requestID: UUID) {
+        guard activeHaloRefinementRequestID == requestID else { return }
+        activeHaloRefinementRequestID = nil
+        haloRefinementTask = nil
+    }
+
+    private func stopActiveHaloRefinementTask() {
+        haloRefinementTask?.cancel()
+        haloRefinementTask = nil
+        activeHaloRefinementRequestID = nil
+    }
+
     func copyPendingPasteReview() {
         guard let review = pendingPasteReview,
-            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id)
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
+            haloReviewState?.isRefining != true
         else {
             return
         }
@@ -1090,6 +1327,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     private func clearPendingPasteReviewPresentation() {
+        stopActiveHaloRefinementTask()
         pendingPasteReview = nil
         haloReviewState = nil
         pendingPasteReviewExpirationTask?.cancel()
@@ -1127,7 +1365,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     private func schedulePasteReviewInactivity(for reviewID: UUID) {
         pendingPasteReviewExpirationTask?.cancel()
-        pasteReviewSecondsRemaining = haloReviewState?.secondsRemaining()
+        pasteReviewSecondsRemaining = haloReviewState?.isRefining == true
+            ? nil
+            : haloReviewState?.secondsRemaining()
         pendingPasteReviewExpirationTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
@@ -1411,6 +1651,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
             name: .promptDidChange,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApplicationWillTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
     }
 
     @objc func handlePromptChange() {
@@ -1422,6 +1668,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 await context.setPrompt(currentPrompt)
             }
         }
+    }
+
+    @objc private func handleApplicationWillTerminate() {
+        stopActiveHaloRefinementTask()
+        discardPendingPasteReview()
+        clearActiveRecordingContext()
     }
 }
 

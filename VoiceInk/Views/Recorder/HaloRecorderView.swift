@@ -1,5 +1,39 @@
 import SwiftUI
 
+enum HaloRefinementOrbitPolicy {
+    static let actionSpacing: CGFloat = 5
+    static let rowHeight: CGFloat = 28
+
+    static let actions: [HaloRefinementAction] = [
+        .shorter,
+        .clearer,
+        .friendlier,
+        .formal,
+        .fixTerms,
+    ]
+
+    static func actionsAreEnabled(
+        canRefine: Bool,
+        isRefining: Bool,
+        isDelivering: Bool
+    ) -> Bool {
+        canRefine && !isRefining && !isDelivering
+    }
+
+    static func contentWidth(for actionWidths: [CGFloat]) -> CGFloat {
+        guard !actionWidths.isEmpty else { return 0 }
+        return actionWidths.reduce(0, +)
+            + CGFloat(actionWidths.count - 1) * actionSpacing
+    }
+
+    static func requiresHorizontalScrolling(
+        actionWidths: [CGFloat],
+        availableWidth: CGFloat
+    ) -> Bool {
+        contentWidth(for: actionWidths) > max(0, availableWidth)
+    }
+}
+
 struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     @ObservedObject var stateProvider: S
     @ObservedObject var recorder: Recorder
@@ -13,6 +47,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     let onRetry: () -> Void
     let onSelectReviewLens: (HaloReviewLens) -> Void
     let onMoveReviewRevision: (Int) -> Void
+    let onRefine: (HaloRefinementAction) -> Void
     let onReviewInteractiveRegionsChange: ([CGRect]) -> Void
 
     private let coral = Color(red: 0.96, green: 0.34, blue: 0.29)
@@ -28,6 +63,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         onRetry: @escaping () -> Void,
         onSelectReviewLens: @escaping (HaloReviewLens) -> Void,
         onMoveReviewRevision: @escaping (Int) -> Void,
+        onRefine: @escaping (HaloRefinementAction) -> Void,
         onReviewInteractiveRegionsChange: @escaping ([CGRect]) -> Void
     ) {
         self.stateProvider = stateProvider
@@ -39,6 +75,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         self.onRetry = onRetry
         self.onSelectReviewLens = onSelectReviewLens
         self.onMoveReviewRevision = onMoveReviewRevision
+        self.onRefine = onRefine
         self.onReviewInteractiveRegionsChange = onReviewInteractiveRegionsChange
     }
 
@@ -238,6 +275,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             if let review = presentation.review {
                 reviewNavigation
                 reviewTextViewport(review)
+                refinementOrbit
 
                 if let warning = sanitized(review.enhancementWarning), !warning.isEmpty {
                     Label(warning, systemImage: "exclamationmark.triangle.fill")
@@ -265,7 +303,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                     action: showsRetry ? onRetry : onApply
                 )
                 HaloReviewActionButton(
-                    key: "Esc",
+                    key: presentation.isRefining ? nil : "Esc",
                     title: String(localized: "Cancel"),
                     systemImage: nil,
                     emphasized: false,
@@ -310,29 +348,53 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         }
     }
 
+    private var refinementOrbit: some View {
+        HaloRefinementOrbit(
+            actions: HaloRefinementOrbitPolicy.actions,
+            activeAction: presentation.activeRefinementAction,
+            actionsAreEnabled: HaloRefinementOrbitPolicy.actionsAreEnabled(
+                canRefine: presentation.canRefine,
+                isRefining: presentation.isRefining,
+                isDelivering: presentation.isReviewDelivering
+            ),
+            hasReachedRevisionLimit: presentation.hasReachedRevisionLimit,
+            onSelect: onRefine
+        )
+    }
+
     @ViewBuilder
     private var reviewStatusRows: some View {
-        if let feedback = presentation.reviewFeedback {
-            Label(feedback.message, systemImage: feedbackIcon(feedback))
-                .font(HaloTypography.warning)
-                .foregroundStyle(feedbackColor(feedback))
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        if presentation.isRefining, let activeAction = presentation.activeRefinementAction {
+            HaloRefinementProgressStatus(action: activeAction)
+        } else {
+            if let notice = presentation.reviewNoticeMessage {
+                Label(notice, systemImage: reviewNoticeIcon)
+                    .font(HaloTypography.warning)
+                    .foregroundStyle(reviewNoticeColor)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let feedback = presentation.reviewFeedback {
+                Label(feedback.message, systemImage: feedbackIcon(feedback))
+                    .font(HaloTypography.warning)
+                    .foregroundStyle(feedbackColor(feedback))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-        if let secondsRemaining = presentation.reviewSecondsRemaining,
-            PasteReviewExpiration.isInWarningWindow(secondsRemaining: secondsRemaining)
-        {
-            Label(
-                String(
-                    format: String(localized: "Review expires in %d seconds"),
-                    secondsRemaining
-                ),
-                systemImage: "clock.badge.exclamationmark"
-            )
-            .font(HaloTypography.warning)
-            .foregroundStyle(AppTheme.Status.warningStrong.opacity(0.9))
-            .lineLimit(1)
+            if let secondsRemaining = presentation.reviewSecondsRemaining,
+                PasteReviewExpiration.isInWarningWindow(secondsRemaining: secondsRemaining)
+            {
+                Label(
+                    String(
+                        format: String(localized: "Review expires in %d seconds"),
+                        secondsRemaining
+                    ),
+                    systemImage: "clock.badge.exclamationmark"
+                )
+                .font(HaloTypography.warning)
+                .foregroundStyle(AppTheme.Status.warningStrong.opacity(0.9))
+                .lineLimit(1)
+            }
         }
     }
 
@@ -578,6 +640,18 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         }
     }
 
+    private var reviewNoticeIcon: String {
+        presentation.reviewNoticeTone == .warning
+            ? "exclamationmark.triangle.fill"
+            : "info.circle.fill"
+    }
+
+    private var reviewNoticeColor: Color {
+        presentation.reviewNoticeTone == .warning
+            ? AppTheme.Status.warningStrong.opacity(0.95)
+            : AppTheme.Accent.strong.opacity(0.92)
+    }
+
     private func sanitized(_ value: String?) -> String? {
         guard let value else { return nil }
         let singleLine = value
@@ -674,9 +748,155 @@ private struct HaloReviewActionButton: View {
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.48 : 1)
-        .haloReviewInteractiveRegion()
+        .haloReviewInteractiveRegion(enabled: !isDisabled)
         .accessibilityLabel(Text(title))
         .accessibilityHint(key.map { Text("Keyboard shortcut: \($0)") } ?? Text(""))
+    }
+}
+
+private struct HaloRefinementOrbit: View {
+    let actions: [HaloRefinementAction]
+    let activeAction: HaloRefinementAction?
+    let actionsAreEnabled: Bool
+    let hasReachedRevisionLimit: Bool
+    let onSelect: (HaloRefinementAction) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: HaloRefinementOrbitPolicy.actionSpacing) {
+                ForEach(actions) { action in
+                    HaloRefinementActionButton(
+                        action: action,
+                        isActive: action == activeAction,
+                        isDisabled: !actionsAreEnabled,
+                        hasReachedRevisionLimit: hasReachedRevisionLimit,
+                        onSelect: onSelect
+                    )
+                }
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        .frame(height: HaloRefinementOrbitPolicy.rowHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Refinement actions"))
+    }
+}
+
+private struct HaloRefinementActionButton: View {
+    let action: HaloRefinementAction
+    let isActive: Bool
+    let isDisabled: Bool
+    let hasReachedRevisionLimit: Bool
+    let onSelect: (HaloRefinementAction) -> Void
+
+    var body: some View {
+        Button {
+            onSelect(action)
+        } label: {
+            HStack(spacing: 4) {
+                if isActive {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(AppTheme.Accent.strong)
+                        .scaleEffect(0.7)
+                        .frame(width: 10, height: 10)
+                } else {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+
+                Text(action.displayName)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .font(HaloTypography.refinementAction)
+            .foregroundStyle(
+                isActive
+                    ? AppTheme.Accent.strong
+                    : Color.white.opacity(0.68)
+            )
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
+            .background(
+                isActive
+                    ? AppTheme.Accent.fillStrong
+                    : Color.white.opacity(0.055)
+            )
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(
+                        isActive
+                            ? AppTheme.Accent.border.opacity(0.8)
+                            : Color.white.opacity(0.07),
+                        lineWidth: 0.5
+                    )
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled && !isActive ? 0.43 : 1)
+        .haloReviewInteractiveRegion(enabled: !isDisabled)
+        .accessibilityLabel(Text(accessibilityLabel))
+        .accessibilityHint(Text(accessibilityHint))
+    }
+
+    private var accessibilityLabel: String {
+        let format = isActive
+            ? String(localized: "Refinement in progress: %@")
+            : String(localized: "Refine transcript: %@")
+        return String(format: format, action.displayName)
+    }
+
+    private var accessibilityHint: String {
+        if hasReachedRevisionLimit {
+            return String(localized: "This review already has six versions.")
+        }
+        if isActive {
+            return String(localized: "Press Escape to stop refinement.")
+        }
+        return String(localized: "Creates a complete replacement version")
+    }
+}
+
+private struct HaloRefinementProgressStatus: View {
+    let action: HaloRefinementAction
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(AppTheme.Accent.strong)
+
+            Text(
+                String(
+                    format: String(localized: "Refining: %@"),
+                    action.displayName
+                )
+            )
+            .font(HaloTypography.warning)
+            .foregroundStyle(AppTheme.Accent.strong.opacity(0.95))
+
+            Spacer(minLength: 8)
+
+            Text("Press Escape to stop refinement.")
+                .font(HaloTypography.tertiary)
+                .foregroundStyle(Color.white.opacity(0.48))
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            Text(
+                String(
+                    format: String(localized: "Refinement in progress: %@"),
+                    action.displayName
+                )
+            )
+        )
+        .accessibilityHint(Text("Press Escape to stop refinement."))
     }
 }
 
@@ -774,7 +994,9 @@ private struct HaloReviewRevisionNavigator: View {
                 isAvailable: canMoveNext
             )
         }
-        .haloReviewInteractiveRegion()
+        .haloReviewInteractiveRegion(
+            enabled: !isDisabled && (canMovePrevious || canMoveNext)
+        )
     }
 
     private func navigationButton(
@@ -925,6 +1147,7 @@ private enum HaloTypography {
     static let chip = Font.system(size: 9.5, weight: .semibold, design: .rounded)
     static let key = Font.system(size: 10, weight: .bold, design: .rounded)
     static let action = Font.system(size: 10.5, weight: .semibold)
+    static let refinementAction = Font.system(size: 9.5, weight: .semibold, design: .rounded)
 }
 
 private enum HaloReviewCoordinateSpace {
@@ -940,13 +1163,15 @@ private struct HaloReviewInteractiveRegionsKey: PreferenceKey {
 }
 
 private extension View {
-    func haloReviewInteractiveRegion() -> some View {
+    func haloReviewInteractiveRegion(enabled: Bool = true) -> some View {
         background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: HaloReviewInteractiveRegionsKey.self,
-                    value: [proxy.frame(in: .named(HaloReviewCoordinateSpace.name))]
-                )
+            if enabled {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: HaloReviewInteractiveRegionsKey.self,
+                        value: [proxy.frame(in: .named(HaloReviewCoordinateSpace.name))]
+                    )
+                }
             }
         }
     }

@@ -41,6 +41,20 @@ struct RecorderPanelShortcutTests {
         #expect(!lifecycle.isAwaitingKeyUp)
     }
 
+    @Test func escapeCanCancelOnlyRefinementAndKeepReviewMonitorInstalled() {
+        var lifecycle = RecorderReviewShortcutLifecycle()
+        lifecycle.begin()
+        lifecycle.recordKeyDown(.recorderPanelEscape)
+
+        // Cancelling a refinement does not request review teardown. The key-up
+        // is still suppressed, but the review monitor remains active so a
+        // second Escape can cancel the review itself.
+        let shouldRestoreShortcuts = lifecycle.recordKeyUp(.recorderPanelEscape)
+        #expect(!shouldRestoreShortcuts)
+        #expect(lifecycle.isHandlingReview)
+        #expect(!lifecycle.isAwaitingKeyUp)
+    }
+
     @Test func reviewEventPolicyAppliesReturnOnKeyUpAndEscapeOnKeyDown() {
         #expect(
             !RecorderPanelShortcutManager.shouldHandle(
@@ -169,6 +183,36 @@ struct RecorderPanelShortcutTests {
         )
         #expect(escapeShortcuts[.cancelRecorder] == escapeShortcut)
         #expect(escapeShortcuts[.recorderPanelEscape] == nil)
+    }
+
+    @Test func physicalEscapeConfiguredAsCancelStillUsesRefinementFirstBehavior() {
+        let escapeShortcut = Shortcut.key(
+            keyCode: UInt16(kVK_Escape),
+            modifierFlags: []
+        )
+        let nonEscapeShortcut = Shortcut.key(
+            keyCode: UInt16(kVK_ANSI_X),
+            modifierFlags: [.command]
+        )
+
+        #expect(
+            RecorderPanelShortcutManager.shouldCancelActiveRefinementFirst(
+                for: .cancelRecorder,
+                configuredCancelShortcut: escapeShortcut
+            )
+        )
+        #expect(
+            !RecorderPanelShortcutManager.shouldCancelActiveRefinementFirst(
+                for: .cancelRecorder,
+                configuredCancelShortcut: nonEscapeShortcut
+            )
+        )
+        #expect(
+            RecorderPanelShortcutManager.shouldCancelActiveRefinementFirst(
+                for: .recorderPanelEscape,
+                configuredCancelShortcut: nil
+            )
+        )
     }
 
     @MainActor

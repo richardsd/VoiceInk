@@ -47,6 +47,10 @@ struct HaloPresentationModelTests {
         #expect(model.selectedRevisionAction == .initial)
         #expect(model.canRefine)
         #expect(!model.isRefining)
+        #expect(model.activeRefinementAction == nil)
+        #expect(!model.hasReachedRevisionLimit)
+        #expect(model.reviewNoticeMessage == nil)
+        #expect(model.reviewNoticeTone == nil)
         #expect(
             model.reviewViewportIdentity == HaloReviewViewportIdentity(
                 sessionID: state.session.id,
@@ -103,9 +107,11 @@ struct HaloPresentationModelTests {
             parentID: parent.id,
             action: .refinement(.clearer)
         )
-        #expect(
-            state.completeRefinement(requestID: request.id, revision: nextRevision) == .appended
+        let completion = state.completeRefinement(
+            requestID: request.id,
+            revision: nextRevision
         )
+        #expect(completion == .appended)
         model.updateReviewState(state)
 
         await waitUntil { model.diffResult?.revisedText == "Newest revision" }
@@ -122,6 +128,108 @@ struct HaloPresentationModelTests {
         #expect(finalInvocationCount == 2)
     }
 
+    @Test func refinementProgressAndNoticesDoNotChangeViewportOrRestartDiff() async throws {
+        let computer = HaloReviewDiffTestComputer()
+        let model = HaloPresentationModel { original, revised in
+            await computer.compare(original: original, revised: revised)
+        }
+        var state = makeState(raw: "Raw", final: "Initial revision")
+        state.selectLens(.changes)
+        model.updateReviewState(state)
+        await waitUntil { model.diffResult != nil }
+
+        let viewportIdentity = try #require(model.reviewViewportIdentity)
+        let pendingRequest = state.beginRefinement(action: .formal)
+        let request = try #require(pendingRequest)
+        model.updateReviewState(state)
+
+        #expect(model.isRefining)
+        #expect(!model.canRefine)
+        #expect(model.activeRefinementAction == .formal)
+        #expect(model.reviewViewportIdentity == viewportIdentity)
+        #expect(model.reviewNoticeMessage == nil)
+        #expect(model.reviewNoticeTone == nil)
+
+        try? await Task.sleep(for: .milliseconds(40))
+        let progressInvocationCount = await computer.invocationCount
+        #expect(progressInvocationCount == 1)
+
+        let didFinishWithFailure = state.finishRefinementFailure(
+            requestID: request.id,
+            notice: .refinementFailed("Refinement is temporarily unavailable.")
+        )
+        #expect(didFinishWithFailure)
+        model.updateReviewState(state)
+
+        #expect(!model.isRefining)
+        #expect(model.activeRefinementAction == nil)
+        #expect(model.reviewViewportIdentity == viewportIdentity)
+        #expect(model.reviewNoticeMessage == "Refinement is temporarily unavailable.")
+        #expect(model.reviewNoticeTone == .warning)
+
+        let pendingNeutralRequest = state.beginRefinement(action: .clearer)
+        let neutralRequest = try #require(pendingNeutralRequest)
+        let didFinishWithoutChanges = state.finishRefinementFailure(
+            requestID: neutralRequest.id,
+            notice: .unchangedRefinement
+        )
+        #expect(didFinishWithoutChanges)
+        model.updateReviewState(state)
+
+        #expect(model.reviewNoticeMessage == "The refinement did not change this version.")
+        #expect(model.reviewNoticeTone == .neutral)
+        let finalInvocationCount = await computer.invocationCount
+        #expect(finalInvocationCount == 1)
+    }
+
+    @Test func revisionLimitProjectsAProactiveDisabledOrbitNotice() throws {
+        let model = HaloPresentationModel()
+        var state = makeState(raw: "Raw", final: "Version 1")
+
+        for index in 1..<HaloReviewState.maximumRevisionCount {
+            let parent = try #require(state.selectedRevision)
+            let action = HaloRefinementOrbitPolicy.actions[(index - 1) % 5]
+            let pendingRequest = state.beginRefinement(action: action)
+            let request = try #require(pendingRequest)
+            let revision = makeRevision(
+                text: "Version \(index + 1)",
+                parentID: parent.id,
+                action: .refinement(action)
+            )
+            let completion = state.completeRefinement(
+                requestID: request.id,
+                revision: revision
+            )
+            #expect(completion == .appended)
+        }
+
+        model.updateReviewState(state)
+
+        #expect(model.revisionCount == HaloReviewState.maximumRevisionCount)
+        #expect(model.hasReachedRevisionLimit)
+        #expect(!model.canRefine)
+        #expect(!model.isRefining)
+        #expect(model.activeRefinementAction == nil)
+        #expect(model.reviewNoticeMessage == "This review already has six versions.")
+        #expect(model.reviewNoticeTone == .warning)
+    }
+
+    @Test func reviewWithoutFrozenEnhancementConfigurationDisablesRefinement() {
+        let model = HaloPresentationModel()
+        let state = makeState(
+            raw: "Raw",
+            final: "Raw",
+            supportsRefinement: false
+        )
+
+        model.updateReviewState(state)
+
+        #expect(!model.canRefine)
+        #expect(!model.isRefining)
+        #expect(!model.hasReachedRevisionLimit)
+        #expect(model.activeRefinementAction == nil)
+    }
+
     private func waitUntil(
         attempts: Int = 200,
         condition: @escaping @MainActor () async -> Bool
@@ -135,7 +243,11 @@ struct HaloPresentationModelTests {
         }
     }
 
-    private func makeState(raw: String, final: String) -> HaloReviewState {
+    private func makeState(
+        raw: String,
+        final: String,
+        supportsRefinement: Bool = true
+    ) -> HaloReviewState {
         let metadata = HaloReviewModelMetadata(
             modeName: "Dictation",
             modeEmoji: "mic.fill",
@@ -157,7 +269,23 @@ struct HaloPresentationModelTests {
                 autoSendKey: .none,
                 customCommand: nil
             ),
-            enhancementConfiguration: nil,
+            enhancementConfiguration: supportsRefinement
+                ? EnhancementRuntimeConfiguration(
+                    mode: nil,
+                    isEnabled: true,
+                    prompt: CustomPrompt(
+                        title: "Voice Dictation",
+                        promptText: "Preserve every material fact.",
+                        useSystemInstructions: false
+                    ),
+                    provider: .openAI,
+                    modelName: "gpt-5.6-luna",
+                    openAIAuthMode: .oauth,
+                    useClipboardContext: false,
+                    useSelectedTextContext: true,
+                    useScreenCaptureContext: false
+                )
+                : nil,
             frozenContext: nil
         )
         return HaloReviewState(

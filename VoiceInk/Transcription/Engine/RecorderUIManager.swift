@@ -372,6 +372,16 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         engine?.moveHaloReviewRevision(by: offset) ?? false
     }
 
+    @discardableResult
+    func beginHaloRefinement(_ action: HaloRefinementAction) -> Bool {
+        engine?.beginHaloRefinement(action) ?? false
+    }
+
+    @discardableResult
+    func cancelHaloRefinementIfActive() -> Bool {
+        engine?.cancelHaloRefinementIfActive() ?? false
+    }
+
     func preparePasteReviewKeyboardHandling() -> Bool {
         guard isHaloPanelActive else { return false }
         return reviewShortcutController?.prepareForPasteReview() == true

@@ -303,6 +303,9 @@ final class HaloWindowManager {
             onMoveReviewRevision: { [weak engine] offset in
                 engine?.moveHaloReviewRevision(by: offset)
             },
+            onRefine: { [weak engine] action in
+                _ = engine?.beginHaloRefinement(action)
+            },
             onReviewInteractiveRegionsChange: { [weak newPanel] regions in
                 newPanel?.updateReviewInteractiveRegions(regions)
             }

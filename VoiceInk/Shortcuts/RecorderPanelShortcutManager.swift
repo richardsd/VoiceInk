@@ -222,6 +222,28 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
         }
     }
 
+    /// Physical Escape always keeps its refinement-first meaning, even when a
+    /// user has also configured Escape as the general Cancel Recorder shortcut.
+    /// Other configured cancel shortcuts continue to cancel the whole review.
+    nonisolated static func shouldCancelActiveRefinementFirst(
+        for action: ShortcutAction,
+        configuredCancelShortcut: Shortcut?
+    ) -> Bool {
+        if action == .recorderPanelEscape {
+            return true
+        }
+
+        guard action == .cancelRecorder,
+            let configuredCancelShortcut
+        else {
+            return false
+        }
+
+        return configuredCancelShortcut.kind == .key
+            && configuredCancelShortcut.keyCode == UInt16(kVK_Escape)
+            && configuredCancelShortcut.modifierFlags.isEmpty
+    }
+
     /// Returns the complete non-persisted review shortcut set. A configured
     /// Cancel shortcut wins any physical-key collision so one press can never
     /// both cancel and mutate or apply the pending review.
@@ -284,6 +306,12 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
                 await recorderUIManager.approvePendingPasteReview()
             case .recorderPanelEscape, .cancelRecorder:
                 reviewLifecycle.recordKeyDown(action)
+                if Self.shouldCancelActiveRefinementFirst(
+                    for: action,
+                    configuredCancelShortcut: ShortcutStore.shortcut(for: .cancelRecorder)
+                ), recorderUIManager.cancelHaloRefinementIfActive() {
+                    return
+                }
                 await recorderUIManager.cancelPendingPasteReview()
             case .recorderPanelReviewFinal:
                 recorderUIManager.selectHaloReviewLens(.final)

@@ -27,8 +27,8 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 | HR2-06 | **Done** | HR2-04 | Pure grouped word-diff engine and accessible representation |
 | HR2-07 | **Done** | HR2-06 | Final/Changes/Original UI, lens shortcuts, revision navigation, and panel sizing |
 | HR2-08 | **Done** | HR2-04 | Refinement protocol, prompt builder, provider/auth reuse, cancellation, and mocks |
-| HR2-09 | **In Progress** | HR2-05, HR2-07, HR2-08 | Refinement Orbit UI, revision creation, parent comparison, and timeout integration |
-| HR2-10 | Ready | HR2-03, HR2-09 | Cross-feature hardening, localization, compatibility audit, full tests, and manual checklist |
+| HR2-09 | **Done** | HR2-05, HR2-07, HR2-08 | Refinement Orbit UI, revision creation, parent comparison, and timeout integration |
+| HR2-10 | **In Progress** | HR2-03, HR2-09 | Cross-feature hardening, localization, compatibility audit, full tests, and manual checklist |
 
 ## Story acceptance criteria
 
@@ -112,12 +112,12 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 
 ### HR2-09 — Refinement Orbit
 
-- [ ] Five refinement actions are present and disabled at the six-revision limit.
-- [ ] Apply, Copy, navigation, and other refinement actions are disabled during a request; Cancel remains available.
-- [ ] Success appends and selects a revision, prepares its exact paste payload, and switches to parent-relative Changes.
-- [ ] Empty or unchanged results add no revision and preserve the current selection.
-- [ ] Refinement completion resumes and resets the inactivity timer.
-- [ ] Successful refined delivery finalizes History with the pasted revision.
+- [x] Five refinement actions are present and disabled at the six-revision limit.
+- [x] Apply, Copy, navigation, and other refinement actions are disabled during a request; Cancel remains available.
+- [x] Success appends and selects a revision, prepares its exact paste payload, and switches to parent-relative Changes.
+- [x] Empty or unchanged results add no revision and preserve the current selection.
+- [x] Refinement completion resumes and resets the inactivity timer.
+- [x] Successful refined delivery finalizes History with the pasted revision.
 
 ### HR2-10 — Hardening and acceptance
 
