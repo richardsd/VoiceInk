@@ -31,11 +31,20 @@ struct HaloReviewDiffSegment: Equatable, Sendable {
 
         switch operation {
         case .unchanged:
-            return "Unchanged: \(describedText)"
+            return String(
+                format: String(localized: "Unchanged: %@"),
+                describedText
+            )
         case .addition:
-            return "Added: \(describedText)"
+            return String(
+                format: String(localized: "Added: %@"),
+                describedText
+            )
         case .removal:
-            return "Removed: \(describedText)"
+            return String(
+                format: String(localized: "Removed: %@"),
+                describedText
+            )
         }
     }
 }
@@ -376,17 +385,17 @@ private extension Unicode.Scalar {
 private enum HaloReviewDiffAccessibility {
     static func describe(_ text: String) -> String {
         let tokens = HaloReviewDiffEngine.tokenize(text)
-        guard !tokens.isEmpty else { return "empty text" }
+        guard !tokens.isEmpty else { return String(localized: "empty text") }
 
         return tokens.map { token in
             switch token.kind {
             case .lineBreak:
-                return "line break"
+                return String(localized: "line break")
             case .whitespace:
                 if token.text.contains("\t") {
-                    return "tab"
+                    return String(localized: "tab")
                 }
-                return "space"
+                return String(localized: "space")
             case .word, .punctuation, .symbol:
                 return token.text
             }

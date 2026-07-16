@@ -712,6 +712,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
         let didFinishActivePipeline = activePipelineTranscriptionID == transcriptionID
         if didFinishActivePipeline {
+            // A trigger word can switch an armed Halo session to Respond or
+            // Custom Command after the override was chosen. Those routes never
+            // enter `handleHaloPaste`, so clear the session-only choice when
+            // their delivery completes as well.
+            haloSessionDeliveryOverride = nil
             await cleanupResources()
             activePipelineTranscriptionID = nil
             currentSession = nil

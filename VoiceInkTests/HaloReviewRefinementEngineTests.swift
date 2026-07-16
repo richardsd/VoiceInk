@@ -167,6 +167,7 @@ private final class SuspendedEngineDestinationService: PasteReviewDestinationSer
 private final class EngineHaloPresenter: RecorderPanelPresenting, PasteReviewRecoveryPresenting {
     var isRecorderPanelVisible = true
     var isHaloPanelActive = true
+    var keyboardHandlingAvailable = true
     private(set) var presentedReviewCount = 0
     private(set) var hiddenForDeliveryCount = 0
     private(set) var clearedReviewCount = 0
@@ -176,7 +177,7 @@ private final class EngineHaloPresenter: RecorderPanelPresenting, PasteReviewRec
     }
 
     func reconcileRecorderPanel(for outputMode: ModeOutputMode) {}
-    func preparePasteReviewKeyboardHandling() -> Bool { true }
+    func preparePasteReviewKeyboardHandling() -> Bool { keyboardHandlingAvailable }
     func finishPasteReviewKeyboardHandling() {}
 
     func presentPasteReview(_ review: PendingPasteReview) {
@@ -198,6 +199,19 @@ private final class EngineHaloPresenter: RecorderPanelPresenting, PasteReviewRec
 
 @MainActor
 struct HaloReviewRefinementEngineTests {
+    @Test func keyboardMonitorFailureKeepsMouseOperableReviewInsteadOfPasting() async throws {
+        let refinement = EngineRefinementService(behaviors: [])
+        let harness = try makeHarness(refinement: refinement)
+        harness.presenter.keyboardHandlingAvailable = false
+
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+        #expect(harness.engine.pendingPasteReview != nil)
+        #expect(harness.engine.recordingState == .reviewing)
+        #expect(harness.paste.deliveryPayloads.isEmpty)
+
+        await harness.engine.cancelPendingPasteReview()
+    }
+
     @Test func successfulRefinementAppendsExactPayloadAndFinalizesOnlyAfterPaste() async throws {
         let refinement = EngineRefinementService(behaviors: [.success("Clear final version")])
         let harness = try makeHarness(refinement: refinement)

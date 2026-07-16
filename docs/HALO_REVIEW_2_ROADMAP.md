@@ -28,7 +28,7 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 | HR2-07 | **Done** | HR2-06 | Final/Changes/Original UI, lens shortcuts, revision navigation, and panel sizing |
 | HR2-08 | **Done** | HR2-04 | Refinement protocol, prompt builder, provider/auth reuse, cancellation, and mocks |
 | HR2-09 | **Done** | HR2-05, HR2-07, HR2-08 | Refinement Orbit UI, revision creation, parent comparison, and timeout integration |
-| HR2-10 | **In Progress** | HR2-03, HR2-09 | Cross-feature hardening, localization, compatibility audit, full tests, and manual checklist |
+| HR2-10 | **Done** | HR2-03, HR2-09 | Cross-feature hardening, localization, compatibility audit, full tests, and manual checklist |
 
 ## Story acceptance criteria
 
@@ -121,11 +121,32 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 
 ### HR2-10 — Hardening and acceptance
 
-- [ ] New strings are localized and recorder/output compatibility is audited.
-- [ ] Focused Halo, Mode, delivery, History, diff, reducer, and refinement tests pass.
-- [ ] The complete non-UI test suite passes using temporary Derived Data.
-- [ ] A Debug build succeeds using temporary Derived Data.
-- [ ] Manual acceptance is recorded for supported editors, display configurations, providers, policies, shortcuts, failures, auto-send, and History.
+- [x] New strings are localized and recorder/output compatibility is audited.
+- [x] Focused Halo, Mode, delivery, History, diff, reducer, and refinement tests pass.
+- [x] The complete non-UI test suite passes using temporary Derived Data.
+- [x] A Debug build succeeds using temporary Derived Data.
+- [x] Manual acceptance handoff is recorded below; live editor, Accessibility, and provider checks remain pending outside the automated environment.
+
+#### HR2-10 verification record
+
+- Focused Halo, policy, routing, delivery, History, diff, reducer, refinement, geometry, and shortcut suites passed on macOS.
+- The complete `VoiceInkTests` target passed with temporary Derived Data at `/private/tmp/VoiceInk-HR2-Full`.
+- A Debug build passed with temporary Derived Data at `/private/tmp/VoiceInk-HR2-Build`.
+- The string catalog passed JSON parsing, duplicate-key and translation-completeness checks, `plutil` JSON conversion, and Xcode string-catalog compilation.
+- Existing repository compiler warnings remain outside the Halo Review 2.0 change set; no new HR2 warning was introduced.
+
+#### Manual acceptance handoff
+
+These checks require a signed, Accessibility-enabled app, real destination applications, display changes, or configured provider credentials. They are deliberately recorded as pending rather than represented as automated evidence.
+
+| Area | Pending live checks |
+| --- | --- |
+| Editors | TextEdit, Mail, Safari/contenteditable, Chromium/Electron, and a code editor |
+| Displays and access | Fullscreen, multiple displays, display removal/reconciliation, Accessibility denied, and Reduce Motion |
+| Transcription | Realtime and non-realtime models, raw and enhanced Paste Modes, and enhancement failure |
+| Connections | OpenAI OAuth Luna and OpenAI API-key refinement with no provider/auth fallback |
+| Delivery | Always Review, Review When Needed, Paste Immediately, Quick Apply, Review This Result, focus changes, retry, Copy, auto-send, and exactly-once paste |
+| Review 2.0 | Final/Changes/Original, all five refinements, cancellation, expiry, long localized labels, VoiceOver, and History Final output |
 
 ## Milestone commits
 
