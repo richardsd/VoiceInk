@@ -65,8 +65,9 @@ class TranscriptionPipeline {
         shouldCancel: () -> Bool,
         onCancel: @escaping () async -> Void,
         onDismiss: @escaping () async -> Void,
-        shouldStagePasteReview: @escaping (OutputRuntimeConfiguration) -> Bool = { _ in false },
-        stagePasteReview: @escaping (PendingPasteReview) -> Bool = { _ in false },
+        shouldUseHaloDelivery: @escaping (OutputRuntimeConfiguration) -> Bool = { _ in false },
+        haloSessionOverride: @escaping () -> HaloSessionDeliveryOverride? = { nil },
+        handleHaloPaste: @escaping (PendingPasteReview, HaloDeliveryRoute) async -> Bool = { _, _ in false },
         assistant: AssistantHooks = .inactive
     ) async {
         let model = transcriptionConfiguration.model
@@ -76,6 +77,16 @@ class TranscriptionPipeline {
         var responseConfig: EnhancementRuntimeConfiguration?
         var enhancementConfigForDelivery: EnhancementRuntimeConfiguration?
         var didUseRawEnhancementFallback = false
+        var frozenRecordingContext: RecordingContextSnapshot?
+        var didResolveRecordingContext = false
+
+        func resolveRecordingContext() async -> RecordingContextSnapshot? {
+            if !didResolveRecordingContext {
+                frozenRecordingContext = await recordingContextSnapshot()
+                didResolveRecordingContext = true
+            }
+            return frozenRecordingContext
+        }
 
         func finishCanceledTranscription() async {
             await onCancel()
@@ -203,7 +214,7 @@ class TranscriptionPipeline {
                     }
 
                     do {
-                        let contextSnapshot = await recordingContextSnapshot()
+                        let contextSnapshot = await resolveRecordingContext()
                         let enhancementResult = try await enhancementService.enhance(
                             textForAI,
                             configuration: resolvedEnhancementConfiguration,
@@ -298,12 +309,12 @@ class TranscriptionPipeline {
         }
 
         let resolvedDeliveryOutput = outputForDelivery ?? outputConfiguration()
-        // Freeze review eligibility once. Delivery may suspend, so a later style
-        // change must not expose a review whose History record was not saved first.
-        let allowsPasteReview = shouldStagePasteReview(resolvedDeliveryOutput)
-        if allowsPasteReview {
-            // Halo becomes keyboard-actionable inside delivery. Persist History,
-            // metrics, and the completion notification before exposing Return/Esc.
+        // Freeze Halo eligibility after trigger-word Mode selection. Delivery may
+        // suspend for focus validation or paste posting, so History and metrics
+        // must exist before either the direct or review route becomes actionable.
+        let usesHaloDelivery = shouldUseHaloDelivery(resolvedDeliveryOutput)
+        if usesHaloDelivery {
+            _ = await resolveRecordingContext()
             saveTranscriptionAndPostCompletion()
         }
 
@@ -317,7 +328,9 @@ class TranscriptionPipeline {
                 responseError: responseError,
                 usedRawEnhancementFallback: didUseRawEnhancementFallback,
                 isAssistantFollowUp: assistant.isFollowUp,
-                allowsPasteReview: allowsPasteReview
+                usesHaloDelivery: usesHaloDelivery,
+                haloSessionOverride: haloSessionOverride(),
+                frozenContext: frozenRecordingContext
             ),
             actions: TranscriptionDelivery.Actions(
                 setState: onStateChange,
@@ -325,11 +338,11 @@ class TranscriptionPipeline {
                 sendFollowUp: assistant.sendFollowUp,
                 showResponse: assistant.showResponse,
                 failResponse: assistant.failResponse,
-                stagePasteReview: stagePasteReview
+                handleHaloPaste: handleHaloPaste
             )
         )
 
-        if !allowsPasteReview {
+        if !usesHaloDelivery {
             saveTranscriptionAndPostCompletion()
         }
     }

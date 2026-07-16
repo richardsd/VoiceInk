@@ -50,7 +50,7 @@ enum ModeOutputMode: String, Codable, CaseIterable {
     }
 }
 
-enum HaloDeliveryPolicy: String, Codable, CaseIterable, Hashable, Identifiable {
+enum HaloDeliveryPolicy: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
     case alwaysReview
     case reviewWhenNeeded
     case pasteImmediately

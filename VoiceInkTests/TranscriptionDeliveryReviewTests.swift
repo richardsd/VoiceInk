@@ -70,7 +70,9 @@ struct TranscriptionDeliveryReviewTests {
                 responseError: nil,
                 usedRawEnhancementFallback: false,
                 isAssistantFollowUp: false,
-                allowsPasteReview: true
+                usesHaloDelivery: true,
+                haloSessionOverride: nil,
+                frozenContext: nil
             ),
             actions: actions(
                 dismiss: { dismissCount += 1 },
@@ -88,7 +90,7 @@ struct TranscriptionDeliveryReviewTests {
         #expect(review.payload.autoSendKey == .commandEnter)
         #expect(dismissCount == 0)
         #expect(service.deliveredPayloads.isEmpty)
-        #expect(service.reviewReadyCount == 1)
+        #expect(service.reviewReadyCount == 0)
     }
 
     @Test func reviewExpirationUsesTheSnapshottedDeadline() {
@@ -172,7 +174,9 @@ struct TranscriptionDeliveryReviewTests {
                 responseError: "backend detail that must not be shown",
                 usedRawEnhancementFallback: true,
                 isAssistantFollowUp: false,
-                allowsPasteReview: false
+                usesHaloDelivery: false,
+                haloSessionOverride: nil,
+                frozenContext: nil
             ),
             actions: actions(
                 dismiss: { dismissCount += 1 },
@@ -207,7 +211,9 @@ struct TranscriptionDeliveryReviewTests {
                 responseError: "sensitive backend response",
                 usedRawEnhancementFallback: true,
                 isAssistantFollowUp: false,
-                allowsPasteReview: true
+                usesHaloDelivery: true,
+                haloSessionOverride: nil,
+                frozenContext: nil
             ),
             actions: actions(
                 dismiss: {},
@@ -246,7 +252,9 @@ struct TranscriptionDeliveryReviewTests {
                 responseError: nil,
                 usedRawEnhancementFallback: true,
                 isAssistantFollowUp: false,
-                allowsPasteReview: true
+                usesHaloDelivery: true,
+                haloSessionOverride: nil,
+                frozenContext: nil
             ),
             actions: actions(
                 dismiss: {},
@@ -292,7 +300,9 @@ struct TranscriptionDeliveryReviewTests {
                 responseError: nil,
                 usedRawEnhancementFallback: false,
                 isAssistantFollowUp: false,
-                allowsPasteReview: false
+                usesHaloDelivery: false,
+                haloSessionOverride: nil,
+                frozenContext: nil
             ),
             actions: sharedActions
         )
@@ -311,7 +321,9 @@ struct TranscriptionDeliveryReviewTests {
                 responseError: nil,
                 usedRawEnhancementFallback: false,
                 isAssistantFollowUp: false,
-                allowsPasteReview: false
+                usesHaloDelivery: false,
+                haloSessionOverride: nil,
+                frozenContext: nil
             ),
             actions: sharedActions
         )
@@ -332,7 +344,7 @@ struct TranscriptionDeliveryReviewTests {
             sendFollowUp: { _, _ in },
             showResponse: { _, _ in },
             failResponse: { _ in },
-            stagePasteReview: stage
+            handleHaloPaste: { review, _ in stage(review) }
         )
     }
 

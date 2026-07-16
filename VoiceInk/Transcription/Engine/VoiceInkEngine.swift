@@ -98,6 +98,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     @Published private(set) var pendingPasteReview: PendingPasteReview?
     @Published private(set) var pasteReviewFeedback: PasteReviewFeedback?
     @Published private(set) var pasteReviewSecondsRemaining: Int?
+    @Published private(set) var haloSessionDeliveryOverride: HaloSessionDeliveryOverride?
     var currentSession: TranscriptionSession?
     private var currentSessionTranscriptionConfiguration: TranscriptionRuntimeConfiguration?
     private var activeRecordingStartID: UUID?
@@ -255,6 +256,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             let recordingUseCase: RecordingUseCase = canContinueAssistantSession ? .assistantFollowUp : .newSession
 
             activePipelineTranscriptionID = nil
+            haloSessionDeliveryOverride = nil
             activePasteReviewDestination = recordingUseCase.isAssistantFollowUp
                 ? nil
                 : ((recorderUIManager as? any PasteReviewDestinationProviding)?.pasteReviewDestinationSnapshot
@@ -633,13 +635,16 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 guard let self, self.activePipelineTranscriptionID == transcriptionID else { return }
                 await self.recorderUIManager?.dismissRecorderPanel()
             },
-            shouldStagePasteReview: { [weak self] output in
+            shouldUseHaloDelivery: { [weak self] output in
                 output.outputMode == .paste
                     && self?.recorderUIManager?.isHaloPanelActive == true
             },
-            stagePasteReview: { [weak self] review in
+            haloSessionOverride: { [weak self] in
+                self?.haloSessionDeliveryOverride
+            },
+            handleHaloPaste: { [weak self] review, route in
                 guard let self, self.activePipelineTranscriptionID == transcriptionID else { return false }
-                return self.stagePasteReview(review)
+                return await self.handleHaloPaste(review, route: route)
             },
             assistant: TranscriptionPipeline.AssistantHooks(
                 isFollowUp: activePipelineUseCase.isAssistantFollowUp,
@@ -705,10 +710,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     // MARK: - Halo Paste Review
 
-    private func stagePasteReview(_ review: PendingPasteReview) -> Bool {
+    private func handleHaloPaste(
+        _ review: PendingPasteReview,
+        route: HaloDeliveryRoute
+    ) async -> Bool {
         guard pendingPasteReview == nil,
-            recorderUIManager?.isHaloPanelActive == true,
-            recorderUIManager?.preparePasteReviewKeyboardHandling() == true
+            recorderUIManager?.isHaloPanelActive == true
         else {
             return false
         }
@@ -718,18 +725,109 @@ class VoiceInkEngine: NSObject, ObservableObject {
             ?? activePasteReviewDestination
             ?? pasteReviewDestinationService.frontmostApplicationSnapshot()
         let stagedReview = review.withDestination(capturedDestination)
-        guard pasteReviewResolutionGate.stage(stagedReview.id) else {
+
+        // The route has now consumed the explicit session choice. A later Mode
+        // change cannot alter this delivery, and the next recording starts clean.
+        haloSessionDeliveryOverride = nil
+
+        switch route {
+        case .review:
+            return stagePasteReview(stagedReview, notifyReady: true)
+        case .direct:
+            return await deliverHaloDirect(stagedReview)
+        }
+    }
+
+    private func stagePasteReview(
+        _ review: PendingPasteReview,
+        feedback: PasteReviewFeedback? = nil,
+        notifyReady: Bool
+    ) -> Bool {
+        guard pendingPasteReview == nil,
+            recorderUIManager?.isHaloPanelActive == true
+        else {
+            return false
+        }
+
+        // Keyboard shortcuts are additive. If the event tap cannot be installed,
+        // Halo remains in the safe review route and its mouse controls stay usable.
+        _ = recorderUIManager?.preparePasteReviewKeyboardHandling()
+        guard pasteReviewResolutionGate.stage(review.id) else {
             recorderUIManager?.finishPasteReviewKeyboardHandling()
             return false
         }
 
-        pendingPasteReview = stagedReview
-        pasteReviewFeedback = nil
+        pendingPasteReview = review
+        pasteReviewFeedback = feedback
         recordingState = .reviewing
-        recorderUIManager?.presentPasteReview(stagedReview)
-        schedulePasteReviewExpiration(for: stagedReview)
+        recorderUIManager?.presentPasteReview(review)
+        schedulePasteReviewExpiration(for: review)
+        if notifyReady {
+            pasteDeliveryService.notifyReviewReady()
+        }
         announcePasteReviewReady()
         return true
+    }
+
+    private func deliverHaloDirect(_ review: PendingPasteReview) async -> Bool {
+        if let destination = review.destination {
+            let validation = await pasteReviewDestinationService.validate(destination)
+
+            guard activePipelineTranscriptionID == review.transcriptionID,
+                pendingPasteReview == nil
+            else {
+                return true
+            }
+
+            if case .mismatch(let mismatch) = validation {
+                return stagePasteReview(
+                    review,
+                    feedback: .destinationChanged(mismatch),
+                    notifyReady: true
+                )
+            }
+        }
+
+        guard let recoveryPresenter = recorderUIManager as? any PasteReviewRecoveryPresenting else {
+            return stagePasteReview(
+                review,
+                feedback: .deliveryUnavailable,
+                notifyReady: true
+            )
+        }
+
+        recordingState = .busy
+        let outcome = await pasteDeliveryService.deliver(
+            review.payload,
+            dismiss: {
+                recoveryPresenter.hidePasteReviewForDelivery()
+            },
+            playStopSound: true
+        )
+
+        switch outcome {
+        case .commandPosted:
+            if review.enhancementWarning != nil {
+                NotificationManager.shared.showNotification(
+                    title: String(localized: "Enhancement was unavailable. Pasted the raw transcript."),
+                    type: .warning
+                )
+            }
+            await recorderUIManager?.dismissRecorderPanel()
+            return true
+
+        case .commandNotPosted:
+            recordingState = .reviewing
+            let staged = stagePasteReview(
+                review,
+                feedback: .pasteFailed,
+                notifyReady: false
+            )
+            if staged {
+                recoveryPresenter.restorePasteReviewAfterFailedDelivery()
+            }
+            return staged
+        }
     }
 
     func approvePendingPasteReview() async {

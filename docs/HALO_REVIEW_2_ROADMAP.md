@@ -20,8 +20,8 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 | --- | --- | --- | --- |
 | HR2-00 | **Done** | — | This roadmap, dependency graph, acceptance criteria, and verification gates |
 | HR2-01 | **Done** | HR2-00 | Mode policy persistence, defaults, runtime configuration, and Mode UI |
-| HR2-02 | **In Progress** | HR2-01 | Decision resolver, destination-safe direct delivery, raw-fallback policy, and recovery review |
-| HR2-03 | Ready | HR2-02 | Session override shortcut, status chips, and Pasted confirmation pulse |
+| HR2-02 | **Done** | HR2-01 | Decision resolver, destination-safe direct delivery, raw-fallback policy, and recovery review |
+| HR2-03 | **In Progress** | HR2-02 | Session override shortcut, status chips, and Pasted confirmation pulse |
 | HR2-04 | Ready | HR2-01 | Review session, revision, reducer, and inactivity-lifecycle foundation |
 | HR2-05 | Ready | HR2-02, HR2-04 | `finalizedText`, delivery finalization, History consumers, and CSV export |
 | HR2-06 | Ready | HR2-04 | Pure grouped word-diff engine and accessible representation |
@@ -48,13 +48,13 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 
 ### HR2-02 — Safe direct delivery
 
-- [ ] A pure delivery resolver covers policy, enhancement outcome, explicit session override, and destination state.
-- [ ] Successful Always Review opens review; successful Review When Needed and Paste Immediately deliver directly.
-- [ ] Enhancement failure reviews raw for Always Review and Review When Needed, and directly pastes raw with a warning for Paste Immediately.
-- [ ] Direct delivery validates the captured PID and compatible focused-element identity.
-- [ ] Destination mismatch or an unposted paste command opens the same payload in retryable review.
-- [ ] History and metrics are persisted once before either route is actionable.
-- [ ] Paste posts exactly once and auto-send happens only after a successful paste post.
+- [x] A pure delivery resolver covers policy, enhancement outcome, explicit session override, and destination state.
+- [x] Successful Always Review opens review; successful Review When Needed and Paste Immediately deliver directly.
+- [x] Enhancement failure reviews raw for Always Review and Review When Needed, and directly pastes raw with a warning for Paste Immediately.
+- [x] Direct delivery validates the captured PID and compatible focused-element identity.
+- [x] Destination mismatch or an unposted paste command opens the same payload in retryable review.
+- [x] History and metrics are persisted once before either route is actionable.
+- [x] Paste posts exactly once and auto-send happens only after a successful paste post.
 
 ### HR2-03 — Session override and confirmation
 

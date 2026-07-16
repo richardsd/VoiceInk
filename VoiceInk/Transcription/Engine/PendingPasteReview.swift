@@ -1,9 +1,10 @@
 import Foundation
 
-struct PendingPasteReview: Identifiable, Equatable {
+struct PendingPasteReview: Identifiable {
     static let defaultLifetime: TimeInterval = 120
 
     let id: UUID
+    let transcriptionID: UUID
     let rawText: String
     let finalText: String
     let payload: PreparedPastePayload
@@ -13,6 +14,9 @@ struct PendingPasteReview: Identifiable, Equatable {
     let connectionLabel: String?
     let modelLabel: String?
     let enhancementWarning: String?
+    let output: OutputRuntimeConfiguration
+    let enhancementConfiguration: EnhancementRuntimeConfiguration?
+    let frozenContext: RecordingContextSnapshot?
     let destination: PasteReviewDestinationSnapshot?
     let expiresAt: Date
 
@@ -22,6 +26,7 @@ struct PendingPasteReview: Identifiable, Equatable {
 
     init(
         id: UUID = UUID(),
+        transcriptionID: UUID = UUID(),
         rawText: String,
         finalText: String,
         payload: PreparedPastePayload,
@@ -31,10 +36,19 @@ struct PendingPasteReview: Identifiable, Equatable {
         connectionLabel: String? = nil,
         modelLabel: String? = nil,
         enhancementWarning: String? = nil,
+        output: OutputRuntimeConfiguration = OutputRuntimeConfiguration(
+            mode: nil,
+            outputMode: .paste,
+            autoSendKey: .none,
+            customCommand: nil
+        ),
+        enhancementConfiguration: EnhancementRuntimeConfiguration? = nil,
+        frozenContext: RecordingContextSnapshot? = nil,
         destination: PasteReviewDestinationSnapshot? = nil,
         expiresAt: Date = Date().addingTimeInterval(defaultLifetime)
     ) {
         self.id = id
+        self.transcriptionID = transcriptionID
         self.rawText = rawText
         self.finalText = finalText
         self.payload = payload
@@ -44,6 +58,9 @@ struct PendingPasteReview: Identifiable, Equatable {
         self.connectionLabel = connectionLabel
         self.modelLabel = modelLabel
         self.enhancementWarning = enhancementWarning
+        self.output = output
+        self.enhancementConfiguration = enhancementConfiguration
+        self.frozenContext = frozenContext
         self.destination = destination
         self.expiresAt = expiresAt
     }
@@ -51,6 +68,7 @@ struct PendingPasteReview: Identifiable, Equatable {
     func withDestination(_ destination: PasteReviewDestinationSnapshot?) -> PendingPasteReview {
         PendingPasteReview(
             id: id,
+            transcriptionID: transcriptionID,
             rawText: rawText,
             finalText: finalText,
             payload: payload,
@@ -60,6 +78,9 @@ struct PendingPasteReview: Identifiable, Equatable {
             connectionLabel: connectionLabel,
             modelLabel: modelLabel,
             enhancementWarning: enhancementWarning,
+            output: output,
+            enhancementConfiguration: enhancementConfiguration,
+            frozenContext: frozenContext,
             destination: destination,
             expiresAt: expiresAt
         )

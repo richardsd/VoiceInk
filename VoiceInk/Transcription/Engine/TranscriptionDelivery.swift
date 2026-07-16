@@ -19,9 +19,11 @@ final class TranscriptionDelivery {
         let responseError: String?
         let usedRawEnhancementFallback: Bool
         let isAssistantFollowUp: Bool
-        /// Immutable pipeline decision proving History was completed before a
-        /// keyboard-actionable review can be staged.
-        let allowsPasteReview: Bool
+        /// Immutable pipeline decision proving History was completed before
+        /// either direct Halo delivery or a review becomes actionable.
+        let usesHaloDelivery: Bool
+        let haloSessionOverride: HaloSessionDeliveryOverride?
+        let frozenContext: RecordingContextSnapshot?
     }
 
     struct Actions {
@@ -30,7 +32,7 @@ final class TranscriptionDelivery {
         let sendFollowUp: (String, Transcription) async -> Void
         let showResponse: (String, String?) async -> Void
         let failResponse: (String) async -> Void
-        let stagePasteReview: (PendingPasteReview) -> Bool
+        let handleHaloPaste: (PendingPasteReview, HaloDeliveryRoute) async -> Bool
 
         init(
             setState: @escaping (RecordingState) -> Void,
@@ -38,14 +40,14 @@ final class TranscriptionDelivery {
             sendFollowUp: @escaping (String, Transcription) async -> Void,
             showResponse: @escaping (String, String?) async -> Void,
             failResponse: @escaping (String) async -> Void,
-            stagePasteReview: @escaping (PendingPasteReview) -> Bool = { _ in false }
+            handleHaloPaste: @escaping (PendingPasteReview, HaloDeliveryRoute) async -> Bool = { _, _ in false }
         ) {
             self.setState = setState
             self.dismiss = dismiss
             self.sendFollowUp = sendFollowUp
             self.showResponse = showResponse
             self.failResponse = failResponse
-            self.stagePasteReview = stagePasteReview
+            self.handleHaloPaste = handleHaloPaste
         }
     }
 
@@ -75,14 +77,21 @@ final class TranscriptionDelivery {
         if let text = request.text {
             let payload = pasteDeliveryService.prepare(text: text, output: request.output)
 
-            if request.output.outputMode == .paste, request.allowsPasteReview {
+            if request.output.outputMode == .paste, request.usesHaloDelivery {
                 let review = makePendingReview(
                     request: request,
                     text: text,
                     payload: payload
                 )
-                if actions.stagePasteReview(review) {
-                    pasteDeliveryService.notifyReviewReady()
+                let route = HaloDeliveryDecisionResolver.route(
+                    for: HaloDeliveryDecisionContext(
+                        policy: request.output.haloDeliveryPolicy,
+                        enhancementOutcome: request.usedRawEnhancementFallback ? .rawFallback : .succeeded,
+                        sessionOverride: request.haloSessionOverride,
+                        destinationState: .unresolved
+                    )
+                )
+                if await actions.handleHaloPaste(review, route) {
                     return
                 }
             }
@@ -231,6 +240,7 @@ final class TranscriptionDelivery {
         }
 
         return PendingPasteReview(
+            transcriptionID: request.transcription.id,
             rawText: request.transcription.text,
             finalText: text,
             payload: payload,
@@ -241,7 +251,10 @@ final class TranscriptionDelivery {
             modelLabel: request.transcription.aiEnhancementModelName ?? configuredModel,
             enhancementWarning: request.usedRawEnhancementFallback
                 ? String(localized: "Enhancement was unavailable. Review shows the raw transcript.")
-                : nil
+                : nil,
+            output: request.output,
+            enhancementConfiguration: request.enhancementConfiguration,
+            frozenContext: request.frozenContext
         )
     }
 }
