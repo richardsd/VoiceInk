@@ -1,0 +1,450 @@
+import Foundation
+
+enum HaloReviewLens: String, CaseIterable, Equatable, Identifiable, Sendable {
+    case final
+    case changes
+    case original
+
+    var id: Self { self }
+
+    var displayName: String {
+        switch self {
+        case .final:
+            return String(localized: "Final")
+        case .changes:
+            return String(localized: "Changes")
+        case .original:
+            return String(localized: "Original")
+        }
+    }
+}
+
+enum HaloRefinementAction: String, CaseIterable, Equatable, Identifiable, Sendable {
+    case shorter
+    case clearer
+    case friendlier
+    case formal
+    case fixTerms
+
+    var id: Self { self }
+
+    var displayName: String {
+        switch self {
+        case .shorter:
+            return String(localized: "Shorter")
+        case .clearer:
+            return String(localized: "Clearer")
+        case .friendlier:
+            return String(localized: "Friendlier")
+        case .formal:
+            return String(localized: "Formal")
+        case .fixTerms:
+            return String(localized: "Fix terms")
+        }
+    }
+
+    var instruction: String {
+        switch self {
+        case .shorter:
+            return "Make the result more concise while preserving every important fact and intent."
+        case .clearer:
+            return "Improve clarity, structure, and readability without changing the meaning."
+        case .friendlier:
+            return "Use a warmer, more approachable tone without adding claims or excessive enthusiasm."
+        case .formal:
+            return "Use a polished, professional tone while preserving the speaker's meaning."
+        case .fixTerms:
+            return "Correct names, acronyms, product terms, and technical vocabulary using the supplied context and vocabulary."
+        }
+    }
+}
+
+enum HaloReviewRevisionAction: Equatable, Sendable {
+    case initial
+    case refinement(HaloRefinementAction)
+}
+
+struct HaloReviewModelMetadata: Equatable, Sendable {
+    let modeName: String?
+    let modeEmoji: String?
+    let providerLabel: String?
+    let connectionLabel: String?
+    let modelLabel: String?
+}
+
+struct HaloReviewRevision: Identifiable, Equatable {
+    let id: UUID
+    let parentID: UUID?
+    let action: HaloReviewRevisionAction
+    let text: String
+    let metadata: HaloReviewModelMetadata
+    let payload: PreparedPastePayload
+
+    init(
+        id: UUID = UUID(),
+        parentID: UUID?,
+        action: HaloReviewRevisionAction,
+        text: String,
+        metadata: HaloReviewModelMetadata,
+        payload: PreparedPastePayload
+    ) {
+        self.id = id
+        self.parentID = parentID
+        self.action = action
+        self.text = text
+        self.metadata = metadata
+        self.payload = payload
+    }
+}
+
+/// Immutable recording- and provider-specific material retained only while a
+/// Halo review is alive. It deliberately stores IDs and prepared payload data;
+/// it never persists clipboard, selection, or screen context.
+struct HaloReviewSession {
+    let id: UUID
+    let transcriptionID: UUID
+    let rawText: String
+    let initialEnhancement: String?
+    let destination: PasteReviewDestinationSnapshot?
+    let metadata: HaloReviewModelMetadata
+    let enhancementWarning: String?
+    let output: OutputRuntimeConfiguration
+    let enhancementConfiguration: EnhancementRuntimeConfiguration?
+    let frozenContext: RecordingContextSnapshot?
+    let createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        transcriptionID: UUID,
+        rawText: String,
+        initialEnhancement: String?,
+        destination: PasteReviewDestinationSnapshot?,
+        metadata: HaloReviewModelMetadata,
+        enhancementWarning: String?,
+        output: OutputRuntimeConfiguration,
+        enhancementConfiguration: EnhancementRuntimeConfiguration?,
+        frozenContext: RecordingContextSnapshot?,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.transcriptionID = transcriptionID
+        self.rawText = rawText
+        self.initialEnhancement = initialEnhancement
+        self.destination = destination
+        self.metadata = metadata
+        self.enhancementWarning = enhancementWarning
+        self.output = output
+        self.enhancementConfiguration = enhancementConfiguration
+        self.frozenContext = frozenContext
+        self.createdAt = createdAt
+    }
+}
+
+struct HaloReviewRefinementRequest: Equatable, Sendable {
+    let id: UUID
+    let action: HaloRefinementAction
+    let baseRevisionID: UUID
+}
+
+enum HaloReviewNotice: Equatable, Sendable {
+    case copied
+    case copyFailed
+    case emptyRefinement
+    case unchangedRefinement
+    case refinementCancelled
+    case refinementFailed(String)
+    case revisionLimitReached
+
+    var message: String {
+        switch self {
+        case .copied:
+            return String(localized: "Copied exact paste text")
+        case .copyFailed:
+            return String(localized: "Could not copy the transcript")
+        case .emptyRefinement:
+            return String(localized: "The refinement returned no usable text.")
+        case .unchangedRefinement:
+            return String(localized: "The refinement did not change this version.")
+        case .refinementCancelled:
+            return String(localized: "Refinement cancelled")
+        case .refinementFailed(let message):
+            return message
+        case .revisionLimitReached:
+            return String(localized: "This review already has six versions.")
+        }
+    }
+}
+
+struct HaloReviewState {
+    static let maximumRevisionCount = 6
+    static let inactivityLifetime: TimeInterval = 120
+
+    let session: HaloReviewSession
+    private(set) var revisions: [HaloReviewRevision]
+    private(set) var selectedRevisionID: UUID
+    private(set) var lens: HaloReviewLens
+    private(set) var refinementRequest: HaloReviewRefinementRequest?
+    private(set) var notice: HaloReviewNotice?
+    private(set) var expiresAt: Date
+    private(set) var isExpired = false
+
+    init(
+        session: HaloReviewSession,
+        initialRevision: HaloReviewRevision,
+        now: Date = Date()
+    ) {
+        self.session = session
+        revisions = [initialRevision]
+        selectedRevisionID = initialRevision.id
+        lens = .final
+        refinementRequest = nil
+        notice = nil
+        expiresAt = now.addingTimeInterval(Self.inactivityLifetime)
+    }
+
+    var selectedRevision: HaloReviewRevision? {
+        revisions.first { $0.id == selectedRevisionID }
+    }
+
+    var selectedRevisionIndex: Int? {
+        revisions.firstIndex { $0.id == selectedRevisionID }
+    }
+
+    var parentRevision: HaloReviewRevision? {
+        guard let parentID = selectedRevision?.parentID else { return nil }
+        return revisions.first { $0.id == parentID }
+    }
+
+    var comparisonBaseText: String {
+        parentRevision?.text ?? session.rawText
+    }
+
+    var canRefine: Bool {
+        !isExpired && refinementRequest == nil && revisions.count < Self.maximumRevisionCount
+    }
+
+    var isRefining: Bool { refinementRequest != nil }
+
+    func secondsRemaining(at date: Date = Date()) -> Int {
+        if isRefining {
+            return max(1, Int(ceil(expiresAt.timeIntervalSince(date))))
+        }
+        return max(0, Int(ceil(expiresAt.timeIntervalSince(date))))
+    }
+
+    mutating func touch(at date: Date = Date()) {
+        guard !isExpired, !isRefining else { return }
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+    }
+
+    mutating func setNotice(_ notice: HaloReviewNotice?, at date: Date = Date()) {
+        self.notice = notice
+        touch(at: date)
+    }
+
+    mutating func selectLens(_ lens: HaloReviewLens, at date: Date = Date()) {
+        guard !isExpired else { return }
+        self.lens = lens
+        touch(at: date)
+    }
+
+    @discardableResult
+    mutating func selectRevision(id: UUID, at date: Date = Date()) -> Bool {
+        guard !isExpired, !isRefining, revisions.contains(where: { $0.id == id }) else {
+            return false
+        }
+        selectedRevisionID = id
+        notice = nil
+        touch(at: date)
+        return true
+    }
+
+    @discardableResult
+    mutating func moveRevision(by offset: Int, at date: Date = Date()) -> Bool {
+        guard let selectedRevisionIndex else { return false }
+        let target = selectedRevisionIndex + offset
+        guard revisions.indices.contains(target) else { return false }
+        return selectRevision(id: revisions[target].id, at: date)
+    }
+
+    @discardableResult
+    mutating func beginRefinement(
+        action: HaloRefinementAction,
+        requestID: UUID = UUID(),
+        at date: Date = Date()
+    ) -> HaloReviewRefinementRequest? {
+        guard !isExpired, refinementRequest == nil, let selectedRevision else { return nil }
+        guard revisions.count < Self.maximumRevisionCount else {
+            notice = .revisionLimitReached
+            touch(at: date)
+            return nil
+        }
+
+        // Freeze the remaining lifetime while the request runs. Completion or
+        // failure grants a fresh inactivity window.
+        expiresAt = max(expiresAt, date.addingTimeInterval(1))
+        let request = HaloReviewRefinementRequest(
+            id: requestID,
+            action: action,
+            baseRevisionID: selectedRevision.id
+        )
+        refinementRequest = request
+        notice = nil
+        return request
+    }
+
+    enum CompletionResult: Equatable {
+        case appended
+        case empty
+        case unchanged
+        case stale
+        case limitReached
+    }
+
+    @discardableResult
+    mutating func completeRefinement(
+        requestID: UUID,
+        revision: HaloReviewRevision,
+        at date: Date = Date()
+    ) -> CompletionResult {
+        guard let request = refinementRequest,
+            request.id == requestID,
+            request.baseRevisionID == revision.parentID,
+            let base = revisions.first(where: { $0.id == request.baseRevisionID })
+        else {
+            return .stale
+        }
+
+        refinementRequest = nil
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+
+        let trimmed = revision.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            notice = .emptyRefinement
+            return .empty
+        }
+        guard revision.text != base.text else {
+            notice = .unchangedRefinement
+            return .unchanged
+        }
+        guard revisions.count < Self.maximumRevisionCount else {
+            notice = .revisionLimitReached
+            return .limitReached
+        }
+
+        revisions.append(revision)
+        selectedRevisionID = revision.id
+        lens = .changes
+        notice = nil
+        return .appended
+    }
+
+    @discardableResult
+    mutating func finishRefinementFailure(
+        requestID: UUID,
+        notice: HaloReviewNotice,
+        at date: Date = Date()
+    ) -> Bool {
+        guard refinementRequest?.id == requestID else { return false }
+        refinementRequest = nil
+        self.notice = notice
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+        return true
+    }
+
+    @discardableResult
+    mutating func cancelRefinement(at date: Date = Date()) -> Bool {
+        guard refinementRequest != nil else { return false }
+        refinementRequest = nil
+        notice = .refinementCancelled
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+        return true
+    }
+
+    @discardableResult
+    mutating func expireIfNeeded(at date: Date = Date()) -> Bool {
+        guard !isExpired, !isRefining, date >= expiresAt else { return false }
+        isExpired = true
+        return true
+    }
+}
+
+enum HaloReviewReducerAction: Equatable {
+    case selectLens(HaloReviewLens, at: Date)
+    case selectRevision(UUID, at: Date)
+    case moveRevision(Int, at: Date)
+    case copied(succeeded: Bool, at: Date)
+    case beginRefinement(HaloRefinementAction, requestID: UUID, at: Date)
+    case completeRefinement(requestID: UUID, revision: HaloReviewRevision, at: Date)
+    case failRefinement(requestID: UUID, notice: HaloReviewNotice, at: Date)
+    case cancelRefinement(at: Date)
+    case timeout(at: Date)
+    case touch(at: Date)
+}
+
+enum HaloReviewReducerEffect: Equatable {
+    case none
+    case refinementStarted(HaloReviewRefinementRequest)
+    case revisionAppended(UUID)
+    case expired
+    case ignored
+}
+
+enum HaloReviewReducer {
+    @discardableResult
+    static func reduce(
+        state: inout HaloReviewState,
+        action: HaloReviewReducerAction
+    ) -> HaloReviewReducerEffect {
+        switch action {
+        case .selectLens(let lens, let date):
+            state.selectLens(lens, at: date)
+            return .none
+
+        case .selectRevision(let id, let date):
+            return state.selectRevision(id: id, at: date) ? .none : .ignored
+
+        case .moveRevision(let offset, let date):
+            return state.moveRevision(by: offset, at: date) ? .none : .ignored
+
+        case .copied(let succeeded, let date):
+            state.setNotice(succeeded ? .copied : .copyFailed, at: date)
+            return .none
+
+        case .beginRefinement(let refinement, let requestID, let date):
+            guard let request = state.beginRefinement(
+                action: refinement,
+                requestID: requestID,
+                at: date
+            ) else {
+                return .ignored
+            }
+            return .refinementStarted(request)
+
+        case .completeRefinement(let requestID, let revision, let date):
+            let result = state.completeRefinement(
+                requestID: requestID,
+                revision: revision,
+                at: date
+            )
+            return result == .appended ? .revisionAppended(revision.id) : .ignored
+
+        case .failRefinement(let requestID, let notice, let date):
+            return state.finishRefinementFailure(
+                requestID: requestID,
+                notice: notice,
+                at: date
+            ) ? .none : .ignored
+
+        case .cancelRefinement(let date):
+            return state.cancelRefinement(at: date) ? .none : .ignored
+
+        case .timeout(let date):
+            return state.expireIfNeeded(at: date) ? .expired : .ignored
+
+        case .touch(let date):
+            state.touch(at: date)
+            return .none
+        }
+    }
+}

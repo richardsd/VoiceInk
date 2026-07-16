@@ -96,6 +96,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     @Published var shouldCancelRecording = false
     @Published var partialTranscript: String = ""
     @Published private(set) var pendingPasteReview: PendingPasteReview?
+    @Published private(set) var haloReviewState: HaloReviewState?
     @Published private(set) var pasteReviewFeedback: PasteReviewFeedback?
     @Published private(set) var pasteReviewSecondsRemaining: Int?
     @Published private(set) var haloSessionDeliveryOverride: HaloSessionDeliveryOverride?
@@ -787,15 +788,46 @@ class VoiceInkEngine: NSObject, ObservableObject {
         }
 
         pendingPasteReview = review
+        haloReviewState = makeHaloReviewState(from: review)
         pasteReviewFeedback = feedback
         recordingState = .reviewing
         recorderUIManager?.presentPasteReview(review)
-        schedulePasteReviewExpiration(for: review)
+        schedulePasteReviewInactivity(for: review.id)
         if notifyReady {
             pasteDeliveryService.notifyReviewReady()
         }
         announcePasteReviewReady()
         return true
+    }
+
+    private func makeHaloReviewState(from review: PendingPasteReview) -> HaloReviewState {
+        let metadata = HaloReviewModelMetadata(
+            modeName: review.modeName,
+            modeEmoji: review.modeEmoji,
+            providerLabel: review.providerLabel,
+            connectionLabel: review.connectionLabel,
+            modelLabel: review.modelLabel
+        )
+        let session = HaloReviewSession(
+            id: review.id,
+            transcriptionID: review.transcriptionID,
+            rawText: review.rawText,
+            initialEnhancement: review.enhancementWarning == nil ? review.finalText : nil,
+            destination: review.destination,
+            metadata: metadata,
+            enhancementWarning: review.enhancementWarning,
+            output: review.output,
+            enhancementConfiguration: review.enhancementConfiguration,
+            frozenContext: review.frozenContext
+        )
+        let revision = HaloReviewRevision(
+            parentID: nil,
+            action: .initial,
+            text: review.finalText,
+            metadata: metadata,
+            payload: review.payload
+        )
+        return HaloReviewState(session: session, initialRevision: revision)
     }
 
     private func deliverHaloDirect(_ review: PendingPasteReview) async -> Bool {
@@ -866,7 +898,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
             return
         }
 
-        guard !review.isExpired() else {
+        guard haloReviewState?.isExpired != true,
+            (haloReviewState?.secondsRemaining() ?? 1) > 0
+        else {
             await cancelPendingPasteReview()
             return
         }
@@ -901,8 +935,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         isResolvingPasteReview = true
         recordingState = .busy
 
+        let payload = haloReviewState?.selectedRevision?.payload ?? review.payload
         let outcome = await pasteDeliveryService.deliver(
-            review.payload,
+            payload,
             dismiss: {
                 recoveryPresenter.hidePasteReviewForDelivery()
             },
@@ -919,7 +954,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         case .commandNotPosted:
             guard pendingPasteReview?.id == review.id else { return }
 
-            guard !review.isExpired() else {
+            guard haloReviewState?.isExpired != true,
+                (haloReviewState?.secondsRemaining() ?? 0) > 0
+            else {
                 _ = pasteReviewResolutionGate.completeDelivery(review.id)
                 clearPendingPasteReviewPresentation()
                 await recorderUIManager?.dismissRecorderPanel()
@@ -931,7 +968,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             isResolvingPasteReview = false
             recordingState = .reviewing
             pasteReviewFeedback = .pasteFailed
-            schedulePasteReviewExpiration(for: review)
+            resetPasteReviewInactivity()
             recoveryPresenter.restorePasteReviewAfterFailedDelivery()
         }
     }
@@ -948,9 +985,17 @@ class VoiceInkEngine: NSObject, ObservableObject {
             return
         }
 
-        pasteReviewFeedback = pasteDeliveryService.copy(review.payload)
-            ? .copied
-            : .copyFailed
+        let didCopy = pasteDeliveryService.copy(
+            haloReviewState?.selectedRevision?.payload ?? review.payload
+        )
+        pasteReviewFeedback = didCopy ? .copied : .copyFailed
+        mutateHaloReviewState { state in
+            _ = HaloReviewReducer.reduce(
+                state: &state,
+                action: .copied(succeeded: didCopy, at: Date())
+            )
+        }
+        schedulePasteReviewInactivity(for: review.id)
     }
 
     func cancelPendingPasteReview() async {
@@ -979,6 +1024,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     private func clearPendingPasteReviewPresentation() {
         pendingPasteReview = nil
+        haloReviewState = nil
         pendingPasteReviewExpirationTask?.cancel()
         pendingPasteReviewExpirationTask = nil
         pasteReviewSecondsRemaining = nil
@@ -993,19 +1039,53 @@ class VoiceInkEngine: NSObject, ObservableObject {
         isResolvingPasteReview = false
     }
 
-    private func schedulePasteReviewExpiration(for review: PendingPasteReview) {
+    private func mutateHaloReviewState(
+        _ mutation: (inout HaloReviewState) -> Void
+    ) {
+        guard var state = haloReviewState else { return }
+        mutation(&state)
+        haloReviewState = state
+    }
+
+    private func resetPasteReviewInactivity(at date: Date = Date()) {
+        guard let reviewID = pendingPasteReview?.id else { return }
+        mutateHaloReviewState { state in
+            _ = HaloReviewReducer.reduce(
+                state: &state,
+                action: .touch(at: date)
+            )
+        }
+        schedulePasteReviewInactivity(for: reviewID)
+    }
+
+    private func schedulePasteReviewInactivity(for reviewID: UUID) {
         pendingPasteReviewExpirationTask?.cancel()
-        pasteReviewSecondsRemaining = PasteReviewExpiration.secondsRemaining(until: review.expiresAt)
+        pasteReviewSecondsRemaining = haloReviewState?.secondsRemaining()
         pendingPasteReviewExpirationTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            while self.pendingPasteReview?.id == review.id,
-                self.pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id)
+            while self.pendingPasteReview?.id == reviewID,
+                self.pasteReviewResolutionGate.permitsNonDeliveryAction(for: reviewID)
             {
-                let seconds = PasteReviewExpiration.secondsRemaining(until: review.expiresAt)
+                guard var state = self.haloReviewState else { return }
+                if state.isRefining {
+                    do {
+                        try await Task.sleep(nanoseconds: 1_000_000_000)
+                    } catch {
+                        return
+                    }
+                    continue
+                }
+
+                let seconds = state.secondsRemaining()
                 self.pasteReviewSecondsRemaining = seconds
 
                 if seconds == 0 {
+                    _ = HaloReviewReducer.reduce(
+                        state: &state,
+                        action: .timeout(at: Date())
+                    )
+                    self.haloReviewState = state
                     await self.cancelPendingPasteReview()
                     return
                 }

@@ -22,8 +22,8 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 | HR2-01 | **Done** | HR2-00 | Mode policy persistence, defaults, runtime configuration, and Mode UI |
 | HR2-02 | **Done** | HR2-01 | Decision resolver, destination-safe direct delivery, raw-fallback policy, and recovery review |
 | HR2-03 | **Done** | HR2-02 | Session override shortcut, status chips, and Pasted confirmation pulse |
-| HR2-04 | **In Progress** | HR2-01 | Review session, revision, reducer, and inactivity-lifecycle foundation |
-| HR2-05 | Ready | HR2-02, HR2-04 | `finalizedText`, delivery finalization, History consumers, and CSV export |
+| HR2-04 | **Done** | HR2-01 | Review session, revision, reducer, and inactivity-lifecycle foundation |
+| HR2-05 | **In Progress** | HR2-02, HR2-04 | `finalizedText`, delivery finalization, History consumers, and CSV export |
 | HR2-06 | Ready | HR2-04 | Pure grouped word-diff engine and accessible representation |
 | HR2-07 | Ready | HR2-06 | Final/Changes/Original UI, lens shortcuts, revision navigation, and panel sizing |
 | HR2-08 | Ready | HR2-04 | Refinement protocol, prompt builder, provider/auth reuse, cancellation, and mocks |
@@ -67,12 +67,12 @@ Status values are **Ready**, **In Progress**, **Blocked**, and **Done**. Update 
 
 ### HR2-04 — Review foundation
 
-- [ ] Immutable session and revision types snapshot destination, context, metadata, payload, and initial result.
-- [ ] The pure reducer handles lens selection, revision selection, refinement lifecycle, timeout, and stale responses.
-- [ ] The resolution gate remains the authoritative exactly-once delivery gate.
-- [ ] Reviews contain at most six revisions and never evict an existing revision.
-- [ ] A two-minute inactivity timer resets on qualifying interactions and pauses during refinement.
-- [ ] Cancellation, style changes, reset, and shutdown clear frozen in-memory context and cancel work.
+- [x] Immutable session and revision types snapshot destination, context, metadata, payload, and initial result.
+- [x] The pure reducer handles lens selection, revision selection, refinement lifecycle, timeout, and stale responses.
+- [x] The resolution gate remains the authoritative exactly-once delivery gate.
+- [x] Reviews contain at most six revisions and never evict an existing revision.
+- [x] A two-minute inactivity timer resets on qualifying interactions and pauses during refinement.
+- [x] Cancellation, style changes, reset, and shutdown clear frozen in-memory context and cancel work.
 
 ### HR2-05 — Finalized History
 
