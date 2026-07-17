@@ -14,6 +14,7 @@ struct PendingPasteReview: Identifiable {
     let connectionLabel: String?
     let modelLabel: String?
     let enhancementWarning: String?
+    let deliveryReviewReason: String?
     let output: OutputRuntimeConfiguration
     let enhancementConfiguration: EnhancementRuntimeConfiguration?
     let frozenContext: RecordingContextSnapshot?
@@ -36,6 +37,7 @@ struct PendingPasteReview: Identifiable {
         connectionLabel: String? = nil,
         modelLabel: String? = nil,
         enhancementWarning: String? = nil,
+        deliveryReviewReason: String? = nil,
         output: OutputRuntimeConfiguration = OutputRuntimeConfiguration(
             mode: nil,
             outputMode: .paste,
@@ -58,6 +60,7 @@ struct PendingPasteReview: Identifiable {
         self.connectionLabel = connectionLabel
         self.modelLabel = modelLabel
         self.enhancementWarning = enhancementWarning
+        self.deliveryReviewReason = deliveryReviewReason
         self.output = output
         self.enhancementConfiguration = enhancementConfiguration
         self.frozenContext = frozenContext
@@ -78,6 +81,7 @@ struct PendingPasteReview: Identifiable {
             connectionLabel: connectionLabel,
             modelLabel: modelLabel,
             enhancementWarning: enhancementWarning,
+            deliveryReviewReason: deliveryReviewReason,
             output: output,
             enhancementConfiguration: enhancementConfiguration,
             frozenContext: frozenContext,
@@ -96,6 +100,13 @@ enum PasteReviewFeedback: Equatable, Sendable {
 
     var allowsRetry: Bool {
         self == .pasteFailed
+    }
+
+    var allowsRefocus: Bool {
+        if case .destinationChanged = self {
+            return true
+        }
+        return false
     }
 
     var message: String {

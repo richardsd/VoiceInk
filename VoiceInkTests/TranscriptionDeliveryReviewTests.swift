@@ -93,6 +93,87 @@ struct TranscriptionDeliveryReviewTests {
         #expect(service.reviewReadyCount == 0)
     }
 
+    @MainActor
+    @Test func reviewWhenNeededRoutesSafeAndRiskySuccessfulResults() async {
+        let service = SpyPasteDeliveryService()
+        let delivery = TranscriptionDelivery(pasteDeliveryService: service)
+        var routes: [HaloDeliveryRoute] = []
+        var reviewReasons: [String?] = []
+        let sharedActions = TranscriptionDelivery.Actions(
+            setState: { _ in },
+            dismiss: {},
+            sendFollowUp: { _, _ in },
+            showResponse: { _, _ in },
+            failResponse: { _ in },
+            handleHaloPaste: { review, route in
+                routes.append(route)
+                reviewReasons.append(review.deliveryReviewReason)
+                return true
+            }
+        )
+
+        await delivery.deliver(
+            .init(
+                transcription: completedTranscription(text: "hello world this is a test"),
+                text: "Hello, world. This is a test.",
+                output: output(.paste, haloDeliveryPolicy: .reviewWhenNeeded),
+                enhancementConfiguration: nil,
+                responseConfig: nil,
+                responseError: nil,
+                usedRawEnhancementFallback: false,
+                isAssistantFollowUp: false,
+                usesHaloDelivery: true,
+                haloSessionOverride: nil,
+                frozenContext: nil
+            ),
+            actions: sharedActions
+        )
+        await delivery.deliver(
+            .init(
+                transcription: completedTranscription(text: "Send this now"),
+                text: "Send this now.",
+                output: output(
+                    .paste,
+                    autoSendKey: .enter,
+                    haloDeliveryPolicy: .reviewWhenNeeded
+                ),
+                enhancementConfiguration: nil,
+                responseConfig: nil,
+                responseError: nil,
+                usedRawEnhancementFallback: false,
+                isAssistantFollowUp: false,
+                usesHaloDelivery: true,
+                haloSessionOverride: nil,
+                frozenContext: nil
+            ),
+            actions: sharedActions
+        )
+        await delivery.deliver(
+            .init(
+                transcription: completedTranscription(
+                    text: "alpha beta gamma delta epsilon zeta eta theta"
+                ),
+                text: "one two three four five six seven eight",
+                output: output(.paste, haloDeliveryPolicy: .reviewWhenNeeded),
+                enhancementConfiguration: nil,
+                responseConfig: nil,
+                responseError: nil,
+                usedRawEnhancementFallback: false,
+                isAssistantFollowUp: false,
+                usesHaloDelivery: true,
+                haloSessionOverride: nil,
+                frozenContext: nil
+            ),
+            actions: sharedActions
+        )
+
+        #expect(routes == [.direct, .review, .review])
+        #expect(reviewReasons[0] == nil)
+        #expect(reviewReasons[1]?.contains("send immediately") == true)
+        #expect(reviewReasons[2]?.contains("rewritten substantially") == true)
+        #expect(service.deliveredPayloads.isEmpty)
+    }
+
     @Test func reviewExpirationUsesTheSnapshottedDeadline() {
         let deadline = Date(timeIntervalSince1970: 1_000)
         let review = PendingPasteReview(
@@ -350,13 +431,23 @@ struct TranscriptionDeliveryReviewTests {
 
     private func output(
         _ mode: ModeOutputMode,
-        autoSendKey: AutoSendKey = .none
+        autoSendKey: AutoSendKey = .none,
+        haloDeliveryPolicy: HaloDeliveryPolicy = .alwaysReview
     ) -> OutputRuntimeConfiguration {
         OutputRuntimeConfiguration(
             mode: nil,
             outputMode: mode,
+            haloDeliveryPolicy: haloDeliveryPolicy,
             autoSendKey: autoSendKey,
             customCommand: nil
+        )
+    }
+
+    private func completedTranscription(text: String) -> Transcription {
+        Transcription(
+            text: text,
+            duration: 1,
+            transcriptionStatus: .completed
         )
     }
 }

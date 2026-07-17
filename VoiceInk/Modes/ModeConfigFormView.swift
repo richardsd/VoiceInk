@@ -739,6 +739,15 @@ struct ModeConfigFormView: View {
                     }
                 }
 
+                if draft.haloDeliveryPolicy == .reviewWhenNeeded {
+                    Text(
+                        "Light cleanup pastes directly. Halo pauses for auto-send, unavailable enhancement, empty output, or a substantial rewrite."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
                 Picker(selection: $draft.autoSendKey) {
                     ForEach(AutoSendKey.allCases, id: \.self) { key in
                         Text(key.displayName).tag(key)

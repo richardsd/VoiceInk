@@ -51,6 +51,7 @@ struct HaloReviewPresentation: Equatable, Sendable {
     let rawText: String
     let finalText: String
     let enhancementWarning: String?
+    let deliveryReviewReason: String?
 
     var showsRawText: Bool {
         let raw = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -88,18 +89,23 @@ private struct HaloReviewPresentationSnapshot: Equatable, Sendable {
     let selectedRevisionAction: HaloReviewRevisionAction
     let canRefine: Bool
     let isRefining: Bool
+    let isEditingManually: Bool
+    let manualEditText: String?
+    let canUseOriginal: Bool
+    let canBeginManualEdit: Bool
     let activeRefinementAction: HaloRefinementAction?
     let hasReachedRevisionLimit: Bool
     let noticeMessage: String?
     let noticeTone: HaloReviewNoticeTone?
     let enhancementWarning: String?
+    let deliveryReviewReason: String?
 
     var canMovePrevious: Bool {
-        !isRefining && selectedRevisionIndex > 0
+        !isRefining && !isEditingManually && selectedRevisionIndex > 0
     }
 
     var canMoveNext: Bool {
-        !isRefining && selectedRevisionIndex + 1 < revisionCount
+        !isRefining && !isEditingManually && selectedRevisionIndex + 1 < revisionCount
     }
 
     var viewportIdentity: HaloReviewViewportIdentity {
@@ -135,6 +141,7 @@ final class HaloPresentationModel: ObservableObject {
     @Published private(set) var reviewFeedback: PasteReviewFeedback?
     @Published private(set) var reviewSecondsRemaining: Int?
     @Published private(set) var isReviewDelivering = false
+    @Published private(set) var isReviewRefocusing = false
     @Published private(set) var deliveryOverride: HaloSessionDeliveryOverride?
     @Published private(set) var diffResult: HaloReviewDiffResult?
     @Published private(set) var isComputingDiff = false
@@ -209,6 +216,22 @@ final class HaloPresentationModel: ObservableObject {
         reviewSnapshot?.activeRefinementAction
     }
 
+    var isEditingManually: Bool {
+        reviewSnapshot?.isEditingManually ?? false
+    }
+
+    var manualEditText: String {
+        reviewSnapshot?.manualEditText ?? selectedRevisionText
+    }
+
+    var canUseOriginal: Bool {
+        reviewSnapshot?.canUseOriginal ?? false
+    }
+
+    var canBeginManualEdit: Bool {
+        reviewSnapshot?.canBeginManualEdit ?? false
+    }
+
     var hasReachedRevisionLimit: Bool {
         reviewSnapshot?.hasReachedRevisionLimit ?? false
     }
@@ -257,7 +280,8 @@ final class HaloPresentationModel: ObservableObject {
         providerLabel: String?,
         connectionLabel: String?,
         modelLabel: String?,
-        enhancementWarning: String?
+        enhancementWarning: String?,
+        deliveryReviewReason: String? = nil
     ) {
         metadata.modeName = modeName ?? metadata.modeName
         metadata.providerLabel = providerLabel ?? metadata.providerLabel
@@ -266,7 +290,8 @@ final class HaloPresentationModel: ObservableObject {
         review = HaloReviewPresentation(
             rawText: rawText,
             finalText: finalText,
-            enhancementWarning: enhancementWarning
+            enhancementWarning: enhancementWarning,
+            deliveryReviewReason: deliveryReviewReason
         )
         phase = .reviewing
     }
@@ -298,11 +323,24 @@ final class HaloPresentationModel: ObservableObject {
             selectedRevisionAction: selectedRevision.action,
             canRefine: state.canRefine && state.session.enhancementConfiguration != nil,
             isRefining: state.isRefining,
+            isEditingManually: state.isEditingManually,
+            manualEditText: state.manualEdit?.text,
+            canUseOriginal: !state.isExpired
+                && !state.isRefining
+                && !state.isEditingManually
+                && selectedRevision.text != state.session.rawText
+                && (state.revisions.contains(where: { $0.action == .original })
+                    || state.revisions.count < HaloReviewState.maximumRevisionCount),
+            canBeginManualEdit: !state.isExpired
+                && !state.isRefining
+                && !state.isEditingManually
+                && state.revisions.count < HaloReviewState.maximumRevisionCount,
             activeRefinementAction: state.refinementRequest?.action,
             hasReachedRevisionLimit: hasReachedRevisionLimit,
             noticeMessage: notice.message,
             noticeTone: notice.tone,
-            enhancementWarning: state.session.enhancementWarning
+            enhancementWarning: state.session.enhancementWarning,
+            deliveryReviewReason: state.session.deliveryReviewReason
         )
 
         if reviewSnapshot != snapshot {
@@ -312,7 +350,8 @@ final class HaloPresentationModel: ObservableObject {
         let updatedReview = HaloReviewPresentation(
             rawText: snapshot.originalText,
             finalText: snapshot.selectedRevisionText,
-            enhancementWarning: snapshot.enhancementWarning
+            enhancementWarning: snapshot.enhancementWarning,
+            deliveryReviewReason: snapshot.deliveryReviewReason
         )
         if review != updatedReview {
             review = updatedReview
@@ -334,6 +373,11 @@ final class HaloPresentationModel: ObservableObject {
         reviewFeedback = nil
         reviewSecondsRemaining = nil
         isReviewDelivering = false
+        isReviewRefocusing = false
+    }
+
+    func updateFocusRecovery(isRefocusing: Bool) {
+        isReviewRefocusing = isRefocusing
     }
 
     func updateReviewStatus(
@@ -354,6 +398,7 @@ final class HaloPresentationModel: ObservableObject {
         reviewFeedback = nil
         reviewSecondsRemaining = nil
         isReviewDelivering = false
+        isReviewRefocusing = false
         deliveryOverride = nil
         reviewSnapshot = nil
     }
@@ -436,7 +481,8 @@ final class HaloPresentationModel: ObservableObject {
         hasReachedRevisionLimit: Bool
     ) -> (message: String?, tone: HaloReviewNoticeTone?) {
         switch notice {
-        case .emptyRefinement, .unchangedRefinement, .refinementCancelled:
+        case .emptyRefinement, .unchangedRefinement, .refinementCancelled,
+            .emptyManualEdit, .unchangedManualEdit:
             return (notice?.message, .neutral)
         case .refinementFailed, .revisionLimitReached:
             return (notice?.message, .warning)

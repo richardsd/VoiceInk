@@ -103,6 +103,24 @@ struct HaloFocusedDestinationSnapshot: Equatable, Sendable {
     let applicationName: String?
     let bundleIdentifier: String?
     let focusedElementIdentity: UInt?
+    /// A one-way, process-local hash of AXIdentifier plus structural AX context
+    /// when the destination exposes enough information to disambiguate it. Raw
+    /// Accessibility values are never retained, persisted, or logged.
+    let focusedElementStableIdentity: UInt64?
+
+    init(
+        processID: pid_t?,
+        applicationName: String?,
+        bundleIdentifier: String?,
+        focusedElementIdentity: UInt?,
+        focusedElementStableIdentity: UInt64? = nil
+    ) {
+        self.processID = processID
+        self.applicationName = applicationName
+        self.bundleIdentifier = bundleIdentifier
+        self.focusedElementIdentity = focusedElementIdentity
+        self.focusedElementStableIdentity = focusedElementStableIdentity
+    }
 }
 
 enum HaloDestinationSelection {
@@ -146,6 +164,7 @@ struct HaloCaretAnchor: Equatable, Sendable {
     /// only together with `destinationPID`, is never persisted, and avoids
     /// retaining an `AXUIElement` across the recording lifetime.
     let focusedElementIdentity: UInt?
+    let focusedElementStableIdentity: UInt64?
     let source: HaloCaretAnchorSource
     let accessibilityRect: CGRect?
     let appKitRect: CGRect?
@@ -164,6 +183,7 @@ struct HaloCaretAnchor: Equatable, Sendable {
         applicationName: String?,
         bundleIdentifier: String? = nil,
         focusedElementIdentity: UInt? = nil,
+        focusedElementStableIdentity: UInt64? = nil,
         source: HaloCaretAnchorSource,
         accessibilityRect: CGRect?,
         appKitRect: CGRect?,
@@ -173,6 +193,7 @@ struct HaloCaretAnchor: Equatable, Sendable {
         self.applicationName = applicationName
         self.bundleIdentifier = bundleIdentifier
         self.focusedElementIdentity = focusedElementIdentity
+        self.focusedElementStableIdentity = focusedElementStableIdentity
         self.source = source
         self.accessibilityRect = accessibilityRect
         self.appKitRect = appKitRect
@@ -726,7 +747,8 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
             processID: processID,
             applicationName: application?.localizedName,
             bundleIdentifier: application?.bundleIdentifier,
-            focusedElementIdentity: focusedElement.map(focusedElementToken)
+            focusedElementIdentity: focusedElement.map(focusedElementToken),
+            focusedElementStableIdentity: focusedElement.flatMap(focusedElementStableToken)
         )
     }
 
@@ -867,6 +889,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
                 applicationName: anchor.applicationName,
                 bundleIdentifier: anchor.bundleIdentifier,
                 focusedElementIdentity: anchor.focusedElementIdentity,
+                focusedElementStableIdentity: anchor.focusedElementStableIdentity,
                 source: anchor.source,
                 accessibilityRect: anchor.accessibilityRect,
                 appKitRect: nil,
@@ -886,6 +909,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
             applicationName: anchor.applicationName,
             bundleIdentifier: anchor.bundleIdentifier,
             focusedElementIdentity: anchor.focusedElementIdentity,
+            focusedElementStableIdentity: anchor.focusedElementStableIdentity,
             source: anchor.source,
             accessibilityRect: accessibilityRect,
             appKitRect: appKitRect,
@@ -927,6 +951,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
         }
 
         let focusedElementIdentity = focusedElement.map(focusedElementToken)
+        let focusedElementStableIdentity = focusedElement.flatMap(focusedElementStableToken)
         let runningApplication = NSRunningApplication(processIdentifier: destinationPID)
         var cachedTextElementFrame: CGRect?
         var didReadTextElementFrame = false
@@ -1029,6 +1054,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
                 applicationName: runningApplication?.localizedName ?? applicationName,
                 bundleIdentifier: runningApplication?.bundleIdentifier,
                 focusedElementIdentity: focusedElementIdentity,
+                focusedElementStableIdentity: focusedElementStableIdentity,
                 primaryScreen: primaryScreen,
                 screens: screens
             )
@@ -1039,6 +1065,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
             applicationName: runningApplication?.localizedName ?? applicationName,
             bundleIdentifier: runningApplication?.bundleIdentifier,
             focusedElementIdentity: focusedElementIdentity,
+            focusedElementStableIdentity: focusedElementStableIdentity,
             screens: screens,
             preferredScreenID: nil
         )
@@ -1070,6 +1097,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
             AXUIElementSetMessagingTimeout(focusedElement, Float(perCallTimeout))
         }
         let focusedElementIdentity = focusedElement.map(focusedElementToken)
+        let focusedElementStableIdentity = focusedElement.flatMap(focusedElementStableToken)
         let runningApplication = NSRunningApplication(processIdentifier: destinationPID)
 
         if let textElement = focusedElement.flatMap({
@@ -1090,6 +1118,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
                     applicationName: runningApplication?.localizedName ?? applicationName,
                     bundleIdentifier: runningApplication?.bundleIdentifier,
                     focusedElementIdentity: focusedElementIdentity,
+                    focusedElementStableIdentity: focusedElementStableIdentity,
                     primaryScreen: primaryScreen,
                     screens: screens
                 )
@@ -1112,6 +1141,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
                     applicationName: runningApplication?.localizedName ?? applicationName,
                     bundleIdentifier: runningApplication?.bundleIdentifier,
                     focusedElementIdentity: focusedElementIdentity,
+                    focusedElementStableIdentity: focusedElementStableIdentity,
                     primaryScreen: primaryScreen,
                     screens: screens
                 )
@@ -1123,6 +1153,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
             applicationName: runningApplication?.localizedName ?? applicationName,
             bundleIdentifier: runningApplication?.bundleIdentifier,
             focusedElementIdentity: focusedElementIdentity,
+            focusedElementStableIdentity: focusedElementStableIdentity,
             screens: screens,
             preferredScreenID: nil
         )
@@ -1200,6 +1231,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
         applicationName: String?,
         bundleIdentifier: String?,
         focusedElementIdentity: UInt?,
+        focusedElementStableIdentity: UInt64?,
         primaryScreen: HaloScreenGeometry,
         screens: [HaloScreenGeometry]
     ) -> HaloCaretAnchor {
@@ -1212,6 +1244,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
             applicationName: applicationName,
             bundleIdentifier: bundleIdentifier,
             focusedElementIdentity: focusedElementIdentity,
+            focusedElementStableIdentity: focusedElementStableIdentity,
             source: source,
             accessibilityRect: accessibilityRect,
             appKitRect: appKitRect,
@@ -1224,6 +1257,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
         applicationName: String?,
         bundleIdentifier: String? = nil,
         focusedElementIdentity: UInt? = nil,
+        focusedElementStableIdentity: UInt64? = nil,
         screens: [HaloScreenGeometry],
         preferredScreenID: String?
     ) -> HaloCaretAnchor {
@@ -1232,6 +1266,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
             applicationName: applicationName,
             bundleIdentifier: bundleIdentifier,
             focusedElementIdentity: focusedElementIdentity,
+            focusedElementStableIdentity: focusedElementStableIdentity,
             source: .screenFallback,
             accessibilityRect: nil,
             appKitRect: nil,
@@ -1258,6 +1293,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
             applicationName: anchor.applicationName,
             bundleIdentifier: anchor.bundleIdentifier,
             focusedElementIdentity: anchor.focusedElementIdentity,
+            focusedElementStableIdentity: anchor.focusedElementStableIdentity,
             source: anchor.source,
             accessibilityRect: anchor.accessibilityRect,
             appKitRect: anchor.appKitRect,
@@ -1291,6 +1327,7 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
             applicationName: anchor.applicationName,
             bundleIdentifier: anchor.bundleIdentifier,
             focusedElementIdentity: anchor.focusedElementIdentity,
+            focusedElementStableIdentity: anchor.focusedElementStableIdentity,
             source: anchor.source,
             accessibilityRect: accessibilityRect,
             appKitRect: appKitRect,
@@ -1416,6 +1453,98 @@ final class HaloCaretAnchorResolver: @unchecked Sendable {
 
     private static func focusedElementToken(_ element: AXUIElement) -> UInt {
         UInt(CFHash(element))
+    }
+
+    /// AXIdentifier is useful in web and Electron controls where AX proxy
+    /// objects may be recreated between recording and delivery. Identifier-only
+    /// matching is unsafe, however, because the same DOM identifier can recur in
+    /// another tab, document, or window in the same process. Build the token from
+    /// the field plus structural context, and decline a stable token when no
+    /// disambiguating context is available. All raw values remain inside this
+    /// function and are reduced to a one-way hash before leaving the AX lookup.
+    private static func focusedElementStableToken(_ element: AXUIElement) -> UInt64? {
+        guard let identifier = copyString(kAXIdentifierAttribute, from: element),
+            !identifier.isEmpty
+        else {
+            return nil
+        }
+
+        var components = [
+            "field-id", identifier,
+            "field-role", copyString(kAXRoleAttribute, from: element) ?? "",
+            "field-subrole", copyString(kAXSubroleAttribute, from: element) ?? "",
+        ]
+        var hasStructuralContext = false
+
+        func appendContext(_ label: String, _ value: String?) {
+            guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !value.isEmpty
+            else {
+                return
+            }
+            components.append(contentsOf: [label, value])
+            hasStructuralContext = true
+        }
+
+        appendContext("field-document", copyStableContextString(kAXDocumentAttribute, from: element))
+        appendContext("field-url", copyStableContextString(kAXURLAttribute, from: element))
+
+        if let window = copyElement(kAXWindowAttribute, from: element) {
+            appendContext("window-id", copyString(kAXIdentifierAttribute, from: window))
+            appendContext("window-document", copyStableContextString(kAXDocumentAttribute, from: window))
+            appendContext("window-url", copyStableContextString(kAXURLAttribute, from: window))
+        }
+
+        var ancestor = copyElement(kAXParentAttribute, from: element)
+        for depth in 0..<5 {
+            guard let current = ancestor else { break }
+            if let ancestorIdentifier = copyString(kAXIdentifierAttribute, from: current),
+                !ancestorIdentifier.isEmpty
+            {
+                appendContext("ancestor-\(depth)-id", ancestorIdentifier)
+                components.append(contentsOf: [
+                    "ancestor-\(depth)-role",
+                    copyString(kAXRoleAttribute, from: current) ?? "",
+                    "ancestor-\(depth)-subrole",
+                    copyString(kAXSubroleAttribute, from: current) ?? "",
+                ])
+                break
+            }
+            ancestor = copyElement(kAXParentAttribute, from: current)
+        }
+
+        guard hasStructuralContext else { return nil }
+
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for component in components {
+            for byte in component.utf8 {
+                hash ^= UInt64(byte)
+                hash &*= 1_099_511_628_211
+            }
+            // An explicit separator prevents ambiguous component boundaries.
+            hash ^= 0xFF
+            hash &*= 1_099_511_628_211
+        }
+        return hash
+    }
+
+    private static func copyStableContextString(
+        _ attribute: String,
+        from element: AXUIElement
+    ) -> String? {
+        var rawValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &rawValue) == .success,
+            let rawValue
+        else {
+            return nil
+        }
+        if let string = rawValue as? String {
+            return string
+        }
+        if let url = rawValue as? URL {
+            return url.absoluteString
+        }
+        return nil
     }
 
     private static func copyPoint(_ attribute: String, from element: AXUIElement) -> CGPoint? {

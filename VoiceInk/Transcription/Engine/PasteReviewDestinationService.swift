@@ -3,17 +3,39 @@ import Foundation
 
 typealias PasteReviewDestinationSnapshot = HaloFocusedDestinationSnapshot
 
+enum PasteReviewDestinationMismatchReason: Equatable, Sendable {
+    case processChanged
+    case stableElementChanged
+    case transientElementChanged
+    case elementIdentityUnavailable
+    case unknown
+}
+
 struct PasteReviewDestinationMismatch: Equatable, Sendable {
     let expectedApplicationName: String?
     let currentApplicationName: String?
+    let reason: PasteReviewDestinationMismatchReason
+
+    init(
+        expectedApplicationName: String?,
+        currentApplicationName: String?,
+        reason: PasteReviewDestinationMismatchReason = .unknown
+    ) {
+        self.expectedApplicationName = expectedApplicationName
+        self.currentApplicationName = currentApplicationName
+        self.reason = reason
+    }
 }
 
 enum PasteReviewDestinationValidation: Equatable, Sendable {
+    /// A stable Accessibility identifier still names the same focused field.
+    case stableElementMatch
+
     /// Both the destination process and focused Accessibility element still match.
     case focusedElementMatch
 
-    /// Accessibility did not expose one of the focused elements, but the original
-    /// destination process is still frontmost.
+    /// The original capture did not expose any focused-element identity, but
+    /// the original destination process is still frontmost.
     case processMatch
 
     /// No original process was available to validate. Delivery remains available
@@ -26,7 +48,7 @@ enum PasteReviewDestinationValidation: Equatable, Sendable {
 
     var permitsDelivery: Bool {
         switch self {
-        case .focusedElementMatch, .processMatch, .validationUnavailable:
+        case .stableElementMatch, .focusedElementMatch, .processMatch, .validationUnavailable:
             return true
         case .mismatch:
             return false
@@ -47,27 +69,60 @@ enum PasteReviewDestinationMatcher {
             return .mismatch(
                 PasteReviewDestinationMismatch(
                     expectedApplicationName: expected.applicationName,
-                    currentApplicationName: current.applicationName
+                    currentApplicationName: current.applicationName,
+                    reason: .processChanged
                 )
             )
         }
 
-        guard let expectedElement = expected.focusedElementIdentity,
-            let currentElement = current.focusedElementIdentity
-        else {
-            return .processMatch
+        if let expectedStableElement = expected.focusedElementStableIdentity,
+            let currentStableElement = current.focusedElementStableIdentity
+        {
+            guard expectedStableElement == currentStableElement else {
+                return .mismatch(
+                    PasteReviewDestinationMismatch(
+                        expectedApplicationName: expected.applicationName,
+                        currentApplicationName: current.applicationName,
+                        reason: .stableElementChanged
+                    )
+                )
+            }
+            return .stableElementMatch
         }
 
-        guard expectedElement == currentElement else {
+        if let expectedElement = expected.focusedElementIdentity,
+            let currentElement = current.focusedElementIdentity
+        {
+            guard expectedElement == currentElement else {
+                return .mismatch(
+                    PasteReviewDestinationMismatch(
+                        expectedApplicationName: expected.applicationName,
+                        currentApplicationName: current.applicationName,
+                        reason: .transientElementChanged
+                    )
+                )
+            }
+            return .focusedElementMatch
+        }
+
+        // PID-only validation is compatible only when the original capture did
+        // not know a field identity. If VoiceInk captured a concrete field and
+        // the current AX lookup cannot identify it, delivery is indeterminate:
+        // block and let the user refocus or Copy instead of guessing within the
+        // same application process.
+        guard expected.focusedElementStableIdentity == nil,
+            expected.focusedElementIdentity == nil
+        else {
             return .mismatch(
                 PasteReviewDestinationMismatch(
                     expectedApplicationName: expected.applicationName,
-                    currentApplicationName: current.applicationName
+                    currentApplicationName: current.applicationName,
+                    reason: .elementIdentityUnavailable
                 )
             )
         }
 
-        return .focusedElementMatch
+        return .processMatch
     }
 }
 
@@ -85,6 +140,19 @@ protocol PasteReviewRecoveryPresenting: AnyObject {
 
     /// Restores the unchanged review after a paste command could not be posted.
     func restorePasteReviewAfterFailedDelivery()
+
+    /// Collapses the review to a mouse-transparent instruction so the user can
+    /// manually focus the original destination without Halo intercepting it.
+    func beginPasteReviewFocusRecovery()
+
+    /// Restores the unchanged review after destination focus was revalidated or
+    /// a recovery attempt failed. Neither operation consumes the review.
+    func endPasteReviewFocusRecovery()
+}
+
+extension PasteReviewRecoveryPresenting {
+    func beginPasteReviewFocusRecovery() {}
+    func endPasteReviewFocusRecovery() {}
 }
 
 @MainActor
@@ -141,16 +209,28 @@ final class PasteReviewDestinationService: PasteReviewDestinationServicing {
         // earlier destination through the PID-only fallback.
         let application = frontmostApplicationSnapshot()
 
-        // NSWorkspace still supplies a reliable frontmost PID when Accessibility
-        // is denied. Only merge the AX identity when both sources name that PID.
-        let current = PasteReviewDestinationSnapshot(
-            processID: application.processID,
-            applicationName: application.applicationName ?? focused.applicationName,
-            bundleIdentifier: application.bundleIdentifier ?? focused.bundleIdentifier,
-            focusedElementIdentity: focused.processID == application.processID
-                ? focused.focusedElementIdentity
-                : nil
-        )
+        // A nonactivating Halo editor can temporarily own system focus while the
+        // destination remains NSWorkspace's frontmost application. Treat a
+        // concrete AX process disagreement as a known mismatch; only use the
+        // frontmost PID fallback when Accessibility returned no focused app.
+        let current: PasteReviewDestinationSnapshot
+        if let focusedPID = focused.processID,
+            focusedPID != application.processID
+        {
+            current = focused
+        } else {
+            current = PasteReviewDestinationSnapshot(
+                processID: application.processID,
+                applicationName: application.applicationName ?? focused.applicationName,
+                bundleIdentifier: application.bundleIdentifier ?? focused.bundleIdentifier,
+                focusedElementIdentity: focused.processID == application.processID
+                    ? focused.focusedElementIdentity
+                    : nil,
+                focusedElementStableIdentity: focused.processID == application.processID
+                    ? focused.focusedElementStableIdentity
+                    : nil
+            )
+        }
 
         return PasteReviewDestinationMatcher.validate(expected: expected, current: current)
     }

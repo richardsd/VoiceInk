@@ -164,6 +164,47 @@ private final class SuspendedEngineDestinationService: PasteReviewDestinationSer
 }
 
 @MainActor
+private final class SequencedEngineDestinationService: PasteReviewDestinationServicing {
+    private var validations: [PasteReviewDestinationValidation]
+
+    init(_ validations: [PasteReviewDestinationValidation]) {
+        self.validations = validations
+    }
+
+    func frontmostApplicationSnapshot() -> PasteReviewDestinationSnapshot {
+        PasteReviewDestinationSnapshot(
+            processID: 42,
+            applicationName: "Destination",
+            bundleIdentifier: "com.example.destination",
+            focusedElementIdentity: 100
+        )
+    }
+
+    func validate(
+        _ expected: PasteReviewDestinationSnapshot
+    ) async -> PasteReviewDestinationValidation {
+        validations.isEmpty ? .processMatch : validations.removeFirst()
+    }
+}
+
+@MainActor
+private final class EngineOutcomeRecorder: HaloOutcomeRecording {
+    private(set) var counts: [HaloOutcomeMetric: Int] = [:]
+
+    func record(_ metric: HaloOutcomeMetric) {
+        counts[metric, default: 0] += 1
+    }
+
+    func snapshot() -> HaloOutcomeMetricsSnapshot {
+        HaloOutcomeMetricsSnapshot(counts: counts)
+    }
+
+    func reset() {
+        counts = [:]
+    }
+}
+
+@MainActor
 private final class EngineHaloPresenter: RecorderPanelPresenting, PasteReviewRecoveryPresenting {
     var isRecorderPanelVisible = true
     var isHaloPanelActive = true
@@ -171,6 +212,8 @@ private final class EngineHaloPresenter: RecorderPanelPresenting, PasteReviewRec
     private(set) var presentedReviewCount = 0
     private(set) var hiddenForDeliveryCount = 0
     private(set) var clearedReviewCount = 0
+    private(set) var focusRecoveryBeginCount = 0
+    private(set) var focusRecoveryEndCount = 0
 
     func dismissRecorderPanel() async {
         isRecorderPanelVisible = false
@@ -195,6 +238,14 @@ private final class EngineHaloPresenter: RecorderPanelPresenting, PasteReviewRec
     }
 
     func restorePasteReviewAfterFailedDelivery() {}
+
+    func beginPasteReviewFocusRecovery() {
+        focusRecoveryBeginCount += 1
+    }
+
+    func endPasteReviewFocusRecovery() {
+        focusRecoveryEndCount += 1
+    }
 }
 
 @MainActor
@@ -208,6 +259,26 @@ struct HaloReviewRefinementEngineTests {
         #expect(harness.engine.pendingPasteReview != nil)
         #expect(harness.engine.recordingState == .reviewing)
         #expect(harness.paste.deliveryPayloads.isEmpty)
+        #expect(harness.outcomes.counts[.reviewShown] == 1)
+
+        await harness.engine.cancelPendingPasteReview()
+        #expect(harness.outcomes.counts[.cancel] == 1)
+    }
+
+    @Test func riskReviewReasonPreservesSuccessfulInitialEnhancement() async throws {
+        let harness = try makeHarness(refinement: EngineRefinementService(behaviors: []))
+        let reason = "Review suggested because the result was rewritten substantially."
+        #expect(
+            harness.engine.stagePasteReview(
+                makeReview(deliveryReviewReason: reason),
+                notifyReady: false
+            )
+        )
+
+        #expect(harness.engine.haloReviewState?.session.initialEnhancement == "Initial version")
+        #expect(harness.engine.haloReviewState?.session.enhancementWarning == nil)
+        #expect(harness.engine.haloReviewState?.session.deliveryReviewReason == reason)
+        #expect(harness.outcomes.counts[.reviewShown] == 1)
 
         await harness.engine.cancelPendingPasteReview()
     }
@@ -247,6 +318,7 @@ struct HaloReviewRefinementEngineTests {
         // Refinement must not replay the stop/review-ready sound.
         #expect(harness.paste.reviewReadyCount == 1)
         #expect(transcription.finalizedText == nil)
+        #expect(harness.outcomes.counts[.refinementSuccess] == 1)
 
         let request = try #require(refinement.requests.first)
         #expect(request.rawTranscript == "Raw words")
@@ -262,6 +334,7 @@ struct HaloReviewRefinementEngineTests {
         #expect(transcription.finalizedText == "Clear final version")
         #expect(harness.engine.pendingPasteReview == nil)
         #expect(harness.engine.haloReviewState == nil)
+        #expect(harness.outcomes.counts[.apply] == 1)
 
         let metrics = try harness.container.mainContext.fetch(FetchDescriptor<SessionMetric>())
         #expect(metrics.isEmpty)
@@ -412,6 +485,7 @@ struct HaloReviewRefinementEngineTests {
         }
         #expect(!message.contains("secret-state"))
         #expect(failureState.secondsRemaining() > 115)
+        #expect(harness.outcomes.counts[.refinementFailure] == 3)
     }
 
     @Test func mismatchedServiceResultIDsFailExpectedRequestWithoutStrandingReview() async throws {
@@ -436,6 +510,7 @@ struct HaloReviewRefinementEngineTests {
 
         #expect(refinement.requests.count == 2)
         #expect(harness.paste.prepareCalls.isEmpty)
+        #expect(harness.outcomes.counts[.refinementFailure] == 2)
         await harness.engine.cancelPendingPasteReview()
     }
 
@@ -452,6 +527,128 @@ struct HaloReviewRefinementEngineTests {
         #expect(harness.engine.pendingPasteReview == nil)
         #expect(harness.engine.haloReviewState == nil)
         #expect(harness.paste.deliveryPayloads.isEmpty)
+        #expect(harness.outcomes.counts[.cancel] == 1)
+        #expect(harness.outcomes.counts[.refinementFailure, default: 0] == 0)
+    }
+
+    @Test func mismatchRefocusRevalidatesBeforeASeparateApply() async throws {
+        let mismatch = PasteReviewDestinationValidation.mismatch(
+            PasteReviewDestinationMismatch(
+                expectedApplicationName: "Destination",
+                currentApplicationName: "Destination",
+                reason: .stableElementChanged
+            )
+        )
+        let destination = SequencedEngineDestinationService([
+            mismatch,
+            .stableElementMatch,
+            .stableElementMatch,
+        ])
+        let harness = try makeHarness(
+            refinement: EngineRefinementService(behaviors: []),
+            destinationService: destination
+        )
+        #expect(
+            harness.engine.stagePasteReview(
+                makeReview(destination: destination.frontmostApplicationSnapshot()),
+                notifyReady: false
+            )
+        )
+
+        await harness.engine.approvePendingPasteReview()
+        #expect(harness.engine.pasteReviewFeedback?.allowsRefocus == true)
+        #expect(harness.paste.deliveryPayloads.isEmpty)
+        #expect(harness.outcomes.counts[.destinationMismatch] == 1)
+
+        #expect(harness.engine.beginPasteReviewFocusRecovery())
+        #expect(harness.engine.isPasteReviewRefocusing)
+        #expect(harness.presenter.focusRecoveryBeginCount == 1)
+
+        // Return while collapsed only revalidates and restores the review.
+        await harness.engine.approvePendingPasteReview()
+        #expect(!harness.engine.isPasteReviewRefocusing)
+        #expect(harness.engine.pasteReviewFeedback == nil)
+        #expect(harness.presenter.focusRecoveryEndCount == 1)
+        #expect(harness.paste.deliveryPayloads.isEmpty)
+        #expect(harness.outcomes.counts[.destinationMismatch] == 1)
+
+        await harness.engine.approvePendingPasteReview()
+        #expect(harness.paste.deliveryPayloads.count == 1)
+        #expect(harness.engine.pendingPasteReview == nil)
+        #expect(harness.outcomes.counts[.apply] == 1)
+    }
+
+    @Test func copyAndExpiryRecordIndependentOutcomes() async throws {
+        let harness = try makeHarness(refinement: EngineRefinementService(behaviors: []))
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+
+        harness.engine.copyPendingPasteReview()
+        #expect(harness.paste.copyCount == 1)
+        #expect(harness.outcomes.counts[.copy] == 1)
+
+        await harness.engine.cancelPendingPasteReview(reason: .expiry)
+        #expect(harness.engine.pendingPasteReview == nil)
+        #expect(harness.outcomes.counts[.expiry] == 1)
+        #expect(harness.outcomes.counts[.cancel, default: 0] == 0)
+    }
+
+    @Test func failedPasteRetryRecordsRetryAndOnlySuccessfulApply() async throws {
+        let harness = try makeHarness(refinement: EngineRefinementService(behaviors: []))
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+        harness.paste.outcome = .commandNotPosted
+
+        await harness.engine.approvePendingPasteReview()
+        #expect(harness.engine.pasteReviewFeedback == .pasteFailed)
+        #expect(harness.engine.pendingPasteReview != nil)
+        #expect(harness.outcomes.counts[.apply, default: 0] == 0)
+
+        harness.paste.outcome = .commandPosted
+        await harness.engine.retryPendingPasteReview()
+
+        #expect(harness.engine.pendingPasteReview == nil)
+        #expect(harness.paste.deliveryPayloads.count == 2)
+        #expect(harness.outcomes.counts[.retry] == 1)
+        #expect(harness.outcomes.counts[.apply] == 1)
+    }
+
+    @Test func useOriginalAndManualEditPrepareExactImmutablePayloads() async throws {
+        let harness = try makeHarness(refinement: EngineRefinementService(behaviors: []))
+        let transcriptionID = UUID()
+        let transcription = Transcription(
+            text: "Raw words",
+            duration: 1,
+            enhancedText: "Initial version",
+            transcriptionStatus: .completed
+        )
+        transcription.id = transcriptionID
+        harness.container.mainContext.insert(transcription)
+        try harness.container.mainContext.save()
+        #expect(
+            harness.engine.stagePasteReview(
+                makeReview(transcriptionID: transcriptionID),
+                notifyReady: false
+            )
+        )
+
+        #expect(harness.engine.useOriginalHaloReview())
+        let original = try #require(harness.engine.haloReviewState?.selectedRevision)
+        #expect(original.action == .original)
+        #expect(original.text == "Raw words")
+        #expect(original.payload.pastedText == "licensed:Raw words ")
+
+        #expect(harness.engine.beginHaloManualEdit())
+        #expect(harness.engine.updateHaloManualEdit("Hand edited result"))
+        #expect(harness.engine.saveHaloManualEdit())
+        let edited = try #require(harness.engine.haloReviewState?.selectedRevision)
+        #expect(edited.action == .manualEdit)
+        #expect(edited.payload.pastedText == "licensed:Hand edited result ")
+        #expect(harness.outcomes.counts[.useOriginal] == 1)
+        #expect(harness.outcomes.counts[.manualEdit] == 1)
+
+        await harness.engine.approvePendingPasteReview()
+        #expect(harness.paste.deliveryPayloads == [edited.payload])
+        #expect(transcription.finalizedText == "Hand edited result")
+        #expect(harness.outcomes.counts[.apply] == 1)
     }
 
     private struct Harness {
@@ -459,6 +656,7 @@ struct HaloReviewRefinementEngineTests {
         let engine: VoiceInkEngine
         let paste: EnginePasteDeliveryService
         let presenter: EngineHaloPresenter
+        let outcomes: EngineOutcomeRecorder
     }
 
     private func makeHarness(
@@ -485,6 +683,7 @@ struct HaloReviewRefinementEngineTests {
         )
         let paste = EnginePasteDeliveryService()
         let presenter = EngineHaloPresenter()
+        let outcomes = EngineOutcomeRecorder()
         let engine = VoiceInkEngine(
             modelContext: container.mainContext,
             whisperModelManager: whisper,
@@ -492,20 +691,23 @@ struct HaloReviewRefinementEngineTests {
             enhancementService: nil,
             pasteDeliveryService: paste,
             pasteReviewDestinationService: destinationService ?? EngineDestinationService(),
-            haloRefinementService: refinement
+            haloRefinementService: refinement,
+            haloOutcomeRecorder: outcomes
         )
         engine.recorderUIManager = presenter
         return Harness(
             container: container,
             engine: engine,
             paste: paste,
-            presenter: presenter
+            presenter: presenter,
+            outcomes: outcomes
         )
     }
 
     private func makeReview(
         transcriptionID: UUID = UUID(),
-        destination: PasteReviewDestinationSnapshot? = nil
+        destination: PasteReviewDestinationSnapshot? = nil,
+        deliveryReviewReason: String? = nil
     ) -> PendingPasteReview {
         let prompt = CustomPrompt(
             title: "Voice Dictation",
@@ -543,6 +745,7 @@ struct HaloReviewRefinementEngineTests {
             providerLabel: "OpenAI",
             connectionLabel: "ChatGPT Subscription (OAuth)",
             modelLabel: "gpt-5.6-luna",
+            deliveryReviewReason: deliveryReviewReason,
             output: output,
             enhancementConfiguration: configuration,
             frozenContext: RecordingContextSnapshot(

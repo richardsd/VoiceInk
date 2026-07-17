@@ -17,6 +17,7 @@ enum HaloPanelMetrics {
     static let liveTranscript = CGSize(width: 360, height: 124)
     static let enhancing = CGSize(width: 320, height: 72)
     static let review = CGSize(width: 500, height: 380)
+    static let focusRecovery = CGSize(width: 380, height: 76)
     static let confirmation = CGSize(width: 132, height: 44)
     static let visualEffectInsets = VisualEffectInsets(
         top: 8,
@@ -93,7 +94,8 @@ final class HaloWindowManager {
             processID: capturedAnchor.destinationPID,
             applicationName: capturedAnchor.applicationName,
             bundleIdentifier: capturedAnchor.bundleIdentifier,
-            focusedElementIdentity: capturedAnchor.focusedElementIdentity
+            focusedElementIdentity: capturedAnchor.focusedElementIdentity,
+            focusedElementStableIdentity: capturedAnchor.focusedElementStableIdentity
         )
     }
 
@@ -224,6 +226,7 @@ final class HaloWindowManager {
 
     func hide(preservingSession: Bool = false) {
         isShowRequested = false
+        panel?.setManualEditing(false)
         panel?.endReviewInteraction()
         panel?.orderOut(nil)
 
@@ -244,6 +247,7 @@ final class HaloWindowManager {
         anchorResolutionTask = nil
         hasPartialTranscript = false
         isShowingPasteConfirmation = false
+        panel?.setManualEditing(false)
         panel?.endReviewInteraction()
         anchorSession.end()
         stablePlacementSide = nil
@@ -267,9 +271,11 @@ final class HaloWindowManager {
         providerLabel: String?,
         connectionLabel: String?,
         modelLabel: String?,
-        enhancementWarning: String?
+        enhancementWarning: String?,
+        deliveryReviewReason: String?
     ) {
         isShowingPasteConfirmation = false
+        presentation.updateFocusRecovery(isRefocusing: false)
         // Start in the safe, click-through awaiting-regions state before the
         // review view is materialized and its panel grows to final size.
         panel?.beginReviewInteraction()
@@ -280,7 +286,8 @@ final class HaloWindowManager {
             providerLabel: providerLabel,
             connectionLabel: connectionLabel,
             modelLabel: modelLabel,
-            enhancementWarning: enhancementWarning
+            enhancementWarning: enhancementWarning,
+            deliveryReviewReason: deliveryReviewReason
         )
         presentation.updateReviewStatus(
             feedback: engine.pasteReviewFeedback,
@@ -291,8 +298,29 @@ final class HaloWindowManager {
     }
 
     func clearReview() {
+        panel?.setManualEditing(false)
         panel?.endReviewInteraction()
+        presentation.updateFocusRecovery(isRefocusing: false)
         presentation.clearReview()
+    }
+
+    func beginFocusRecovery() {
+        guard presentation.phase == .reviewing else { return }
+        panel?.setManualEditing(false)
+        // Continue and Cancel must remain reachable even when the global
+        // keyboard event tap is unavailable. The panel stays nonactivating;
+        // only its visible surface absorbs clicks and its transparent margin
+        // continues to pass them through.
+        panel?.beginReviewInteraction()
+        presentation.updateFocusRecovery(isRefocusing: true)
+        resizeVisiblePanel(animated: true)
+    }
+
+    func endFocusRecovery() {
+        guard presentation.phase == .reviewing else { return }
+        presentation.updateFocusRecovery(isRefocusing: false)
+        panel?.beginReviewInteraction()
+        resizeVisiblePanel(animated: true)
     }
 
     func presentPasteConfirmation() {
@@ -333,6 +361,24 @@ final class HaloWindowManager {
                 Task { @MainActor in
                     await engine?.retryPendingPasteReview()
                 }
+            },
+            onRefocus: { [weak engine] in
+                _ = engine?.beginPasteReviewFocusRecovery()
+            },
+            onUseOriginal: { [weak engine] in
+                _ = engine?.useOriginalHaloReview()
+            },
+            onBeginManualEdit: { [weak engine] in
+                _ = engine?.beginHaloManualEdit()
+            },
+            onUpdateManualEdit: { [weak engine] text in
+                _ = engine?.updateHaloManualEdit(text)
+            },
+            onSaveManualEdit: { [weak engine] in
+                _ = engine?.saveHaloManualEdit()
+            },
+            onCancelManualEdit: { [weak engine] in
+                _ = engine?.cancelHaloManualEditIfActive()
             },
             onSelectReviewLens: { [weak engine] lens in
                 engine?.selectHaloReviewLens(lens)
@@ -390,6 +436,7 @@ final class HaloWindowManager {
             .sink { [weak self] reviewState in
                 guard let self else { return }
                 self.presentation.updateReviewState(reviewState)
+                self.panel?.setManualEditing(reviewState?.isEditingManually == true)
                 if reviewState != nil {
                     self.panel?.beginReviewInteraction()
                 }
@@ -505,6 +552,11 @@ final class HaloWindowManager {
     }
 
     private var panelSize: CGSize {
+        if presentation.phase == .reviewing,
+            presentation.isReviewRefocusing
+        {
+            return HaloPanelMetrics.focusRecovery
+        }
         let hasVisiblePartialTranscript = hasPartialTranscript
             && UserDefaults.standard.bool(forKey: RecorderDisplaySettingsKeys.showLiveTranscript)
         return HaloPanelMetrics.size(

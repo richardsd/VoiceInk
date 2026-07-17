@@ -182,6 +182,96 @@ struct HaloReviewStateTests {
         )
     }
 
+    @Test func useOriginalCreatesOneImmutableRevisionAndReusesIt() throws {
+        var state = makeState(raw: "Raw transcript", final: "Enhanced transcript")
+        let enhanced = try #require(state.selectedRevision)
+        let original = makeRevision(
+            text: "Raw transcript",
+            parentID: enhanced.id,
+            action: .original
+        )
+
+        #expect(
+            HaloReviewReducer.reduce(
+                state: &state,
+                action: .useOriginal(original, at: Date())
+            ) == .revisionAppended(original.id)
+        )
+        #expect(state.revisions.count == 2)
+        #expect(state.selectedRevision?.action == .original)
+        #expect(state.selectedRevision?.payload.pastedText == "Raw transcript")
+
+        _ = state.selectRevision(id: enhanced.id)
+        let duplicate = makeRevision(
+            text: "Raw transcript",
+            parentID: enhanced.id,
+            action: .original
+        )
+        _ = HaloReviewReducer.reduce(
+            state: &state,
+            action: .useOriginal(duplicate, at: Date())
+        )
+        #expect(state.revisions.count == 2)
+        #expect(state.selectedRevision?.id == original.id)
+    }
+
+    @Test func manualEditCreatesAReplacementRevisionWithoutMutatingItsParent() throws {
+        var state = makeState(raw: "Raw", final: "Initial")
+        let parent = try #require(state.selectedRevision)
+
+        #expect(
+            HaloReviewReducer.reduce(
+                state: &state,
+                action: .beginManualEdit(at: Date())
+            ) == .none
+        )
+        #expect(state.isEditingManually)
+        #expect(state.beginRefinement(action: .clearer) == nil)
+
+        _ = HaloReviewReducer.reduce(
+            state: &state,
+            action: .updateManualEdit("Edited final", at: Date())
+        )
+        let edited = makeRevision(
+            text: "Edited final",
+            parentID: parent.id,
+            action: .manualEdit
+        )
+        #expect(
+            HaloReviewReducer.reduce(
+                state: &state,
+                action: .completeManualEdit(edited, at: Date())
+            ) == .revisionAppended(edited.id)
+        )
+        #expect(state.revisions.count == 2)
+        #expect(state.revisions.first?.text == "Initial")
+        #expect(state.selectedRevision?.text == "Edited final")
+        #expect(state.selectedRevision?.action == .manualEdit)
+        #expect(!state.isEditingManually)
+    }
+
+    @Test func emptyUnchangedAndCancelledManualEditsCreateNoRevision() {
+        var state = makeState(raw: "Raw", final: "Initial")
+        _ = state.beginManualEdit()
+        let parentID = state.selectedRevisionID
+        let unchanged = makeRevision(
+            text: "Initial",
+            parentID: parentID,
+            action: .manualEdit
+        )
+        let didSaveUnchanged = state.completeManualEdit(revision: unchanged)
+        #expect(!didSaveUnchanged)
+        #expect(state.notice == .unchangedManualEdit)
+        #expect(state.revisions.count == 1)
+
+        _ = state.beginManualEdit()
+        _ = state.updateManualEdit("Temporary")
+        let didCancel = state.cancelManualEdit()
+        #expect(didCancel)
+        #expect(state.revisions.count == 1)
+        #expect(state.selectedRevisionID == parentID)
+    }
+
     private func makeState(
         raw: String,
         final: String,

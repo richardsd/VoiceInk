@@ -138,6 +138,20 @@ struct RecorderPanelShortcutTests {
         )
     }
 
+    @Test func manualEditingLeavesPlainReturnForMultilineTextAndKeepsCommandReturnSave() {
+        let shortcuts = RecorderPanelShortcutManager.pasteReviewShortcuts(
+            cancelShortcut: nil,
+            includePlainReturn: false
+        )
+
+        #expect(shortcuts[.recorderPanelApply] == nil)
+        #expect(
+            shortcuts[.recorderPanelToggleHaloDelivery]
+                == .key(keyCode: UInt16(kVK_Return), modifierFlags: [.command])
+        )
+        #expect(shortcuts[.recorderPanelEscape] != nil)
+    }
+
     @Test func configuredCancelWinsAReviewShortcutCollision() {
         let configuredCancel = Shortcut.key(
             keyCode: UInt16(kVK_ANSI_2),

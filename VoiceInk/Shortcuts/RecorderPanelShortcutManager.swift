@@ -5,6 +5,7 @@ import Foundation
 @MainActor
 protocol RecorderReviewShortcutControlling: AnyObject {
     func prepareForPasteReview() -> Bool
+    func refreshPasteReviewShortcuts()
     func finishPasteReview()
 }
 
@@ -163,7 +164,8 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
 
         if isHandlingPasteReview {
             shortcuts = Self.pasteReviewShortcuts(
-                cancelShortcut: ShortcutStore.shortcut(for: .cancelRecorder)
+                cancelShortcut: ShortcutStore.shortcut(for: .cancelRecorder),
+                includePlainReturn: !recorderUIManager.isHaloManualEditActive
             )
         } else {
             shortcuts = ShortcutStore.shortcuts(for: ShortcutAction.recorderPanelStoredActions)
@@ -248,18 +250,15 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
     /// Cancel shortcut wins any physical-key collision so one press can never
     /// both cancel and mutate or apply the pending review.
     nonisolated static func pasteReviewShortcuts(
-        cancelShortcut: Shortcut?
+        cancelShortcut: Shortcut?,
+        includePlainReturn: Bool = true
     ) -> [ShortcutAction: Shortcut] {
         var shortcuts: [ShortcutAction: Shortcut] = [:]
         if let cancelShortcut {
             shortcuts[.cancelRecorder] = cancelShortcut
         }
 
-        let builtInShortcuts: [(ShortcutAction, Shortcut)] = [
-            (
-                .recorderPanelApply,
-                .key(keyCode: UInt16(kVK_Return), modifierFlags: [])
-            ),
+        var builtInShortcuts: [(ShortcutAction, Shortcut)] = [
             (
                 .recorderPanelToggleHaloDelivery,
                 .key(keyCode: UInt16(kVK_Return), modifierFlags: [.command])
@@ -289,6 +288,15 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
                 .key(keyCode: UInt16(kVK_ANSI_RightBracket), modifierFlags: [.command])
             ),
         ]
+        if includePlainReturn {
+            builtInShortcuts.insert(
+                (
+                    .recorderPanelApply,
+                    .key(keyCode: UInt16(kVK_Return), modifierFlags: [])
+                ),
+                at: 0
+            )
+        }
 
         for (action, shortcut) in builtInShortcuts
         where cancelShortcut?.conflicts(with: shortcut) != true {
@@ -303,13 +311,21 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
         if isHandlingPasteReview {
             switch action {
             case .recorderPanelApply, .recorderPanelToggleHaloDelivery:
-                await recorderUIManager.approvePendingPasteReview()
+                if recorderUIManager.isHaloManualEditActive {
+                    // A multiline editor owns plain Return. Only Cmd-Return is
+                    // registered while editing and explicitly saves the draft.
+                    if action == .recorderPanelToggleHaloDelivery {
+                        _ = recorderUIManager.saveHaloManualEdit()
+                    }
+                } else {
+                    await recorderUIManager.approvePendingPasteReview()
+                }
             case .recorderPanelEscape, .cancelRecorder:
                 reviewLifecycle.recordKeyDown(action)
                 if Self.shouldCancelActiveRefinementFirst(
                     for: action,
                     configuredCancelShortcut: ShortcutStore.shortcut(for: .cancelRecorder)
-                ), recorderUIManager.cancelHaloRefinementIfActive() {
+                ), recorderUIManager.cancelHaloReviewTransientActionIfActive() {
                     return
                 }
                 await recorderUIManager.cancelPendingPasteReview()
@@ -359,6 +375,11 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
         }
 
         return true
+    }
+
+    func refreshPasteReviewShortcuts() {
+        guard isHandlingPasteReview else { return }
+        _ = refreshVisibleShortcuts()
     }
 
     func finishPasteReview() {

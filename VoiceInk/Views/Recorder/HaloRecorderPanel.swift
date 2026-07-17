@@ -1,23 +1,62 @@
 import AppKit
 
-enum HaloInteractionHitTester {
-    static func contains(_ point: CGPoint, in regions: [CGRect]) -> Bool {
-        regions.contains { $0.insetBy(dx: -1, dy: -1).contains(point) }
+struct HaloInteractionRegion: Equatable {
+    enum Shape: Equatable {
+        case rectangle
+        case roundedRectangle(cornerRadius: CGFloat)
     }
 
-    static func clipped(_ regions: [CGRect], to bounds: CGRect) -> [CGRect] {
+    let frame: CGRect
+    let shape: Shape
+
+    static func rectangle(_ frame: CGRect) -> Self {
+        Self(frame: frame, shape: .rectangle)
+    }
+
+    static func roundedRectangle(_ frame: CGRect, cornerRadius: CGFloat) -> Self {
+        Self(frame: frame, shape: .roundedRectangle(cornerRadius: cornerRadius))
+    }
+
+    func contains(_ point: CGPoint, tolerance: CGFloat = 1) -> Bool {
+        let expandedFrame = frame.insetBy(dx: -tolerance, dy: -tolerance)
+
+        switch shape {
+        case .rectangle:
+            return expandedFrame.contains(point)
+        case let .roundedRectangle(cornerRadius):
+            let expandedRadius = max(0, cornerRadius + tolerance)
+            return CGPath(
+                roundedRect: expandedFrame,
+                cornerWidth: expandedRadius,
+                cornerHeight: expandedRadius,
+                transform: nil
+            )
+            .contains(point)
+        }
+    }
+}
+
+enum HaloInteractionHitTester {
+    static func contains(_ point: CGPoint, in regions: [HaloInteractionRegion]) -> Bool {
+        regions.contains { $0.contains(point) }
+    }
+
+    static func clipped(
+        _ regions: [HaloInteractionRegion],
+        to bounds: CGRect
+    ) -> [HaloInteractionRegion] {
         regions.compactMap { region in
-            guard !region.isNull,
-                !region.isInfinite,
-                region.width > 0,
-                region.height > 0
+            guard !region.frame.isNull,
+                !region.frame.isInfinite,
+                region.frame.width > 0,
+                region.frame.height > 0
             else {
                 return nil
             }
 
-            let clipped = bounds.isEmpty ? region : region.intersection(bounds)
+            let clipped = bounds.isEmpty ? region.frame : region.frame.intersection(bounds)
             guard !clipped.isNull, clipped.width > 0, clipped.height > 0 else { return nil }
-            return clipped
+            return HaloInteractionRegion(frame: clipped, shape: region.shape)
         }
     }
 }
@@ -39,7 +78,7 @@ enum HaloPanelMouseTransparencyPolicy {
     static func ignoresMouseEvents(
         interactionState: HaloReviewInteractionState,
         pointer: CGPoint,
-        interactiveRegions: [CGRect]
+        interactiveRegions: [HaloInteractionRegion]
     ) -> Bool {
         switch interactionState {
         case .inactive, .awaitingRegions:
@@ -54,14 +93,17 @@ enum HaloPanelMouseTransparencyPolicy {
 
 /// A focus-preserving recorder surface. Keyboard input continues to go to the
 /// destination application; VoiceInk controls this panel through its global
-/// shortcut event tap instead of making the panel key.
+/// shortcut event tap. The sole explicit exception is user-invoked manual text
+/// editing, which temporarily permits key status and is followed by destination
+/// revalidation before delivery.
 final class HaloRecorderPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { allowsManualEditing }
     override var canBecomeMain: Bool { false }
 
+    private var allowsManualEditing = false
     private var interactionState: HaloReviewInteractionState = .inactive
-    private var interactiveRegions: [CGRect] = []
-    private var pendingInteractiveRegions: [CGRect] = []
+    private var interactiveRegions: [HaloInteractionRegion] = []
+    private var pendingInteractiveRegions: [HaloInteractionRegion] = []
     private var isReviewLayoutTransitioning = false
     private var localMouseMonitor: Any?
     private var globalMouseMonitor: Any?
@@ -133,9 +175,9 @@ final class HaloRecorderPanel: NSPanel {
         }
     }
 
-    /// Enables mouse handling only over regions reported by the SwiftUI review
-    /// surface. Everywhere else the nonactivating panel remains transparent so
-    /// the destination application keeps focus and receives the click.
+    /// Enables mouse handling across the visible SwiftUI review surface. The
+    /// panel remains transparent only in the visual-effect margin around that
+    /// surface, preserving destination focus when users click blank review UI.
     func beginReviewInteraction() {
         guard interactionState == .inactive else {
             refreshMouseTransparency()
@@ -174,7 +216,7 @@ final class HaloRecorderPanel: NSPanel {
         refreshMouseTransparency()
     }
 
-    func updateReviewInteractiveRegions(_ regions: [CGRect]) {
+    func updateReviewInteractiveRegions(_ regions: [HaloInteractionRegion]) {
         guard interactionState != .inactive else { return }
 
         let bounds = contentView?.bounds ?? .zero
@@ -194,6 +236,22 @@ final class HaloRecorderPanel: NSPanel {
         isReviewLayoutTransitioning = false
         stopMouseMonitors()
         ignoresMouseEvents = true
+    }
+
+    func setManualEditing(_ isEditing: Bool) {
+        guard allowsManualEditing != isEditing else { return }
+        allowsManualEditing = isEditing
+        becomesKeyOnlyIfNeeded = isEditing
+
+        if isEditing {
+            ignoresMouseEvents = false
+            orderFrontRegardless()
+            makeKey()
+        } else {
+            makeFirstResponder(nil)
+            resignKey()
+            refreshMouseTransparency()
+        }
     }
 
     private func refreshMouseTransparency() {
@@ -249,7 +307,7 @@ final class HaloRecorderPanel: NSPanel {
         contentView?.layoutSubtreeIfNeeded()
     }
 
-    private func applyInteractiveRegions(_ regions: [CGRect]) {
+    private func applyInteractiveRegions(_ regions: [HaloInteractionRegion]) {
         guard interactionState != .inactive,
             interactionState != .wholePanelFallback
         else {

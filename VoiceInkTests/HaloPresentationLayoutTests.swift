@@ -111,5 +111,6 @@ struct HaloPresentationLayoutTests {
         )
         #expect(HaloRefinementOrbitPolicy.rowHeight == 28)
         #expect(HaloPanelMetrics.review == CGSize(width: 500, height: 380))
+        #expect(HaloPanelMetrics.focusRecovery == CGSize(width: 380, height: 76))
     }
 }

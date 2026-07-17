@@ -78,18 +78,37 @@ final class TranscriptionDelivery {
             let payload = pasteDeliveryService.prepare(text: text, output: request.output)
 
             if request.output.outputMode == .paste, request.usesHaloDelivery {
-                let review = makePendingReview(
-                    request: request,
-                    text: text,
-                    payload: payload
-                )
+                let enhancementOutcome: HaloEnhancementOutcome = request.usedRawEnhancementFallback
+                    ? .rawFallback
+                    : .succeeded
+                let rawText = request.transcription.text
+                let autoSendEnabled = request.output.autoSendKey.isEnabled
+                let riskAssessment = await Task.detached(priority: .userInitiated) {
+                    HaloDeliveryRiskEvaluator.assess(
+                        rawText: rawText,
+                        finalText: text,
+                        autoSendEnabled: autoSendEnabled,
+                        enhancementOutcome: enhancementOutcome
+                    )
+                }.value
                 let route = HaloDeliveryDecisionResolver.route(
                     for: HaloDeliveryDecisionContext(
                         policy: request.output.haloDeliveryPolicy,
-                        enhancementOutcome: request.usedRawEnhancementFallback ? .rawFallback : .succeeded,
+                        enhancementOutcome: enhancementOutcome,
                         sessionOverride: request.haloSessionOverride,
-                        destinationState: .unresolved
+                        destinationState: .unresolved,
+                        riskAssessment: riskAssessment
                     )
+                )
+                let review = makePendingReview(
+                    request: request,
+                    text: text,
+                    payload: payload,
+                    deliveryReviewReason: request.output.haloDeliveryPolicy == .reviewWhenNeeded
+                        && request.haloSessionOverride == nil
+                        && route == .review
+                        ? riskAssessment.reviewMessage
+                        : nil
                 )
                 if await actions.handleHaloPaste(review, route) {
                     return
@@ -223,7 +242,8 @@ final class TranscriptionDelivery {
     private func makePendingReview(
         request: Request,
         text: String,
-        payload: PreparedPastePayload
+        payload: PreparedPastePayload,
+        deliveryReviewReason: String?
     ) -> PendingPasteReview {
         let mode = request.output.mode
         let provider = request.enhancementConfiguration?.provider
@@ -252,6 +272,7 @@ final class TranscriptionDelivery {
             enhancementWarning: request.usedRawEnhancementFallback
                 ? String(localized: "Enhancement was unavailable. Review shows the raw transcript.")
                 : nil,
+            deliveryReviewReason: deliveryReviewReason,
             output: request.output,
             enhancementConfiguration: request.enhancementConfiguration,
             frozenContext: request.frozenContext

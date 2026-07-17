@@ -22,15 +22,71 @@ struct PasteReviewSafetyTests {
             return
         }
         #expect(mismatch.expectedApplicationName == "TextEdit")
+        #expect(mismatch.reason == .transientElementChanged)
     }
 
-    @Test func destinationFallsBackToPIDWhenAccessibilityElementIsUnavailable() {
+    @Test func stableElementIdentitySurvivesRecreatedAccessibilityProxy() {
+        let expected = destination(
+            pid: 41,
+            app: "Browser",
+            element: 700,
+            stableElement: 9_001
+        )
+        let current = destination(
+            pid: 41,
+            app: "Browser",
+            element: 999,
+            stableElement: 9_001
+        )
+
+        #expect(
+            PasteReviewDestinationMatcher.validate(expected: expected, current: current)
+                == .stableElementMatch
+        )
+    }
+
+    @Test func changedStableElementBlocksEvenWhenTransientProxyMatches() {
+        let validation = PasteReviewDestinationMatcher.validate(
+            expected: destination(pid: 41, app: "Browser", element: 700, stableElement: 9_001),
+            current: destination(pid: 41, app: "Browser", element: 700, stableElement: 9_002)
+        )
+
+        guard case .mismatch(let mismatch) = validation else {
+            Issue.record("A changed stable field identity must block delivery")
+            return
+        }
+        #expect(mismatch.reason == .stableElementChanged)
+    }
+
+    @Test func knownOriginalFieldBlocksWhenCurrentElementIdentityIsUnavailable() {
         let expected = destination(pid: 41, app: "TextEdit", element: 700)
+        let current = destination(pid: 41, app: "TextEdit", element: nil)
+
+        let validation = PasteReviewDestinationMatcher.validate(expected: expected, current: current)
+        guard case .mismatch(let mismatch) = validation else {
+            Issue.record("An indeterminate current field must not downgrade to PID-only delivery")
+            return
+        }
+        #expect(mismatch.reason == .elementIdentityUnavailable)
+    }
+
+    @Test func originalPIDOnlyCaptureRetainsCompatibilityFallback() {
+        let expected = destination(pid: 41, app: "TextEdit", element: nil)
         let current = destination(pid: 41, app: "TextEdit", element: nil)
 
         #expect(
             PasteReviewDestinationMatcher.validate(expected: expected, current: current)
                 == .processMatch
+        )
+    }
+
+    @Test func transientIdentityCanSafelyMatchWhenStableIdentityIsTemporarilyUnavailable() {
+        let expected = destination(pid: 41, app: "Browser", element: 700, stableElement: 9_001)
+        let current = destination(pid: 41, app: "Browser", element: 700, stableElement: nil)
+
+        #expect(
+            PasteReviewDestinationMatcher.validate(expected: expected, current: current)
+                == .focusedElementMatch
         )
     }
 
@@ -46,6 +102,7 @@ struct PasteReviewSafetyTests {
         }
         #expect(mismatch.expectedApplicationName == "TextEdit")
         #expect(mismatch.currentApplicationName == "Mail")
+        #expect(mismatch.reason == .processChanged)
     }
 
     @Test func unavailableOriginalPIDPreservesAccessibilityDeniedCompatibility() {
@@ -129,13 +186,15 @@ struct PasteReviewSafetyTests {
     private func destination(
         pid: pid_t?,
         app: String?,
-        element: UInt?
+        element: UInt?,
+        stableElement: UInt64? = nil
     ) -> PasteReviewDestinationSnapshot {
         PasteReviewDestinationSnapshot(
             processID: pid,
             applicationName: app,
             bundleIdentifier: app.map { "test.\($0.lowercased())" },
-            focusedElementIdentity: element
+            focusedElementIdentity: element,
+            focusedElementStableIdentity: stableElement
         )
     }
 }

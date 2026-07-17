@@ -230,6 +230,32 @@ struct HaloPresentationModelTests {
         #expect(model.activeRefinementAction == nil)
     }
 
+    @Test func manualEditProjectionDisablesCompetingActionsAndTracksDraft() {
+        let model = HaloPresentationModel()
+        var state = makeState(raw: "Raw", final: "Enhanced")
+
+        let didBegin = state.beginManualEdit()
+        let didUpdate = state.updateManualEdit("Hand edited")
+        #expect(didBegin)
+        #expect(didUpdate)
+        model.updateReviewState(state)
+
+        #expect(model.isEditingManually)
+        #expect(model.manualEditText == "Hand edited")
+        #expect(!model.canRefine)
+        #expect(!model.canUseOriginal)
+        #expect(!model.canBeginManualEdit)
+        #expect(!model.canMovePrevious)
+        #expect(!model.canMoveNext)
+
+        let didCancel = state.cancelManualEdit()
+        #expect(didCancel)
+        model.updateReviewState(state)
+        #expect(!model.isEditingManually)
+        #expect(model.canUseOriginal)
+        #expect(model.canBeginManualEdit)
+    }
+
     private func waitUntil(
         attempts: Int = 200,
         condition: @escaping @MainActor () async -> Bool

@@ -62,6 +62,8 @@ enum HaloRefinementAction: String, CaseIterable, Equatable, Identifiable, Sendab
 enum HaloReviewRevisionAction: Equatable, Sendable {
     case initial
     case refinement(HaloRefinementAction)
+    case original
+    case manualEdit
 }
 
 struct HaloReviewModelMetadata: Equatable, Sendable {
@@ -108,6 +110,7 @@ struct HaloReviewSession {
     let destination: PasteReviewDestinationSnapshot?
     let metadata: HaloReviewModelMetadata
     let enhancementWarning: String?
+    let deliveryReviewReason: String?
     let output: OutputRuntimeConfiguration
     let enhancementConfiguration: EnhancementRuntimeConfiguration?
     let frozenContext: RecordingContextSnapshot?
@@ -121,6 +124,7 @@ struct HaloReviewSession {
         destination: PasteReviewDestinationSnapshot?,
         metadata: HaloReviewModelMetadata,
         enhancementWarning: String?,
+        deliveryReviewReason: String? = nil,
         output: OutputRuntimeConfiguration,
         enhancementConfiguration: EnhancementRuntimeConfiguration?,
         frozenContext: RecordingContextSnapshot?,
@@ -133,6 +137,7 @@ struct HaloReviewSession {
         self.destination = destination
         self.metadata = metadata
         self.enhancementWarning = enhancementWarning
+        self.deliveryReviewReason = deliveryReviewReason
         self.output = output
         self.enhancementConfiguration = enhancementConfiguration
         self.frozenContext = frozenContext
@@ -146,6 +151,11 @@ struct HaloReviewRefinementRequest: Equatable, Sendable {
     let baseRevisionID: UUID
 }
 
+struct HaloReviewManualEdit: Equatable, Sendable {
+    let baseRevisionID: UUID
+    var text: String
+}
+
 enum HaloReviewNotice: Equatable, Sendable {
     case copied
     case copyFailed
@@ -154,6 +164,8 @@ enum HaloReviewNotice: Equatable, Sendable {
     case refinementCancelled
     case refinementFailed(String)
     case revisionLimitReached
+    case emptyManualEdit
+    case unchangedManualEdit
 
     var message: String {
         switch self {
@@ -171,6 +183,10 @@ enum HaloReviewNotice: Equatable, Sendable {
             return message
         case .revisionLimitReached:
             return String(localized: "This review already has six versions.")
+        case .emptyManualEdit:
+            return String(localized: "Manual edits cannot be empty.")
+        case .unchangedManualEdit:
+            return String(localized: "The manual edit did not change this version.")
         }
     }
 }
@@ -184,6 +200,7 @@ struct HaloReviewState {
     private(set) var selectedRevisionID: UUID
     private(set) var lens: HaloReviewLens
     private(set) var refinementRequest: HaloReviewRefinementRequest?
+    private(set) var manualEdit: HaloReviewManualEdit?
     private(set) var notice: HaloReviewNotice?
     private(set) var expiresAt: Date
     private(set) var isExpired = false
@@ -198,6 +215,7 @@ struct HaloReviewState {
         selectedRevisionID = initialRevision.id
         lens = .final
         refinementRequest = nil
+        manualEdit = nil
         notice = nil
         expiresAt = now.addingTimeInterval(Self.inactivityLifetime)
     }
@@ -220,10 +238,12 @@ struct HaloReviewState {
     }
 
     var canRefine: Bool {
-        !isExpired && refinementRequest == nil && revisions.count < Self.maximumRevisionCount
+        !isExpired && refinementRequest == nil && manualEdit == nil
+            && revisions.count < Self.maximumRevisionCount
     }
 
     var isRefining: Bool { refinementRequest != nil }
+    var isEditingManually: Bool { manualEdit != nil }
 
     func secondsRemaining(at date: Date = Date()) -> Int {
         if isRefining {
@@ -250,7 +270,9 @@ struct HaloReviewState {
 
     @discardableResult
     mutating func selectRevision(id: UUID, at date: Date = Date()) -> Bool {
-        guard !isExpired, !isRefining, revisions.contains(where: { $0.id == id }) else {
+        guard !isExpired, !isRefining, !isEditingManually,
+            revisions.contains(where: { $0.id == id })
+        else {
             return false
         }
         selectedRevisionID = id
@@ -273,7 +295,11 @@ struct HaloReviewState {
         requestID: UUID = UUID(),
         at date: Date = Date()
     ) -> HaloReviewRefinementRequest? {
-        guard !isExpired, refinementRequest == nil, let selectedRevision else { return nil }
+        guard !isExpired, refinementRequest == nil, manualEdit == nil,
+            let selectedRevision
+        else {
+            return nil
+        }
         guard revisions.count < Self.maximumRevisionCount else {
             notice = .revisionLimitReached
             touch(at: date)
@@ -362,6 +388,114 @@ struct HaloReviewState {
     }
 
     @discardableResult
+    mutating func useOriginal(
+        revision: HaloReviewRevision,
+        at date: Date = Date()
+    ) -> Bool {
+        guard !isExpired, !isRefining, !isEditingManually else { return false }
+
+        if let existing = revisions.first(where: { $0.action == .original }) {
+            selectedRevisionID = existing.id
+            lens = .final
+            notice = nil
+            touch(at: date)
+            return true
+        }
+
+        guard revisions.count < Self.maximumRevisionCount,
+            !revision.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            notice = .revisionLimitReached
+            touch(at: date)
+            return false
+        }
+
+        revisions.append(revision)
+        selectedRevisionID = revision.id
+        lens = .final
+        notice = nil
+        touch(at: date)
+        return true
+    }
+
+    @discardableResult
+    mutating func beginManualEdit(at date: Date = Date()) -> Bool {
+        guard !isExpired, !isRefining, manualEdit == nil,
+            revisions.count < Self.maximumRevisionCount,
+            let selectedRevision
+        else {
+            if revisions.count >= Self.maximumRevisionCount {
+                notice = .revisionLimitReached
+                touch(at: date)
+            }
+            return false
+        }
+
+        manualEdit = HaloReviewManualEdit(
+            baseRevisionID: selectedRevision.id,
+            text: selectedRevision.text
+        )
+        notice = nil
+        touch(at: date)
+        return true
+    }
+
+    @discardableResult
+    mutating func updateManualEdit(_ text: String, at date: Date = Date()) -> Bool {
+        guard !isExpired, manualEdit != nil else { return false }
+        manualEdit?.text = text
+        touch(at: date)
+        return true
+    }
+
+    @discardableResult
+    mutating func completeManualEdit(
+        revision: HaloReviewRevision,
+        at date: Date = Date()
+    ) -> Bool {
+        guard let edit = manualEdit,
+            edit.baseRevisionID == revision.parentID,
+            let base = revisions.first(where: { $0.id == edit.baseRevisionID })
+        else {
+            return false
+        }
+
+        manualEdit = nil
+        let trimmed = revision.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            notice = .emptyManualEdit
+            touch(at: date)
+            return false
+        }
+        guard revision.text != base.text else {
+            notice = .unchangedManualEdit
+            touch(at: date)
+            return false
+        }
+        guard revisions.count < Self.maximumRevisionCount else {
+            notice = .revisionLimitReached
+            touch(at: date)
+            return false
+        }
+
+        revisions.append(revision)
+        selectedRevisionID = revision.id
+        lens = .final
+        notice = nil
+        touch(at: date)
+        return true
+    }
+
+    @discardableResult
+    mutating func cancelManualEdit(at date: Date = Date()) -> Bool {
+        guard manualEdit != nil else { return false }
+        manualEdit = nil
+        notice = nil
+        touch(at: date)
+        return true
+    }
+
+    @discardableResult
     mutating func expireIfNeeded(at date: Date = Date()) -> Bool {
         guard !isExpired, !isRefining, date >= expiresAt else { return false }
         isExpired = true
@@ -378,6 +512,11 @@ enum HaloReviewReducerAction: Equatable {
     case completeRefinement(requestID: UUID, revision: HaloReviewRevision, at: Date)
     case failRefinement(requestID: UUID, notice: HaloReviewNotice, at: Date)
     case cancelRefinement(at: Date)
+    case useOriginal(HaloReviewRevision, at: Date)
+    case beginManualEdit(at: Date)
+    case updateManualEdit(String, at: Date)
+    case completeManualEdit(HaloReviewRevision, at: Date)
+    case cancelManualEdit(at: Date)
     case timeout(at: Date)
     case touch(at: Date)
 }
@@ -438,6 +577,25 @@ enum HaloReviewReducer {
 
         case .cancelRefinement(let date):
             return state.cancelRefinement(at: date) ? .none : .ignored
+
+        case .useOriginal(let revision, let date):
+            return state.useOriginal(revision: revision, at: date)
+                ? .revisionAppended(state.selectedRevisionID)
+                : .ignored
+
+        case .beginManualEdit(let date):
+            return state.beginManualEdit(at: date) ? .none : .ignored
+
+        case .updateManualEdit(let text, let date):
+            return state.updateManualEdit(text, at: date) ? .none : .ignored
+
+        case .completeManualEdit(let revision, let date):
+            return state.completeManualEdit(revision: revision, at: date)
+                ? .revisionAppended(revision.id)
+                : .ignored
+
+        case .cancelManualEdit(let date):
+            return state.cancelManualEdit(at: date) ? .none : .ignored
 
         case .timeout(let date):
             return state.expireIfNeeded(at: date) ? .expired : .ignored

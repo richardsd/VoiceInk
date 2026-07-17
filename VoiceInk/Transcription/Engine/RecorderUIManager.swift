@@ -43,10 +43,15 @@ protocol RecorderPanelPresenting: AnyObject {
     func dismissRecorderPanel() async
     func reconcileRecorderPanel(for outputMode: ModeOutputMode)
     func preparePasteReviewKeyboardHandling() -> Bool
+    func refreshPasteReviewKeyboardHandling()
     func finishPasteReviewKeyboardHandling()
     func presentPasteReview(_ review: PendingPasteReview)
     func clearPasteReview()
     func showHaloPasteConfirmation()
+}
+
+extension RecorderPanelPresenting {
+    func refreshPasteReviewKeyboardHandling() {}
 }
 
 @MainActor
@@ -93,6 +98,10 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     var isHaloPanelActive: Bool {
         isRecorderPanelVisible && effectiveRecorderPanelStyle == .halo
+    }
+
+    var isHaloManualEditActive: Bool {
+        engine?.haloReviewState?.isEditingManually == true
     }
 
     /// Call after VoiceInkEngine is created to break the circular init dependency.
@@ -382,6 +391,44 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         engine?.cancelHaloRefinementIfActive() ?? false
     }
 
+    @discardableResult
+    func cancelHaloReviewTransientActionIfActive() -> Bool {
+        if engine?.cancelHaloRefinementIfActive() == true {
+            return true
+        }
+        return engine?.cancelHaloManualEditIfActive() ?? false
+    }
+
+    @discardableResult
+    func beginPasteReviewFocusRecovery() -> Bool {
+        engine?.beginPasteReviewFocusRecovery() ?? false
+    }
+
+    @discardableResult
+    func useOriginalHaloReview() -> Bool {
+        engine?.useOriginalHaloReview() ?? false
+    }
+
+    @discardableResult
+    func beginHaloManualEdit() -> Bool {
+        engine?.beginHaloManualEdit() ?? false
+    }
+
+    @discardableResult
+    func updateHaloManualEdit(_ text: String) -> Bool {
+        engine?.updateHaloManualEdit(text) ?? false
+    }
+
+    @discardableResult
+    func saveHaloManualEdit() -> Bool {
+        engine?.saveHaloManualEdit() ?? false
+    }
+
+    @discardableResult
+    func cancelHaloManualEdit() -> Bool {
+        engine?.cancelHaloManualEditIfActive() ?? false
+    }
+
     func preparePasteReviewKeyboardHandling() -> Bool {
         guard isHaloPanelActive else { return false }
         return reviewShortcutController?.prepareForPasteReview() == true
@@ -389,6 +436,10 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     func finishPasteReviewKeyboardHandling() {
         reviewShortcutController?.finishPasteReview()
+    }
+
+    func refreshPasteReviewKeyboardHandling() {
+        reviewShortcutController?.refreshPasteReviewShortcuts()
     }
 
     func presentPasteReview(_ review: PendingPasteReview) {
@@ -400,7 +451,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
             providerLabel: review.providerLabel,
             connectionLabel: review.connectionLabel,
             modelLabel: review.modelLabel,
-            enhancementWarning: review.enhancementWarning
+            enhancementWarning: review.enhancementWarning,
+            deliveryReviewReason: review.deliveryReviewReason
         )
     }
 
@@ -492,5 +544,19 @@ extension RecorderUIManager: PasteReviewRecoveryPresenting {
 
         haloWindowManager?.show()
         presentPasteReview(review)
+    }
+
+    func beginPasteReviewFocusRecovery() {
+        guard effectiveRecorderPanelStyle == .halo else { return }
+        haloWindowManager?.beginFocusRecovery()
+    }
+
+    func endPasteReviewFocusRecovery() {
+        guard isRecorderPanelVisible,
+            effectiveRecorderPanelStyle == .halo
+        else {
+            return
+        }
+        haloWindowManager?.endFocusRecovery()
     }
 }

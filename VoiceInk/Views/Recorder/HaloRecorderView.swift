@@ -48,15 +48,22 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     @ObservedObject var presentation: HaloPresentationModel
     @AppStorage(RecorderDisplaySettingsKeys.showLiveTranscript) private var showLiveTranscript = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var isManualEditorFocused: Bool
 
     let onApply: () -> Void
     let onCancel: () -> Void
     let onCopy: () -> Void
     let onRetry: () -> Void
+    let onRefocus: () -> Void
+    let onUseOriginal: () -> Void
+    let onBeginManualEdit: () -> Void
+    let onUpdateManualEdit: (String) -> Void
+    let onSaveManualEdit: () -> Void
+    let onCancelManualEdit: () -> Void
     let onSelectReviewLens: (HaloReviewLens) -> Void
     let onMoveReviewRevision: (Int) -> Void
     let onRefine: (HaloRefinementAction) -> Void
-    let onReviewInteractiveRegionsChange: ([CGRect]) -> Void
+    let onReviewInteractiveRegionsChange: ([HaloInteractionRegion]) -> Void
 
     private let coral = Color(red: 0.96, green: 0.34, blue: 0.29)
     private let charcoal = Color(red: 0.075, green: 0.078, blue: 0.085)
@@ -69,10 +76,16 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         onCancel: @escaping () -> Void,
         onCopy: @escaping () -> Void,
         onRetry: @escaping () -> Void,
+        onRefocus: @escaping () -> Void = {},
+        onUseOriginal: @escaping () -> Void = {},
+        onBeginManualEdit: @escaping () -> Void = {},
+        onUpdateManualEdit: @escaping (String) -> Void = { _ in },
+        onSaveManualEdit: @escaping () -> Void = {},
+        onCancelManualEdit: @escaping () -> Void = {},
         onSelectReviewLens: @escaping (HaloReviewLens) -> Void,
         onMoveReviewRevision: @escaping (Int) -> Void,
         onRefine: @escaping (HaloRefinementAction) -> Void,
-        onReviewInteractiveRegionsChange: @escaping ([CGRect]) -> Void
+        onReviewInteractiveRegionsChange: @escaping ([HaloInteractionRegion]) -> Void
     ) {
         self.stateProvider = stateProvider
         self.recorder = recorder
@@ -81,6 +94,12 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         self.onCancel = onCancel
         self.onCopy = onCopy
         self.onRetry = onRetry
+        self.onRefocus = onRefocus
+        self.onUseOriginal = onUseOriginal
+        self.onBeginManualEdit = onBeginManualEdit
+        self.onUpdateManualEdit = onUpdateManualEdit
+        self.onSaveManualEdit = onSaveManualEdit
+        self.onCancelManualEdit = onCancelManualEdit
         self.onSelectReviewLens = onSelectReviewLens
         self.onMoveReviewRevision = onMoveReviewRevision
         self.onRefine = onRefine
@@ -119,6 +138,13 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 .strokeBorder(HaloVisualPalette.innerRim.opacity(innerRimOpacity), lineWidth: 0.45)
                 .padding(1.2)
         }
+        // The complete visible review surface absorbs clicks. Keeping this
+        // region inside the outer padding leaves only the transparent shadow
+        // envelope click-through and prevents accidental destination changes.
+        .haloReviewInteractiveRegion(
+            enabled: presentation.phase == .reviewing,
+            shape: .roundedRectangle(cornerRadius: cornerRadius)
+        )
         .padding(
             EdgeInsets(
                 top: HaloPanelMetrics.visualEffectInsets.top,
@@ -129,7 +155,11 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         )
         .coordinateSpace(name: HaloReviewCoordinateSpace.name)
         .onPreferenceChange(HaloReviewInteractiveRegionsKey.self) { regions in
-            onReviewInteractiveRegionsChange(presentation.phase == .reviewing ? regions : [])
+            onReviewInteractiveRegionsChange(
+                presentation.phase == .reviewing
+                    ? regions
+                    : []
+            )
         }
         .animation(contentAnimation, value: presentation.phase)
         .animation(contentAnimation, value: visiblePartialTranscript != nil)
@@ -154,8 +184,13 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             enhancingContent
                 .transition(phaseTransition)
         case .reviewing:
-            reviewingContent
-                .transition(phaseTransition)
+            if presentation.isReviewRefocusing {
+                focusRecoveryContent
+                    .transition(phaseTransition)
+            } else {
+                reviewingContent
+                    .transition(phaseTransition)
+            }
         case .confirmed:
             confirmationContent
                 .transition(phaseTransition)
@@ -266,6 +301,56 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         .allowsHitTesting(false)
     }
 
+    private var focusRecoveryContent: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "scope")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(AppTheme.Accent.strong)
+                .frame(width: 24, height: 24)
+                .background(AppTheme.Accent.fill)
+                .clipShape(Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(String(localized: "Focus the original field"))
+                    .font(HaloTypography.statusTitle)
+                    .foregroundStyle(Color.white.opacity(0.94))
+                Text(String(localized: "Then press Return or choose Continue · Esc cancels"))
+                    .font(HaloTypography.statusDetail)
+                    .foregroundStyle(Color.white.opacity(0.58))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 4)
+
+            HStack(spacing: 5) {
+                HaloReviewActionButton(
+                    key: "↩",
+                    title: String(localized: "Continue"),
+                    systemImage: nil,
+                    emphasized: true,
+                    isDisabled: false,
+                    action: onApply
+                )
+                HaloReviewActionButton(
+                    key: nil,
+                    title: String(localized: "Cancel"),
+                    systemImage: nil,
+                    emphasized: false,
+                    isDisabled: false,
+                    action: onCancel
+                )
+            }
+        }
+        .accessibilityLabel(
+            Text(
+                String(
+                    localized: "Focus the original field, then press Return or choose Continue. Escape or Cancel stops the review."
+                )
+            )
+        )
+    }
+
     private var reviewingContent: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
@@ -279,7 +364,11 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 .frame(width: 22, height: 22)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Ready to apply")
+                    Text(
+                        presentation.isEditingManually
+                            ? String(localized: "Edit final transcript")
+                            : String(localized: "Ready to apply")
+                    )
                         .font(HaloTypography.reviewTitle)
                         .foregroundStyle(Color.white.opacity(0.94))
                     Text(reviewDestinationDescription)
@@ -291,12 +380,18 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 Spacer(minLength: 0)
             }
 
-            metadataRow
+            if !presentation.isEditingManually {
+                metadataRow
+            }
 
             if let review = presentation.review {
-                reviewNavigation
-                reviewTextViewport(review)
-                refinementOrbit
+                if presentation.isEditingManually {
+                    manualEditViewport
+                } else {
+                    reviewNavigation
+                    reviewTextViewport(review)
+                    refinementOrbit
+                }
 
                 if let warning = sanitized(review.enhancementWarning), !warning.isEmpty {
                     Label(warning, systemImage: "exclamationmark.triangle.fill")
@@ -305,7 +400,19 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                         .lineLimit(2)
                 }
 
+                if let reason = sanitized(review.deliveryReviewReason), !reason.isEmpty {
+                    Label(reason, systemImage: "info.circle.fill")
+                        .font(HaloTypography.warning)
+                        .foregroundStyle(AppTheme.Accent.strong.opacity(0.92))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 reviewStatusRows
+
+                if !presentation.isEditingManually {
+                    reviewUtilityActions
+                }
             } else {
                 Text("Your transcript is ready.")
                     .font(HaloTypography.reviewFinal)
@@ -314,37 +421,124 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             }
 
             HStack(spacing: 8) {
-                let showsRetry = presentation.reviewFeedback?.allowsRetry == true
-                HaloReviewActionButton(
-                    key: "↩",
-                    title: showsRetry ? String(localized: "Retry") : String(localized: "Apply"),
-                    systemImage: nil,
-                    emphasized: true,
-                    isDisabled: presentation.isReviewDelivering || presentation.isRefining,
-                    action: showsRetry ? onRetry : onApply
-                )
-                HaloReviewActionButton(
-                    key: presentation.isRefining ? nil : "Esc",
-                    title: String(localized: "Cancel"),
-                    systemImage: nil,
-                    emphasized: false,
-                    isDisabled: presentation.isReviewDelivering,
-                    action: onCancel
-                )
-                HaloReviewActionButton(
-                    key: nil,
-                    title: String(localized: "Copy"),
-                    systemImage: "doc.on.doc",
-                    emphasized: false,
-                    isDisabled: presentation.isReviewDelivering || presentation.isRefining,
-                    action: onCopy
-                )
+                if presentation.isEditingManually {
+                    HaloReviewActionButton(
+                        key: "⌘↩",
+                        title: String(localized: "Save Edit"),
+                        systemImage: "checkmark",
+                        emphasized: true,
+                        isDisabled: presentation.manualEditText
+                            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        action: onSaveManualEdit
+                    )
+                    HaloReviewActionButton(
+                        key: "Esc",
+                        title: String(localized: "Cancel Edit"),
+                        systemImage: nil,
+                        emphasized: false,
+                        isDisabled: false,
+                        action: onCancelManualEdit
+                    )
+                } else {
+                    let showsRetry = presentation.reviewFeedback?.allowsRetry == true
+                    let showsRefocus = presentation.reviewFeedback?.allowsRefocus == true
+                    HaloReviewActionButton(
+                        key: "↩",
+                        title: showsRetry
+                            ? String(localized: "Retry")
+                            : (showsRefocus
+                                ? String(localized: "Refocus")
+                                : String(localized: "Apply")),
+                        systemImage: showsRefocus ? "scope" : nil,
+                        emphasized: true,
+                        isDisabled: presentation.isReviewDelivering || presentation.isRefining,
+                        action: showsRetry ? onRetry : (showsRefocus ? onRefocus : onApply)
+                    )
+                    HaloReviewActionButton(
+                        key: presentation.isRefining ? nil : "Esc",
+                        title: String(localized: "Cancel"),
+                        systemImage: nil,
+                        emphasized: false,
+                        isDisabled: presentation.isReviewDelivering,
+                        action: onCancel
+                    )
+                    HaloReviewActionButton(
+                        key: nil,
+                        title: String(localized: "Copy"),
+                        systemImage: "doc.on.doc",
+                        emphasized: false,
+                        isDisabled: presentation.isReviewDelivering || presentation.isRefining,
+                        action: onCopy
+                    )
+                }
                 Spacer(minLength: 0)
-                Text("Saved to History")
-                    .font(HaloTypography.tertiary)
-                    .foregroundStyle(Color.white.opacity(0.38))
+                if !presentation.isEditingManually {
+                    Text("Saved to History")
+                        .font(HaloTypography.tertiary)
+                        .foregroundStyle(Color.white.opacity(0.38))
+                }
             }
         }
+    }
+
+    private var manualEditViewport: some View {
+        TextEditor(
+            text: Binding(
+                get: { presentation.manualEditText },
+                set: onUpdateManualEdit
+            )
+        )
+        .font(HaloTypography.reviewFinal)
+        .foregroundStyle(Color.white.opacity(0.94))
+        .scrollContentBackground(.hidden)
+        .padding(8)
+        .background(Color.white.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(AppTheme.Accent.strong.opacity(0.45), lineWidth: 0.8)
+        }
+        .focused($isManualEditorFocused)
+        .onAppear {
+            // The panel becomes key before SwiftUI necessarily materializes
+            // its AppKit text view. Focus on the next run-loop turn so the
+            // editor receives the first typed character reliably.
+            DispatchQueue.main.async {
+                guard presentation.isEditingManually else { return }
+                isManualEditorFocused = true
+            }
+        }
+        .onDisappear {
+            isManualEditorFocused = false
+        }
+        .haloReviewInteractiveRegion()
+        .accessibilityLabel(Text("Edit final transcript"))
+    }
+
+    private var reviewUtilityActions: some View {
+        HStack(spacing: 6) {
+            HaloReviewActionButton(
+                key: nil,
+                title: String(localized: "Original"),
+                systemImage: "arrow.uturn.backward",
+                emphasized: false,
+                isDisabled: !presentation.canUseOriginal
+                    || presentation.isReviewDelivering,
+                action: onUseOriginal
+            )
+            HaloReviewActionButton(
+                key: nil,
+                title: String(localized: "Edit"),
+                systemImage: "pencil",
+                emphasized: false,
+                isDisabled: !presentation.canBeginManualEdit
+                    || presentation.isReviewDelivering,
+                action: onBeginManualEdit
+            )
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Transcript alternatives"))
     }
 
     private var reviewNavigation: some View {
@@ -628,6 +822,12 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         case .enhancing:
             return String(localized: "VoiceInk is enhancing the transcription")
         case .reviewing:
+            if presentation.isReviewRefocusing {
+                return String(localized: "Focus the original field, then press Return to continue.")
+            }
+            if presentation.isEditingManually {
+                return String(localized: "Editing the final transcript")
+            }
             return String(localized: "Transcript ready. Press Return to apply or Escape to cancel.")
         case .confirmed:
             return String(localized: "Transcript pasted")
@@ -1161,21 +1361,32 @@ private enum HaloReviewCoordinateSpace {
 }
 
 private struct HaloReviewInteractiveRegionsKey: PreferenceKey {
-    static let defaultValue: [CGRect] = []
+    static let defaultValue: [HaloInteractionRegion] = []
 
-    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
+    static func reduce(
+        value: inout [HaloInteractionRegion],
+        nextValue: () -> [HaloInteractionRegion]
+    ) {
         value.append(contentsOf: nextValue())
     }
 }
 
 private extension View {
-    func haloReviewInteractiveRegion(enabled: Bool = true) -> some View {
+    func haloReviewInteractiveRegion(
+        enabled: Bool = true,
+        shape: HaloInteractionRegion.Shape = .rectangle
+    ) -> some View {
         background {
             if enabled {
                 GeometryReader { proxy in
                     Color.clear.preference(
                         key: HaloReviewInteractiveRegionsKey.self,
-                        value: [proxy.frame(in: .named(HaloReviewCoordinateSpace.name))]
+                        value: [
+                            HaloInteractionRegion(
+                                frame: proxy.frame(in: .named(HaloReviewCoordinateSpace.name)),
+                                shape: shape
+                            )
+                        ]
                     )
                 }
             }
