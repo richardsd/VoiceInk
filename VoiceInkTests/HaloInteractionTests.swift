@@ -30,40 +30,59 @@ struct HaloInteractionTests {
         #expect(!HaloInteractionHitTester.contains(CGPoint(x: 18, y: 40), in: regions))
     }
 
-    @Test func transparencyPolicyIsPhaseSpecificAndFailsOpenForReviewControls() {
+    @Test func transparencyPolicyStaysClickThroughUntilReviewRegionsAreReady() {
         let button = CGRect(x: 20, y: 20, width: 80, height: 30)
 
         #expect(
             HaloPanelMouseTransparencyPolicy.ignoresMouseEvents(
-                reviewInteractionEnabled: false,
-                selectiveMonitoringAvailable: true,
-                pointer: CGPoint(x: 40, y: 30),
-                interactiveRegions: [button]
-            )
-        )
-        #expect(
-            !HaloPanelMouseTransparencyPolicy.ignoresMouseEvents(
-                reviewInteractionEnabled: true,
-                selectiveMonitoringAvailable: true,
+                interactionState: .inactive,
                 pointer: CGPoint(x: 40, y: 30),
                 interactiveRegions: [button]
             )
         )
         #expect(
             HaloPanelMouseTransparencyPolicy.ignoresMouseEvents(
-                reviewInteractionEnabled: true,
-                selectiveMonitoringAvailable: true,
+                interactionState: .awaitingRegions,
+                pointer: CGPoint(x: 40, y: 30),
+                interactiveRegions: []
+            )
+        )
+        #expect(
+            !HaloPanelMouseTransparencyPolicy.ignoresMouseEvents(
+                interactionState: .selective,
+                pointer: CGPoint(x: 40, y: 30),
+                interactiveRegions: [button]
+            )
+        )
+        #expect(
+            HaloPanelMouseTransparencyPolicy.ignoresMouseEvents(
+                interactionState: .selective,
                 pointer: CGPoint(x: 180, y: 80),
                 interactiveRegions: [button]
             )
         )
         #expect(
             !HaloPanelMouseTransparencyPolicy.ignoresMouseEvents(
-                reviewInteractionEnabled: true,
-                selectiveMonitoringAvailable: false,
+                interactionState: .wholePanelFallback,
                 pointer: CGPoint(x: 180, y: 80),
                 interactiveRegions: [button]
             )
         )
+    }
+
+    @Test func clippingDropsStaleRegionsOutsideTheCurrentPanelBounds() {
+        let clipped = HaloInteractionHitTester.clipped(
+            [
+                CGRect(x: 20, y: 20, width: 80, height: 30),
+                CGRect(x: 260, y: 30, width: 40, height: 30),
+                CGRect(x: -20, y: 40, width: 35, height: 30),
+            ],
+            to: CGRect(x: 0, y: 0, width: 240, height: 120)
+        )
+
+        #expect(clipped == [
+            CGRect(x: 20, y: 20, width: 80, height: 30),
+            CGRect(x: 0, y: 40, width: 15, height: 30),
+        ])
     }
 }

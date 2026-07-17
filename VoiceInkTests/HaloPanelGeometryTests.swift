@@ -108,6 +108,15 @@ struct HaloPanelGeometryTests {
         #expect(placement.frame.minY == primary.visibleFrame.minY + 12)
     }
 
+    @Test func transparentWindowEnvelopePreservesTheVisibleSurfacePlacement() {
+        let surface = CGRect(x: 480, y: 320, width: 360, height: 124)
+        let window = HaloPanelMetrics.windowFrame(forSurfaceFrame: surface)
+
+        #expect(window.minX + HaloPanelMetrics.visualEffectInsets.leading == surface.minX)
+        #expect(window.minY + HaloPanelMetrics.visualEffectInsets.bottom == surface.minY)
+        #expect(window.size == HaloPanelMetrics.windowSize(for: surface.size))
+    }
+
     @Test func stableSideReservesRoomForExpandedReview() throws {
         let anchor = CGRect(x: 600, y: 700, width: 2, height: 20)
         let side = try #require(
@@ -143,6 +152,21 @@ struct HaloPanelGeometryTests {
         #expect(!expanded.isAboveAnchor)
         #expect(compact.frame.maxY == anchor.minY - HaloPanelPositioner.anchorGap)
         #expect(expanded.frame.maxY == anchor.minY - HaloPanelPositioner.anchorGap)
+    }
+
+    @Test func preferredSideFlipsOnlyWhenTheCurrentPanelCannotFit() throws {
+        let placement = try #require(
+            HaloPanelPositioner.placement(
+                panelSize: CGSize(width: 500, height: 380),
+                anchorRect: CGRect(x: 600, y: 160, width: 2, height: 20),
+                preferredScreenID: nil,
+                preferredSide: .below,
+                screens: [primary]
+            )
+        )
+
+        #expect(placement.isAboveAnchor)
+        #expect(placement.frame.minY == 192)
     }
 
     @Test func collapsesMultilineSelectionAtItsTrailingCaret() throws {
@@ -387,6 +411,29 @@ struct HaloPanelGeometryTests {
                 systemFocused: systemFocused,
                 frontmostFallback: frontmost,
                 currentProcessID: 42
+            ) == frontmost
+        )
+    }
+
+    @Test func ignoresTransientWritingToolsAccessibilityService() {
+        let frontmost = HaloFocusedDestinationSnapshot(
+            processID: 41,
+            applicationName: "Editor",
+            bundleIdentifier: "example.editor",
+            focusedElementIdentity: 100
+        )
+        let writingTools = HaloFocusedDestinationSnapshot(
+            processID: 42,
+            applicationName: "WritingTools",
+            bundleIdentifier: "com.apple.WritingTools.xpc.WritingToolsViewService",
+            focusedElementIdentity: 200
+        )
+
+        #expect(
+            HaloDestinationSelection.preferred(
+                systemFocused: writingTools,
+                frontmostFallback: frontmost,
+                currentProcessID: 99
             ) == frontmost
         )
     }

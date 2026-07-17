@@ -1,5 +1,13 @@
 import SwiftUI
 
+/// Fixed colors keep the focus-preserving Halo panel independent of the host
+/// app's dynamic accent-color resolution. In particular, never use a dynamic
+/// accent with AppKit-backed activity controls in this panel.
+private enum HaloVisualPalette {
+    static let activity = Color(red: 0.37, green: 0.70, blue: 1.0)
+    static let innerRim = Color(red: 0.28, green: 0.58, blue: 0.98)
+}
+
 enum HaloRefinementOrbitPolicy {
     static let actionSpacing: CGFloat = 5
     static let rowHeight: CGFloat = 28
@@ -92,20 +100,33 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
 
     var body: some View {
         ZStack {
-            haloGlow
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(charcoal.opacity(0.985))
+                .shadow(color: Color.black.opacity(0.26), radius: 8, y: 4)
+
             phaseContent
                 .padding(horizontalPadding)
                 .padding(.vertical, verticalPadding)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(charcoal.opacity(0.985))
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(borderColor, lineWidth: 0.8)
-                }
-                .shadow(color: Color.black.opacity(0.42), radius: 15, y: 6)
         }
-        .padding(3)
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(borderColor, lineWidth: 0.7)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius - 1.2, style: .continuous)
+                .strokeBorder(HaloVisualPalette.innerRim.opacity(innerRimOpacity), lineWidth: 0.45)
+                .padding(1.2)
+        }
+        .padding(
+            EdgeInsets(
+                top: HaloPanelMetrics.visualEffectInsets.top,
+                leading: HaloPanelMetrics.visualEffectInsets.leading,
+                bottom: HaloPanelMetrics.visualEffectInsets.bottom,
+                trailing: HaloPanelMetrics.visualEffectInsets.trailing
+            )
+        )
         .coordinateSpace(name: HaloReviewCoordinateSpace.name)
         .onPreferenceChange(HaloReviewInteractiveRegionsKey.self) { regions in
             onReviewInteractiveRegionsChange(presentation.phase == .reviewing ? regions : [])
@@ -562,21 +583,12 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
 
     private var borderColor: Color {
         presentation.phase == .reviewing
-            ? AppTheme.Accent.border.opacity(0.7)
+            ? HaloVisualPalette.innerRim.opacity(0.72)
             : Color.white.opacity(0.12)
     }
 
-    private var haloGlow: some View {
-        RoundedRectangle(cornerRadius: cornerRadius + 4, style: .continuous)
-            .fill(
-                RadialGradient(
-                    colors: [AppTheme.Accent.primary.opacity(0.20), coral.opacity(0.06), .clear],
-                    center: .center,
-                    startRadius: 3,
-                    endRadius: 170
-                )
-            )
-            .blur(radius: 7)
+    private var innerRimOpacity: Double {
+        presentation.phase == .reviewing ? 0.42 : 0.22
     }
 
     private var contentAnimation: Animation? {
@@ -797,9 +809,7 @@ private struct HaloRefinementActionButton: View {
         } label: {
             HStack(spacing: 4) {
                 if isActive {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(AppTheme.Accent.strong)
+                    ProcessingIndicator(color: HaloVisualPalette.activity)
                         .scaleEffect(0.7)
                         .frame(width: 10, height: 10)
                 } else {
@@ -867,9 +877,7 @@ private struct HaloRefinementProgressStatus: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            ProgressView()
-                .controlSize(.small)
-                .tint(AppTheme.Accent.strong)
+            ProcessingIndicator(color: HaloVisualPalette.activity)
 
             Text(
                 String(
@@ -1026,9 +1034,7 @@ private struct HaloReviewRevisionNavigator: View {
 private struct HaloReviewDiffProgressView: View {
     var body: some View {
         VStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-                .tint(AppTheme.Accent.strong)
+            ProcessingIndicator(color: HaloVisualPalette.activity)
             Text("Comparing changes")
                 .font(HaloTypography.reviewDestination)
                 .foregroundStyle(Color.white.opacity(0.54))

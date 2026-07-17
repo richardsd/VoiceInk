@@ -4,6 +4,22 @@ enum HaloInteractionHitTester {
     static func contains(_ point: CGPoint, in regions: [CGRect]) -> Bool {
         regions.contains { $0.insetBy(dx: -1, dy: -1).contains(point) }
     }
+
+    static func clipped(_ regions: [CGRect], to bounds: CGRect) -> [CGRect] {
+        regions.compactMap { region in
+            guard !region.isNull,
+                !region.isInfinite,
+                region.width > 0,
+                region.height > 0
+            else {
+                return nil
+            }
+
+            let clipped = bounds.isEmpty ? region : region.intersection(bounds)
+            guard !clipped.isNull, clipped.width > 0, clipped.height > 0 else { return nil }
+            return clipped
+        }
+    }
 }
 
 enum HaloInteractionCoordinateConverter {
@@ -12,16 +28,27 @@ enum HaloInteractionCoordinateConverter {
     }
 }
 
+enum HaloReviewInteractionState: Equatable {
+    case inactive
+    case awaitingRegions
+    case selective
+    case wholePanelFallback
+}
+
 enum HaloPanelMouseTransparencyPolicy {
     static func ignoresMouseEvents(
-        reviewInteractionEnabled: Bool,
-        selectiveMonitoringAvailable: Bool,
+        interactionState: HaloReviewInteractionState,
         pointer: CGPoint,
         interactiveRegions: [CGRect]
     ) -> Bool {
-        guard reviewInteractionEnabled else { return true }
-        guard selectiveMonitoringAvailable, !interactiveRegions.isEmpty else { return false }
-        return !HaloInteractionHitTester.contains(pointer, in: interactiveRegions)
+        switch interactionState {
+        case .inactive, .awaitingRegions:
+            return true
+        case .selective:
+            return !HaloInteractionHitTester.contains(pointer, in: interactiveRegions)
+        case .wholePanelFallback:
+            return false
+        }
     }
 }
 
@@ -32,9 +59,10 @@ final class HaloRecorderPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    private var reviewInteractionEnabled = false
-    private var selectiveMonitoringAvailable = false
+    private var interactionState: HaloReviewInteractionState = .inactive
     private var interactiveRegions: [CGRect] = []
+    private var pendingInteractiveRegions: [CGRect] = []
+    private var isReviewLayoutTransitioning = false
     private var localMouseMonitor: Any?
     private var globalMouseMonitor: Any?
 
@@ -78,14 +106,19 @@ final class HaloRecorderPanel: NSPanel {
     }
 
     func show(frame: CGRect) {
+        prepareForFrameChangeIfNeeded(frame)
         setFrame(frame, display: true)
+        finishReviewLayoutTransitionIfNeeded()
         orderFrontRegardless()
         refreshMouseTransparency()
     }
 
     func update(frame: CGRect, animated: Bool) {
+        prepareForFrameChangeIfNeeded(frame)
+
         guard animated, isVisible else {
             setFrame(frame, display: true)
+            finishReviewLayoutTransitionIfNeeded()
             refreshMouseTransparency()
             return
         }
@@ -95,6 +128,7 @@ final class HaloRecorderPanel: NSPanel {
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             animator().setFrame(frame, display: true)
         } completionHandler: { [weak self] in
+            self?.finishReviewLayoutTransitionIfNeeded()
             self?.refreshMouseTransparency()
         }
     }
@@ -103,13 +137,14 @@ final class HaloRecorderPanel: NSPanel {
     /// surface. Everywhere else the nonactivating panel remains transparent so
     /// the destination application keeps focus and receives the click.
     func beginReviewInteraction() {
-        guard !reviewInteractionEnabled else {
+        guard interactionState == .inactive else {
             refreshMouseTransparency()
             return
         }
 
-        reviewInteractionEnabled = true
         interactiveRegions = []
+        pendingInteractiveRegions = []
+        isReviewLayoutTransitioning = false
 
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
@@ -129,43 +164,100 @@ final class HaloRecorderPanel: NSPanel {
         // interactive rather than presenting unreachable mouse controls.
         if localMouseMonitor == nil || globalMouseMonitor == nil {
             stopMouseMonitors()
-            selectiveMonitoringAvailable = false
-            ignoresMouseEvents = false
+            interactionState = .wholePanelFallback
         } else {
-            selectiveMonitoringAvailable = true
-            refreshMouseTransparency()
-        }
-    }
-
-    func updateReviewInteractiveRegions(_ regions: [CGRect]) {
-        interactiveRegions = regions.filter {
-            !$0.isNull && !$0.isInfinite && $0.width > 0 && $0.height > 0
+            // A review remains click-through until SwiftUI has published real
+            // regions for the final-sized layout. This prevents a stale compact
+            // layout from capturing an unrelated click during the resize.
+            interactionState = .awaitingRegions
         }
         refreshMouseTransparency()
     }
 
+    func updateReviewInteractiveRegions(_ regions: [CGRect]) {
+        guard interactionState != .inactive else { return }
+
+        let bounds = contentView?.bounds ?? .zero
+        let clippedRegions = HaloInteractionHitTester.clipped(regions, to: bounds)
+        pendingInteractiveRegions = clippedRegions
+
+        guard !isReviewLayoutTransitioning else { return }
+
+        applyInteractiveRegions(clippedRegions)
+        refreshMouseTransparency()
+    }
+
     func endReviewInteraction() {
-        reviewInteractionEnabled = false
-        selectiveMonitoringAvailable = false
+        interactionState = .inactive
         interactiveRegions = []
+        pendingInteractiveRegions = []
+        isReviewLayoutTransitioning = false
         stopMouseMonitors()
         ignoresMouseEvents = true
     }
 
     private func refreshMouseTransparency() {
+        if interactionState == .wholePanelFallback {
+            ignoresMouseEvents = false
+            return
+        }
+
+        guard interactionState == .selective,
+            let contentView
+        else {
+            ignoresMouseEvents = true
+            return
+        }
+
         // SwiftUI reports regions in a top-left local coordinate space while
         // AppKit window points use a bottom-left origin.
         let appKitPoint = convertPoint(fromScreen: NSEvent.mouseLocation)
+        guard contentView.bounds.contains(appKitPoint) else {
+            ignoresMouseEvents = true
+            return
+        }
         let swiftUIPoint = HaloInteractionCoordinateConverter.swiftUIPoint(
             fromAppKitPoint: appKitPoint,
-            contentHeight: contentView?.bounds.height ?? 0
+            contentHeight: contentView.bounds.height
         )
         ignoresMouseEvents = HaloPanelMouseTransparencyPolicy.ignoresMouseEvents(
-            reviewInteractionEnabled: reviewInteractionEnabled,
-            selectiveMonitoringAvailable: selectiveMonitoringAvailable,
+            interactionState: interactionState,
             pointer: swiftUIPoint,
             interactiveRegions: interactiveRegions
         )
+    }
+
+    private func prepareForFrameChangeIfNeeded(_ frame: CGRect) {
+        guard frame != self.frame,
+            (interactionState == .awaitingRegions || interactionState == .selective)
+        else {
+            return
+        }
+
+        interactiveRegions = []
+        pendingInteractiveRegions = []
+        interactionState = .awaitingRegions
+        isReviewLayoutTransitioning = true
+        ignoresMouseEvents = true
+    }
+
+    private func finishReviewLayoutTransitionIfNeeded() {
+        guard isReviewLayoutTransitioning else { return }
+
+        isReviewLayoutTransitioning = false
+        applyInteractiveRegions(pendingInteractiveRegions)
+        contentView?.layoutSubtreeIfNeeded()
+    }
+
+    private func applyInteractiveRegions(_ regions: [CGRect]) {
+        guard interactionState != .inactive,
+            interactionState != .wholePanelFallback
+        else {
+            return
+        }
+
+        interactiveRegions = regions
+        interactionState = regions.isEmpty ? .awaitingRegions : .selective
     }
 
     private func stopMouseMonitors() {

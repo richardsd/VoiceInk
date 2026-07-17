@@ -106,17 +106,33 @@ struct HaloFocusedDestinationSnapshot: Equatable, Sendable {
 }
 
 enum HaloDestinationSelection {
+    private static let transientSystemServiceBundlePrefixes = [
+        "com.apple.writingtools",
+    ]
+
     static func preferred(
         systemFocused: HaloFocusedDestinationSnapshot,
         frontmostFallback: HaloFocusedDestinationSnapshot,
         currentProcessID: pid_t
     ) -> HaloFocusedDestinationSnapshot {
         guard let systemPID = systemFocused.processID,
-            systemPID != currentProcessID
+            systemPID != currentProcessID,
+            !isTransientSystemService(systemFocused)
         else {
             return frontmostFallback
         }
         return systemFocused
+    }
+
+    /// macOS Writing Tools exposes a transient XPC view service as the focused
+    /// accessibility application. It is not the destination the user dictated
+    /// into, and anchoring Halo to it puts the panel beside the system overlay
+    /// instead of the underlying editor.
+    private static func isTransientSystemService(_ snapshot: HaloFocusedDestinationSnapshot) -> Bool {
+        guard let bundleIdentifier = snapshot.bundleIdentifier?.lowercased() else { return false }
+        return transientSystemServiceBundlePrefixes.contains {
+            bundleIdentifier.hasPrefix($0)
+        }
     }
 }
 
@@ -293,6 +309,27 @@ enum HaloPanelPositioner {
 
         if let preferredSide {
             let preferredFrame = preferredSide == .above ? aboveFrame : belowFrame
+            if usableFrame.containsVertically(preferredFrame) {
+                return HaloPanelPlacement(
+                    frame: clamp(preferredFrame, to: usableFrame),
+                    screenID: screen.id,
+                    isAboveAnchor: preferredSide == .above
+                )
+            }
+
+            // Keep the original side while it fits, but do not pin a grown
+            // review panel against a screen edge when the opposite side has
+            // room. This preserves the stable-anchor intent without producing
+            // a visibly detached overlay.
+            let alternateFrame = preferredSide == .above ? belowFrame : aboveFrame
+            if usableFrame.containsVertically(alternateFrame) {
+                return HaloPanelPlacement(
+                    frame: clamp(alternateFrame, to: usableFrame),
+                    screenID: screen.id,
+                    isAboveAnchor: preferredSide == .below
+                )
+            }
+
             return HaloPanelPlacement(
                 frame: clamp(preferredFrame, to: usableFrame),
                 screenID: screen.id,

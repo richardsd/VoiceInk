@@ -3,11 +3,27 @@ import Combine
 import SwiftUI
 
 enum HaloPanelMetrics {
+    /// The content surface is deliberately smaller than the transparent window
+    /// that hosts it. The margin exists only for the close rounded shadow, so
+    /// it remains visually absent against both light and dark destinations.
+    struct VisualEffectInsets: Equatable, Sendable {
+        let top: CGFloat
+        let leading: CGFloat
+        let bottom: CGFloat
+        let trailing: CGFloat
+    }
+
     static let compact = CGSize(width: 240, height: 48)
     static let liveTranscript = CGSize(width: 360, height: 124)
     static let enhancing = CGSize(width: 320, height: 72)
     static let review = CGSize(width: 500, height: 380)
     static let confirmation = CGSize(width: 132, height: 44)
+    static let visualEffectInsets = VisualEffectInsets(
+        top: 8,
+        leading: 10,
+        bottom: 14,
+        trailing: 10
+    )
 
     static func size(
         for phase: HaloPresentationPhase,
@@ -25,6 +41,24 @@ enum HaloPanelMetrics {
         case .confirmed:
             return confirmation
         }
+    }
+
+    static func windowSize(for surfaceSize: CGSize) -> CGSize {
+        CGSize(
+            width: surfaceSize.width + visualEffectInsets.leading + visualEffectInsets.trailing,
+            height: surfaceSize.height + visualEffectInsets.top + visualEffectInsets.bottom
+        )
+    }
+
+    /// Converts the placement of the visible Halo surface into the transparent
+    /// NSPanel frame that also contains its glow and shadow.
+    static func windowFrame(forSurfaceFrame surfaceFrame: CGRect) -> CGRect {
+        CGRect(
+            x: surfaceFrame.minX - visualEffectInsets.leading,
+            y: surfaceFrame.minY - visualEffectInsets.bottom,
+            width: surfaceFrame.width + visualEffectInsets.leading + visualEffectInsets.trailing,
+            height: surfaceFrame.height + visualEffectInsets.top + visualEffectInsets.bottom
+        )
     }
 }
 
@@ -236,6 +270,9 @@ final class HaloWindowManager {
         enhancementWarning: String?
     ) {
         isShowingPasteConfirmation = false
+        // Start in the safe, click-through awaiting-regions state before the
+        // review view is materialized and its panel grows to final size.
+        panel?.beginReviewInteraction()
         presentation.presentReview(
             rawText: rawText,
             finalText: finalText,
@@ -250,7 +287,6 @@ final class HaloWindowManager {
             secondsRemaining: engine.pasteReviewSecondsRemaining,
             isDelivering: engine.recordingState == .busy
         )
-        panel?.beginReviewInteraction()
         resizeVisiblePanel(animated: true)
     }
 
@@ -272,8 +308,9 @@ final class HaloWindowManager {
         guard panel == nil else { return }
 
         let initialSize = panelSize
-        let initialFrame = placement(for: initialSize)?.frame
-            ?? CGRect(origin: .zero, size: initialSize)
+        let initialFrame = placement(for: initialSize)
+            .map { HaloPanelMetrics.windowFrame(forSurfaceFrame: $0.frame) }
+            ?? CGRect(origin: .zero, size: HaloPanelMetrics.windowSize(for: initialSize))
         let newPanel = HaloRecorderPanel(contentRect: initialFrame)
         let content = HaloRecorderView(
             stateProvider: engine,
@@ -424,12 +461,13 @@ final class HaloWindowManager {
         guard isShowRequested, let panel, let placement = placement(for: panelSize) else {
             return
         }
+        let windowFrame = HaloPanelMetrics.windowFrame(forSurfaceFrame: placement.frame)
 
         if panel.isVisible {
             let shouldAnimate = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            panel.update(frame: placement.frame, animated: shouldAnimate)
+            panel.update(frame: windowFrame, animated: shouldAnimate)
         } else {
-            panel.show(frame: placement.frame)
+            panel.show(frame: windowFrame)
         }
     }
 
