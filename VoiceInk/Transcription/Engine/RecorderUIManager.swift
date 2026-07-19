@@ -392,7 +392,20 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
     }
 
     @discardableResult
+    func toggleHaloVoiceRefinementCapture() -> Bool {
+        engine?.toggleHaloVoiceRefinementCapture() ?? false
+    }
+
+    @discardableResult
+    func cancelHaloVoiceRefinementIfActive() -> Bool {
+        engine?.cancelHaloVoiceRefinementIfActive() ?? false
+    }
+
+    @discardableResult
     func cancelHaloReviewTransientActionIfActive() -> Bool {
+        if engine?.cancelHaloVoiceRefinementIfActive() == true {
+            return true
+        }
         if engine?.cancelHaloRefinementIfActive() == true {
             return true
         }

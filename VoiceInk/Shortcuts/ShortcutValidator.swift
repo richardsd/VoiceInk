@@ -27,7 +27,10 @@ enum ShortcutValidator {
             return error
         }
 
-        if let reservedAction = reservedActionConflicting(with: shortcut) {
+        if let reservedAction = reservedActionConflicting(
+            with: shortcut,
+            for: action
+        ) {
             return .alreadyUsedBy(reservedAction.displayName)
         }
 
@@ -81,10 +84,21 @@ enum ShortcutValidator {
         return nil
     }
 
-    private static func reservedActionConflicting(with shortcut: Shortcut) -> ShortcutAction? {
-        for (action, reservedShortcut) in reservedRecorderPanelShortcuts {
+    private static func reservedActionConflicting(
+        with shortcut: Shortcut,
+        for action: ShortcutAction
+    ) -> ShortcutAction? {
+        for (reservedAction, reservedShortcut) in reservedRecorderPanelShortcuts {
             if reservedShortcut.conflicts(with: shortcut) {
-                return action
+                return reservedAction
+            }
+        }
+
+        if action == .primaryRecording || action == .secondaryRecording {
+            for (reviewAction, reservedShortcut) in RecorderPanelShortcutManager
+                .pasteReviewBuiltInShortcuts
+            where reservedShortcut.conflicts(with: shortcut) {
+                return reviewAction
             }
         }
 

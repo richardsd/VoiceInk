@@ -89,6 +89,8 @@ private struct HaloReviewPresentationSnapshot: Equatable, Sendable {
     let selectedRevisionAction: HaloReviewRevisionAction
     let canRefine: Bool
     let isRefining: Bool
+    let voiceRefinementPhase: HaloVoiceRefinementPhase
+    let canStartVoiceRefinement: Bool
     let isEditingManually: Bool
     let manualEditText: String?
     let canUseOriginal: Bool
@@ -101,11 +103,13 @@ private struct HaloReviewPresentationSnapshot: Equatable, Sendable {
     let deliveryReviewReason: String?
 
     var canMovePrevious: Bool {
-        !isRefining && !isEditingManually && selectedRevisionIndex > 0
+        !isRefining && !voiceRefinementPhase.isActive && !isEditingManually
+            && selectedRevisionIndex > 0
     }
 
     var canMoveNext: Bool {
-        !isRefining && !isEditingManually && selectedRevisionIndex + 1 < revisionCount
+        !isRefining && !voiceRefinementPhase.isActive && !isEditingManually
+            && selectedRevisionIndex + 1 < revisionCount
     }
 
     var viewportIdentity: HaloReviewViewportIdentity {
@@ -145,6 +149,12 @@ final class HaloPresentationModel: ObservableObject {
     @Published private(set) var deliveryOverride: HaloSessionDeliveryOverride?
     @Published private(set) var diffResult: HaloReviewDiffResult?
     @Published private(set) var isComputingDiff = false
+    @Published private(set) var isVoiceRefinementReady = false
+    @Published private(set) var voiceInstructionAudioMeter = AudioMeter(
+        averagePower: 0,
+        peakPower: 0
+    )
+    @Published private(set) var voiceInstructionPartialTranscript = ""
 
     @Published private var reviewSnapshot: HaloReviewPresentationSnapshot?
 
@@ -210,6 +220,30 @@ final class HaloPresentationModel: ObservableObject {
 
     var isRefining: Bool {
         reviewSnapshot?.isRefining ?? false
+    }
+
+    var voiceRefinementPhase: HaloVoiceRefinementPhase {
+        reviewSnapshot?.voiceRefinementPhase ?? .idle
+    }
+
+    var isVoiceRefinementActive: Bool {
+        voiceRefinementPhase.isActive
+    }
+
+    var isVoiceRefinementListening: Bool {
+        if case .listening = voiceRefinementPhase {
+            return true
+        }
+        return false
+    }
+
+    var canStartVoiceRefinement: Bool {
+        isVoiceRefinementReady
+            && (reviewSnapshot?.canStartVoiceRefinement ?? false)
+    }
+
+    var isReviewOperationActive: Bool {
+        isRefining || isVoiceRefinementActive
     }
 
     var activeRefinementAction: HaloRefinementAction? {
@@ -321,18 +355,27 @@ final class HaloPresentationModel: ObservableObject {
             revisionCount: state.revisions.count,
             lens: state.lens,
             selectedRevisionAction: selectedRevision.action,
-            canRefine: state.canRefine && state.session.enhancementConfiguration != nil,
+            canRefine: state.canRefine
+                && state.session.enhancementConfiguration != nil
+                && state.session.refinementInputSnapshot != nil,
             isRefining: state.isRefining,
+            voiceRefinementPhase: state.voiceRefinementPhase,
+            canStartVoiceRefinement: state.canRefine
+                && state.session.transcriptionConfiguration != nil
+                && state.session.enhancementConfiguration != nil
+                && state.session.refinementInputSnapshot != nil,
             isEditingManually: state.isEditingManually,
             manualEditText: state.manualEdit?.text,
             canUseOriginal: !state.isExpired
                 && !state.isRefining
+                && !state.isVoiceRefinementActive
                 && !state.isEditingManually
                 && selectedRevision.text != state.session.rawText
                 && (state.revisions.contains(where: { $0.action == .original })
                     || state.revisions.count < HaloReviewState.maximumRevisionCount),
             canBeginManualEdit: !state.isExpired
                 && !state.isRefining
+                && !state.isVoiceRefinementActive
                 && !state.isEditingManually
                 && state.revisions.count < HaloReviewState.maximumRevisionCount,
             activeRefinementAction: state.refinementRequest?.action,
@@ -374,10 +417,23 @@ final class HaloPresentationModel: ObservableObject {
         reviewSecondsRemaining = nil
         isReviewDelivering = false
         isReviewRefocusing = false
+        isVoiceRefinementReady = false
+        voiceInstructionAudioMeter = AudioMeter(averagePower: 0, peakPower: 0)
+        voiceInstructionPartialTranscript = ""
     }
 
     func updateFocusRecovery(isRefocusing: Bool) {
         isReviewRefocusing = isRefocusing
+    }
+
+    func updateVoiceRefinementPresentation(
+        isReady: Bool,
+        audioMeter: AudioMeter,
+        partialTranscript: String
+    ) {
+        isVoiceRefinementReady = isReady
+        voiceInstructionAudioMeter = audioMeter
+        voiceInstructionPartialTranscript = partialTranscript
     }
 
     func updateReviewStatus(
@@ -399,6 +455,9 @@ final class HaloPresentationModel: ObservableObject {
         reviewSecondsRemaining = nil
         isReviewDelivering = false
         isReviewRefocusing = false
+        isVoiceRefinementReady = false
+        voiceInstructionAudioMeter = AudioMeter(averagePower: 0, peakPower: 0)
+        voiceInstructionPartialTranscript = ""
         deliveryOverride = nil
         reviewSnapshot = nil
     }
@@ -482,9 +541,9 @@ final class HaloPresentationModel: ObservableObject {
     ) -> (message: String?, tone: HaloReviewNoticeTone?) {
         switch notice {
         case .emptyRefinement, .unchangedRefinement, .refinementCancelled,
-            .emptyManualEdit, .unchangedManualEdit:
+            .emptyManualEdit, .unchangedManualEdit, .voiceRefinementCancelled:
             return (notice?.message, .neutral)
-        case .refinementFailed, .revisionLimitReached:
+        case .refinementFailed, .revisionLimitReached, .voiceRefinementFailed:
             return (notice?.message, .warning)
         case .copied, .copyFailed, nil:
             if hasReachedRevisionLimit {

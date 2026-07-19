@@ -5,6 +5,29 @@ struct TranscriptionRuntimeConfiguration {
     let model: any TranscriptionModel
     let language: String
     let isRealtimeEnabled: Bool
+    /// Request-scoped values are captured when the recording configuration is
+    /// resolved. Keeping this stored prevents a Halo voice instruction from
+    /// observing a later global language or prompt change while review is open.
+    let requestContext: TranscriptionRequestContext
+
+    init(
+        mode: ModeConfig?,
+        model: any TranscriptionModel,
+        language: String,
+        isRealtimeEnabled: Bool,
+        requestContext: TranscriptionRequestContext? = nil
+    ) {
+        self.mode = mode
+        self.model = model
+        self.language = language
+        self.isRealtimeEnabled = isRealtimeEnabled
+        self.requestContext = requestContext ?? TranscriptionRequestContext(
+            language: language,
+            prompt: model.provider == .whisper
+                ? UserDefaults.standard.string(forKey: "TranscriptionPrompt")
+                : nil
+        )
+    }
 
     var metadata: (name: String?, emoji: String?) {
         guard mode.isEnabled else {
@@ -13,12 +36,6 @@ struct TranscriptionRuntimeConfiguration {
         return (mode.name, mode.icon.value)
     }
 
-    var requestContext: TranscriptionRequestContext {
-        TranscriptionRequestContext(
-            language: language,
-            prompt: model.provider == .whisper ? UserDefaults.standard.string(forKey: "TranscriptionPrompt") : nil
-        )
-    }
 }
 
 struct TranscriptionFormattingConfiguration {

@@ -256,6 +256,221 @@ struct HaloPresentationModelTests {
         #expect(model.canBeginManualEdit)
     }
 
+    @Test func voiceReadinessAndTelemetryRemainUIOnlyAndResetWithReview() {
+        let model = HaloPresentationModel()
+        let state = makeState(
+            raw: "Raw",
+            final: "Enhanced",
+            supportsVoiceRefinement: true
+        )
+        let meter = AudioMeter(averagePower: 0.61, peakPower: 0.79)
+
+        model.updateReviewState(state)
+
+        #expect(!model.isVoiceRefinementReady)
+        #expect(!model.canStartVoiceRefinement)
+
+        model.updateVoiceRefinementPresentation(
+            isReady: true,
+            audioMeter: meter,
+            partialTranscript: "Make it shorter and more direct"
+        )
+
+        #expect(model.isVoiceRefinementReady)
+        #expect(model.canStartVoiceRefinement)
+        #expect(model.voiceInstructionAudioMeter == meter)
+        #expect(model.voiceInstructionPartialTranscript == "Make it shorter and more direct")
+        #expect(!model.isVoiceRefinementActive)
+        #expect(!model.isReviewOperationActive)
+
+        model.clearReview()
+
+        #expect(!model.isVoiceRefinementReady)
+        #expect(model.voiceInstructionAudioMeter == AudioMeter(averagePower: 0, peakPower: 0))
+        #expect(model.voiceInstructionPartialTranscript.isEmpty)
+    }
+
+    @Test func voicePhasesProjectListeningUnderstandingAndRefiningWhileDisablingActions() throws {
+        let model = HaloPresentationModel()
+        var state = makeState(
+            raw: "Raw",
+            final: "Enhanced",
+            supportsVoiceRefinement: true
+        )
+        let requestID = UUID()
+        let pendingRequest = state.beginVoiceRefinement(requestID: requestID)
+        let request = try #require(pendingRequest)
+
+        model.updateReviewState(state)
+        model.updateVoiceRefinementPresentation(
+            isReady: true,
+            audioMeter: AudioMeter(averagePower: 0.66, peakPower: 0.84),
+            partialTranscript: "Make this friendlier"
+        )
+
+        #expect(model.voiceRefinementPhase == .listening(request))
+        #expect(model.isVoiceRefinementActive)
+        #expect(model.isVoiceRefinementListening)
+        #expect(model.isReviewOperationActive)
+        #expect(!model.canStartVoiceRefinement)
+        #expect(!model.canRefine)
+        #expect(!model.canUseOriginal)
+        #expect(!model.canBeginManualEdit)
+        #expect(!model.canMovePrevious)
+        #expect(!model.canMoveNext)
+
+        let didFinishCapture = state.finishVoiceCapture(requestID: requestID)
+        #expect(didFinishCapture)
+        model.updateReviewState(state)
+        model.updateVoiceRefinementPresentation(
+            isReady: true,
+            audioMeter: AudioMeter(averagePower: 0, peakPower: 0),
+            partialTranscript: ""
+        )
+
+        #expect(model.voiceRefinementPhase == .transcribing(request))
+        #expect(model.isVoiceRefinementActive)
+        #expect(!model.isVoiceRefinementListening)
+        #expect(model.isReviewOperationActive)
+
+        let didFinishTranscription = state.finishVoiceTranscription(requestID: requestID)
+        #expect(didFinishTranscription)
+        model.updateReviewState(state)
+
+        #expect(model.voiceRefinementPhase == .refining(request))
+        #expect(model.isVoiceRefinementActive)
+        #expect(!model.isVoiceRefinementListening)
+        #expect(model.isReviewOperationActive)
+        #expect(!model.canStartVoiceRefinement)
+    }
+
+    @Test func successfulVoiceRefinementRestoresControlsAndSelectsChanges() throws {
+        let model = HaloPresentationModel()
+        var state = makeState(
+            raw: "Raw",
+            final: "Enhanced",
+            supportsVoiceRefinement: true
+        )
+        let parent = try #require(state.selectedRevision)
+        let pendingRequest = state.beginVoiceRefinement()
+        let request = try #require(pendingRequest)
+        let didFinishCapture = state.finishVoiceCapture(requestID: request.id)
+        let didFinishTranscription = state.finishVoiceTranscription(requestID: request.id)
+        #expect(didFinishCapture)
+        #expect(didFinishTranscription)
+        let revision = makeRevision(
+            text: "Voice-refined result",
+            parentID: parent.id,
+            action: .voiceRefinement
+        )
+        let completion = state.completeVoiceRefinement(
+            requestID: request.id,
+            revision: revision
+        )
+        #expect(completion == .appended)
+
+        model.updateReviewState(state)
+        model.updateVoiceRefinementPresentation(
+            isReady: true,
+            audioMeter: AudioMeter(averagePower: 0, peakPower: 0),
+            partialTranscript: ""
+        )
+
+        #expect(model.voiceRefinementPhase == .idle)
+        #expect(!model.isVoiceRefinementActive)
+        #expect(!model.isReviewOperationActive)
+        #expect(model.selectedRevisionAction == .voiceRefinement)
+        #expect(model.selectedRevisionText == "Voice-refined result")
+        #expect(model.reviewLens == .changes)
+        #expect(model.revisionCount == 2)
+        #expect(model.canMovePrevious)
+        #expect(model.canStartVoiceRefinement)
+        #expect(model.reviewNoticeMessage == nil)
+    }
+
+    @Test func failedAndCancelledVoiceRefinementsRestoreTheReviewNonDestructively() throws {
+        let model = HaloPresentationModel()
+        var failedState = makeState(
+            raw: "Raw",
+            final: "Enhanced",
+            supportsVoiceRefinement: true
+        )
+        let pendingFailedRequest = failedState.beginVoiceRefinement()
+        let failedRequest = try #require(pendingFailedRequest)
+        let didFail = failedState.finishVoiceRefinementFailure(
+            requestID: failedRequest.id,
+            failure: .transcriptionFailed
+        )
+        #expect(didFail)
+
+        model.updateReviewState(failedState)
+        model.updateVoiceRefinementPresentation(
+            isReady: true,
+            audioMeter: AudioMeter(averagePower: 0, peakPower: 0),
+            partialTranscript: ""
+        )
+
+        #expect(model.voiceRefinementPhase == .failed(.transcriptionFailed))
+        #expect(!model.isVoiceRefinementActive)
+        #expect(model.selectedRevisionText == "Enhanced")
+        #expect(model.revisionCount == 1)
+        #expect(model.canStartVoiceRefinement)
+        #expect(model.reviewNoticeTone == .warning)
+        #expect(model.reviewNoticeMessage == HaloVoiceRefinementFailure.transcriptionFailed.message)
+
+        var cancelledState = makeState(
+            raw: "Raw",
+            final: "Enhanced",
+            supportsVoiceRefinement: true
+        )
+        let pendingCancelledRequest = cancelledState.beginVoiceRefinement()
+        let cancelledRequest = try #require(pendingCancelledRequest)
+        let cancelled = cancelledState.cancelVoiceRefinement()
+        #expect(cancelled?.id == cancelledRequest.id)
+        model.updateReviewState(cancelledState)
+
+        #expect(model.voiceRefinementPhase == .idle)
+        #expect(!model.isVoiceRefinementActive)
+        #expect(model.selectedRevisionText == "Enhanced")
+        #expect(model.revisionCount == 1)
+        #expect(model.canStartVoiceRefinement)
+        #expect(model.reviewNoticeTone == .neutral)
+        #expect(model.reviewNoticeMessage == HaloReviewNotice.voiceRefinementCancelled.message)
+    }
+
+    @Test func oversizedVoiceDirectiveProjectsItsSpecificSanitizedWarning() throws {
+        let model = HaloPresentationModel()
+        model.updateVoiceRefinementPresentation(
+            isReady: true,
+            audioMeter: AudioMeter(averagePower: 0, peakPower: 0),
+            partialTranscript: ""
+        )
+        var state = makeState(
+            raw: "Raw",
+            final: "Enhanced",
+            supportsVoiceRefinement: true
+        )
+        let pendingRequest = state.beginVoiceRefinement()
+        let request = try #require(pendingRequest)
+        let didFail = state.finishVoiceRefinementFailure(
+            requestID: request.id,
+            failure: .tooLongInstruction
+        )
+        #expect(didFail)
+
+        model.updateReviewState(state)
+
+        #expect(model.voiceRefinementPhase == .failed(.tooLongInstruction))
+        #expect(model.reviewNoticeTone == .warning)
+        #expect(
+            model.reviewNoticeMessage
+                == String(localized: "The spoken change is too long. Try a shorter instruction.")
+        )
+        #expect(model.selectedRevisionText == "Enhanced")
+        #expect(model.revisionCount == 1)
+        #expect(model.canStartVoiceRefinement)
+    }
+
     private func waitUntil(
         attempts: Int = 200,
         condition: @escaping @MainActor () async -> Bool
@@ -272,7 +487,8 @@ struct HaloPresentationModelTests {
     private func makeState(
         raw: String,
         final: String,
-        supportsRefinement: Bool = true
+        supportsRefinement: Bool = true,
+        supportsVoiceRefinement: Bool = false
     ) -> HaloReviewState {
         let metadata = HaloReviewModelMetadata(
             modeName: "Dictation",
@@ -295,6 +511,24 @@ struct HaloPresentationModelTests {
                 autoSendKey: .none,
                 customCommand: nil
             ),
+            transcriptionConfiguration: supportsVoiceRefinement
+                ? TranscriptionRuntimeConfiguration(
+                    mode: nil,
+                    model: CloudModel(
+                        name: "presentation-realtime",
+                        displayName: "Presentation Realtime",
+                        description: "Presentation test model",
+                        provider: .deepgram,
+                        speed: 1,
+                        accuracy: 1,
+                        isMultilingual: true,
+                        supportsStreaming: true,
+                        supportedLanguages: ["en": "English"]
+                    ),
+                    language: "en",
+                    isRealtimeEnabled: true
+                )
+                : nil,
             enhancementConfiguration: supportsRefinement
                 ? EnhancementRuntimeConfiguration(
                     mode: nil,
@@ -310,6 +544,12 @@ struct HaloPresentationModelTests {
                     useClipboardContext: false,
                     useSelectedTextContext: true,
                     useScreenCaptureContext: false
+                )
+                : nil,
+            refinementInputSnapshot: supportsRefinement
+                ? HaloRefinementInputSnapshot(
+                    originalModeRequirements: "Preserve every material fact.",
+                    customVocabulary: ""
                 )
                 : nil,
             frozenContext: nil

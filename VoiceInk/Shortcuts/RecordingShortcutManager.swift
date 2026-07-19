@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 
 @MainActor
@@ -47,8 +48,12 @@ class RecordingShortcutManager: ObservableObject {
     private let modeShortcutManager: ModeShortcutManager
     private let shortcutMonitor = ShortcutMonitor()
     private var shortcutChangeObserver: NSObjectProtocol?
+    private var recordingStateObservation: AnyCancellable?
     private let shortcutModeHandler: RecordingShortcutModeHandler
     private let primaryRecordingShortcutModeSource: RecordingShortcutModeSource
+    private weak var haloReviewVoiceShortcutRouter: (any HaloReviewVoiceShortcutRouting)?
+    private var haloReviewVoiceShortcutLifecycle = HaloReviewVoiceShortcutLifecycle()
+    private var isMonitoringHaloReviewShortcuts = false
 
     // MARK: - Helper Properties
     private var canHandleShortcutAction: Bool {
@@ -165,6 +170,20 @@ class RecordingShortcutManager: ObservableObject {
             }
         }
 
+        isMonitoringHaloReviewShortcuts = engine.recordingState == .reviewing
+        recordingStateObservation = engine.$recordingState
+            .map { $0 == .reviewing }
+            .removeDuplicates()
+            .sink { [weak self] isReviewing in
+                guard let self,
+                    self.isMonitoringHaloReviewShortcuts != isReviewing
+                else {
+                    return
+                }
+                self.isMonitoringHaloReviewShortcuts = isReviewing
+                self.refreshShortcutMonitoring()
+            }
+
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 100_000_000)
             self.refreshShortcutMonitoring()
@@ -220,13 +239,23 @@ class RecordingShortcutManager: ObservableObject {
         var interruptibleRecordingActions = Set<ShortcutAction>()
 
         if let primaryShortcut {
-            shortcuts[.primaryRecording] = primaryShortcut
-            interruptibleRecordingActions.insert(.primaryRecording)
+            if Self.shouldInstallRecordingShortcut(
+                primaryShortcut,
+                whileReviewing: isMonitoringHaloReviewShortcuts
+            ) {
+                shortcuts[.primaryRecording] = primaryShortcut
+                interruptibleRecordingActions.insert(.primaryRecording)
+            }
         }
 
         if let secondaryShortcut {
-            shortcuts[.secondaryRecording] = secondaryShortcut
-            interruptibleRecordingActions.insert(.secondaryRecording)
+            if Self.shouldInstallRecordingShortcut(
+                secondaryShortcut,
+                whileReviewing: isMonitoringHaloReviewShortcuts
+            ) {
+                shortcuts[.secondaryRecording] = secondaryShortcut
+                interruptibleRecordingActions.insert(.secondaryRecording)
+            }
         }
 
         shortcutMonitor.start(
@@ -236,6 +265,13 @@ class RecordingShortcutManager: ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     guard let mode = self.recordingMode(for: action) else { return }
+                    if self.routeHaloReviewVoiceShortcutKeyDown(
+                        action: action,
+                        eventTime: eventTime,
+                        mode: mode
+                    ) {
+                        return
+                    }
                     await self.shortcutModeHandler.handleKeyDown(
                         action: action,
                         eventTime: eventTime,
@@ -247,6 +283,13 @@ class RecordingShortcutManager: ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     if let mode = self.recordingMode(for: action) {
+                        if self.routeHaloReviewVoiceShortcutKeyUp(
+                            action: action,
+                            eventTime: eventTime,
+                            mode: mode
+                        ) {
+                            return
+                        }
                         await self.shortcutModeHandler.handleKeyUp(
                             action: action,
                             eventTime: eventTime,
@@ -260,10 +303,21 @@ class RecordingShortcutManager: ObservableObject {
             onShortcutInterrupted: { [weak self] action, _ in
                 Task { @MainActor in
                     guard let self, self.recordingMode(for: action) != nil else { return }
+                    if self.routeHaloReviewVoiceShortcutInterruption(action: action) {
+                        return
+                    }
                     await self.shortcutModeHandler.handleInterruption(action: action)
                 }
             }
         )
+    }
+
+    nonisolated static func shouldInstallRecordingShortcut(
+        _ shortcut: Shortcut,
+        whileReviewing: Bool
+    ) -> Bool {
+        !whileReviewing
+            || !RecorderPanelShortcutManager.isBuiltInPasteReviewShortcut(shortcut)
     }
 
     private func recordingMode(for action: ShortcutAction) -> Mode? {
@@ -275,6 +329,110 @@ class RecordingShortcutManager: ObservableObject {
         default:
             return nil
         }
+    }
+
+    /// Installs the review-only destination for Primary and Secondary shortcut
+    /// events. Passing nil restores the legacy routing behavior.
+    func setHaloReviewVoiceShortcutRouter(
+        _ router: (any HaloReviewVoiceShortcutRouting)?
+    ) {
+        haloReviewVoiceShortcutRouter = router
+        haloReviewVoiceShortcutLifecycle.reset()
+    }
+
+    private func routeHaloReviewVoiceShortcutKeyDown(
+        action: ShortcutAction,
+        eventTime: TimeInterval,
+        mode: Mode
+    ) -> Bool {
+        guard let router = haloReviewVoiceShortcutRouter else {
+            haloReviewVoiceShortcutLifecycle.reset()
+            return false
+        }
+
+        let isReviewAvailable = router.isHaloReviewVoiceShortcutRoutingActive
+        haloReviewVoiceShortcutLifecycle.synchronizeCapture(
+            isActive: router.isHaloReviewVoiceCaptureActive
+        )
+        let transition = haloReviewVoiceShortcutLifecycle.handleKeyDown(
+            action: action,
+            eventTime: eventTime,
+            mode: mode,
+            isReviewAvailable: isReviewAvailable
+        )
+        return deliverHaloReviewVoiceShortcutTransition(
+            transition,
+            to: router,
+            isReviewAvailable: isReviewAvailable
+        )
+    }
+
+    private func routeHaloReviewVoiceShortcutKeyUp(
+        action: ShortcutAction,
+        eventTime: TimeInterval,
+        mode: Mode
+    ) -> Bool {
+        guard let router = haloReviewVoiceShortcutRouter else {
+            haloReviewVoiceShortcutLifecycle.reset()
+            return false
+        }
+
+        let isReviewAvailable = router.isHaloReviewVoiceShortcutRoutingActive
+        haloReviewVoiceShortcutLifecycle.synchronizeCapture(
+            isActive: router.isHaloReviewVoiceCaptureActive
+        )
+        let transition = haloReviewVoiceShortcutLifecycle.handleKeyUp(
+            action: action,
+            eventTime: eventTime,
+            mode: mode,
+            isReviewAvailable: isReviewAvailable
+        )
+        return deliverHaloReviewVoiceShortcutTransition(
+            transition,
+            to: router,
+            isReviewAvailable: isReviewAvailable
+        )
+    }
+
+    private func routeHaloReviewVoiceShortcutInterruption(
+        action: ShortcutAction
+    ) -> Bool {
+        guard let router = haloReviewVoiceShortcutRouter else {
+            haloReviewVoiceShortcutLifecycle.reset()
+            return false
+        }
+
+        let isReviewAvailable = router.isHaloReviewVoiceShortcutRoutingActive
+        haloReviewVoiceShortcutLifecycle.synchronizeCapture(
+            isActive: router.isHaloReviewVoiceCaptureActive
+        )
+        let transition = haloReviewVoiceShortcutLifecycle.handleInterruption(
+            action: action,
+            isReviewAvailable: isReviewAvailable
+        )
+        return deliverHaloReviewVoiceShortcutTransition(
+            transition,
+            to: router,
+            isReviewAvailable: isReviewAvailable
+        )
+    }
+
+    private func deliverHaloReviewVoiceShortcutTransition(
+        _ transition: HaloReviewVoiceShortcutTransition,
+        to router: any HaloReviewVoiceShortcutRouting,
+        isReviewAvailable: Bool
+    ) -> Bool {
+        guard transition.isHandled else { return false }
+        guard let command = transition.command else { return true }
+
+        let wasAccepted = router.handleHaloReviewVoiceShortcutCommand(command)
+        if !wasAccepted, command == .startCapture {
+            haloReviewVoiceShortcutLifecycle.reset()
+        }
+
+        // Once a review has claimed the shortcut, a rejected command remains
+        // consumed so it can never leak into the full recording pipeline.
+        return isReviewAvailable
     }
 
     private func handleGlobalShortcut(_ action: ShortcutAction) async {
@@ -314,6 +472,7 @@ class RecordingShortcutManager: ObservableObject {
         middleClickTask?.cancel()
 
         shortcutModeHandler.reset()
+        haloReviewVoiceShortcutLifecycle.reset()
     }
 
     var isShortcutConfigured: Bool {
@@ -330,6 +489,7 @@ class RecordingShortcutManager: ObservableObject {
     }
 
     deinit {
+        recordingStateObservation?.cancel()
         if let shortcutChangeObserver {
             NotificationCenter.default.removeObserver(shortcutChangeObserver)
         }

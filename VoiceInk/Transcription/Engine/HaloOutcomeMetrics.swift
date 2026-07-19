@@ -13,6 +13,12 @@ enum HaloOutcomeMetric: String, CaseIterable, Codable, Sendable {
     case refinementFailure
     case useOriginal
     case manualEdit
+    case voiceRefinementStarted
+    case voiceRefinementCompleted
+    case voiceRefinementCancelled
+    case voiceRefinementEmpty
+    case voiceRefinementTranscriptionFailed
+    case voiceRefinementEnhancementFailed
 }
 
 enum HaloReviewCancellationReason: Equatable, Sendable {

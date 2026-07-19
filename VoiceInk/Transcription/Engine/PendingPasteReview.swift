@@ -16,7 +16,9 @@ struct PendingPasteReview: Identifiable {
     let enhancementWarning: String?
     let deliveryReviewReason: String?
     let output: OutputRuntimeConfiguration
+    let transcriptionConfiguration: TranscriptionRuntimeConfiguration?
     let enhancementConfiguration: EnhancementRuntimeConfiguration?
+    let refinementInputSnapshot: HaloRefinementInputSnapshot?
     let frozenContext: RecordingContextSnapshot?
     let destination: PasteReviewDestinationSnapshot?
     let expiresAt: Date
@@ -44,7 +46,9 @@ struct PendingPasteReview: Identifiable {
             autoSendKey: .none,
             customCommand: nil
         ),
+        transcriptionConfiguration: TranscriptionRuntimeConfiguration? = nil,
         enhancementConfiguration: EnhancementRuntimeConfiguration? = nil,
+        refinementInputSnapshot: HaloRefinementInputSnapshot? = nil,
         frozenContext: RecordingContextSnapshot? = nil,
         destination: PasteReviewDestinationSnapshot? = nil,
         expiresAt: Date = Date().addingTimeInterval(defaultLifetime)
@@ -62,7 +66,9 @@ struct PendingPasteReview: Identifiable {
         self.enhancementWarning = enhancementWarning
         self.deliveryReviewReason = deliveryReviewReason
         self.output = output
+        self.transcriptionConfiguration = transcriptionConfiguration
         self.enhancementConfiguration = enhancementConfiguration
+        self.refinementInputSnapshot = refinementInputSnapshot
         self.frozenContext = frozenContext
         self.destination = destination
         self.expiresAt = expiresAt
@@ -83,7 +89,9 @@ struct PendingPasteReview: Identifiable {
             enhancementWarning: enhancementWarning,
             deliveryReviewReason: deliveryReviewReason,
             output: output,
+            transcriptionConfiguration: transcriptionConfiguration,
             enhancementConfiguration: enhancementConfiguration,
+            refinementInputSnapshot: refinementInputSnapshot,
             frozenContext: frozenContext,
             destination: destination,
             expiresAt: expiresAt

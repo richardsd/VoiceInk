@@ -63,6 +63,102 @@ private final class EngineRefinementService: HaloRefinementServicing {
 }
 
 @MainActor
+private final class EngineVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServicing {
+    enum Behavior {
+        case result(HaloVoiceInstructionCaptureOutcome)
+        case mismatchedRequestID(HaloVoiceInstructionCaptureOutcome)
+        /// Deliberately ignores Task and service cancellation until the test
+        /// resumes it, exercising the engine's stale-result boundary.
+        case suspended
+    }
+
+    private(set) var requestIDs: [UUID] = []
+    private(set) var configurations: [TranscriptionRuntimeConfiguration] = []
+    private(set) var stopRequestIDs: [UUID] = []
+    private(set) var cancellationRequestIDs: [UUID] = []
+    var behaviors: [Behavior]
+
+    private var activeRequestIDs = Set<UUID>()
+    private var continuations: [UUID: CheckedContinuation<HaloVoiceInstructionCaptureResult, Never>] = [:]
+
+    var activeRequestID: UUID? {
+        activeRequestIDs.first
+    }
+
+    init(behaviors: [Behavior]) {
+        self.behaviors = behaviors
+    }
+
+    func capture(
+        requestID: UUID,
+        configuration: TranscriptionRuntimeConfiguration,
+        onEvent: @escaping (HaloVoiceInstructionCaptureEvent) -> Void
+    ) async -> HaloVoiceInstructionCaptureResult {
+        requestIDs.append(requestID)
+        configurations.append(configuration)
+        activeRequestIDs.insert(requestID)
+        defer {
+            activeRequestIDs.remove(requestID)
+            continuations[requestID] = nil
+        }
+
+        onEvent(.phase(.listening))
+        let behavior = behaviors.isEmpty ? .result(.empty) : behaviors.removeFirst()
+        switch behavior {
+        case .result(let outcome):
+            if case .instruction(let instruction) = outcome {
+                onEvent(.audioLevel(AudioMeter(averagePower: 0.4, peakPower: 0.7)))
+                onEvent(.partialTranscript(instruction))
+            }
+            onEvent(.phase(.transcribing))
+            return HaloVoiceInstructionCaptureResult(
+                requestID: requestID,
+                outcome: outcome
+            )
+
+        case .mismatchedRequestID(let outcome):
+            onEvent(.phase(.transcribing))
+            return HaloVoiceInstructionCaptureResult(
+                requestID: UUID(),
+                outcome: outcome
+            )
+
+        case .suspended:
+            return await withCheckedContinuation { continuation in
+                continuations[requestID] = continuation
+            }
+        }
+    }
+
+    @discardableResult
+    func requestStop(requestID: UUID) -> Bool {
+        guard activeRequestIDs.contains(requestID) else { return false }
+        stopRequestIDs.append(requestID)
+        return true
+    }
+
+    @discardableResult
+    func cancel(requestID: UUID) -> Bool {
+        guard activeRequestIDs.contains(requestID) else { return false }
+        cancellationRequestIDs.append(requestID)
+        return true
+    }
+
+    func resume(
+        requestID: UUID,
+        outcome: HaloVoiceInstructionCaptureOutcome
+    ) {
+        guard let continuation = continuations.removeValue(forKey: requestID) else {
+            return
+        }
+        continuation.resume(returning: HaloVoiceInstructionCaptureResult(
+            requestID: requestID,
+            outcome: outcome
+        ))
+    }
+}
+
+@MainActor
 private final class EnginePasteDeliveryService: PasteDeliveryServicing {
     struct PrepareCall: Equatable {
         let text: String
@@ -611,6 +707,313 @@ struct HaloReviewRefinementEngineTests {
         #expect(harness.outcomes.counts[.apply] == 1)
     }
 
+    @Test func successfulVoiceRefinementReusesFrozenRouteAndAppendsChangesRevision() async throws {
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [.result(.instruction("Make it more concise"))]
+        )
+        let refinement = EngineRefinementService(
+            behaviors: [.success("Concise final version")]
+        )
+        let harness = try makeHarness(
+            refinement: refinement,
+            voiceCapture: voiceCapture
+        )
+        let transcriptionConfiguration = makeVoiceTranscriptionConfiguration()
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: transcriptionConfiguration),
+            notifyReady: false
+        ))
+        #expect(harness.engine.isHaloVoiceRefinementReady)
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForVoiceRefinement(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 1
+        )
+
+        let capturedConfiguration = try #require(voiceCapture.configurations.first)
+        #expect(capturedConfiguration.model.id == transcriptionConfiguration.model.id)
+        #expect(capturedConfiguration.model.provider == .deepgram)
+        #expect(capturedConfiguration.language == "pt")
+        #expect(capturedConfiguration.isRealtimeEnabled)
+        #expect(capturedConfiguration.requestContext.language == "pt")
+        #expect(capturedConfiguration.requestContext.prompt == "Frozen voice prompt")
+
+        let request = try #require(refinement.requests.first)
+        #expect(request.requestID == voiceCapture.requestIDs.first)
+        #expect(request.spokenDirective?.text == "Make it more concise")
+        #expect(request.rawTranscript == "Raw words")
+        #expect(request.selectedRevisionText == "Initial version")
+        #expect(request.configuration.provider == .openAI)
+        #expect(request.configuration.openAIAuthMode == .oauth)
+        #expect(request.configuration.modelName == "gpt-5.6-luna")
+        #expect(request.contextSnapshot?.clipboardText == "Frozen clipboard")
+
+        let state = try #require(harness.engine.haloReviewState)
+        let selected = try #require(state.selectedRevision)
+        #expect(state.revisions.count == 2)
+        #expect(state.lens == .changes)
+        #expect(state.comparisonBaseText == "Initial version")
+        #expect(selected.action == .voiceRefinement)
+        #expect(selected.parentID == state.revisions.first?.id)
+        #expect(selected.text == "Concise final version")
+        #expect(selected.payload.pastedText == "licensed:Concise final version ")
+        #expect(harness.outcomes.counts[.voiceRefinementStarted] == 1)
+        #expect(harness.outcomes.counts[.voiceRefinementCompleted] == 1)
+    }
+
+    @Test func cancellingVoiceCaptureRejectsAProviderResultThatArrivesLate() async throws {
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [.suspended]
+        )
+        let refinement = EngineRefinementService(behaviors: [])
+        let harness = try makeHarness(
+            refinement: refinement,
+            voiceCapture: voiceCapture
+        )
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
+            notifyReady: false
+        ))
+        let originalRevisionID = try #require(
+            harness.engine.haloReviewState?.selectedRevision?.id
+        )
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForVoiceCapture(in: voiceCapture, expectedCount: 1)
+        let requestID = try #require(voiceCapture.requestIDs.first)
+        #expect(harness.engine.haloReviewState?.isVoiceRefinementActive == true)
+
+        // This is the same command the review shortcut router uses for Escape
+        // and configured Cancel Recorder actions.
+        #expect(harness.engine.handleHaloReviewVoiceShortcutCommand(.cancelCapture))
+        #expect(voiceCapture.cancellationRequestIDs == [requestID])
+        #expect(harness.engine.haloReviewState?.isVoiceRefinementActive == false)
+        #expect(harness.engine.haloReviewState?.notice == .voiceRefinementCancelled)
+
+        voiceCapture.resume(
+            requestID: requestID,
+            outcome: .instruction("This stale instruction must be ignored")
+        )
+        await waitForVoiceCaptureToFinish(in: voiceCapture)
+
+        #expect(refinement.requests.isEmpty)
+        #expect(harness.engine.haloReviewState?.revisions.count == 1)
+        #expect(harness.engine.haloReviewState?.selectedRevision?.id == originalRevisionID)
+        #expect(harness.outcomes.counts[.voiceRefinementStarted] == 1)
+        #expect(harness.outcomes.counts[.voiceRefinementCancelled] == 1)
+        #expect(harness.outcomes.counts[.voiceRefinementCompleted, default: 0] == 0)
+    }
+
+    @Test func emptyAndFailedVoiceCapturePreserveTheSelectedParent() async throws {
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [
+                .result(.empty),
+                .result(.failed(.transcriptionTimedOut)),
+            ]
+        )
+        let refinement = EngineRefinementService(behaviors: [])
+        let harness = try makeHarness(
+            refinement: refinement,
+            voiceCapture: voiceCapture
+        )
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
+            notifyReady: false
+        ))
+        let originalRevisionID = try #require(
+            harness.engine.haloReviewState?.selectedRevision?.id
+        )
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForVoiceRefinement(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 1
+        )
+        #expect(harness.engine.haloReviewState?.revisions.count == 1)
+        #expect(harness.engine.haloReviewState?.selectedRevision?.id == originalRevisionID)
+        #expect(
+            harness.engine.haloReviewState?.notice
+                == .voiceRefinementFailed(.emptyInstruction)
+        )
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForVoiceRefinement(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 2
+        )
+        #expect(harness.engine.haloReviewState?.revisions.count == 1)
+        #expect(harness.engine.haloReviewState?.selectedRevision?.id == originalRevisionID)
+        #expect(
+            harness.engine.haloReviewState?.notice
+                == .voiceRefinementFailed(.transcriptionFailed)
+        )
+        #expect(refinement.requests.isEmpty)
+        #expect(harness.outcomes.counts[.voiceRefinementEmpty] == 1)
+        #expect(harness.outcomes.counts[.voiceRefinementTranscriptionFailed] == 1)
+    }
+
+    @Test func mismatchedCaptureResultIdentityFailsWithoutRefining() async throws {
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [
+                .mismatchedRequestID(.instruction("Ignore this stale instruction"))
+            ]
+        )
+        let refinement = EngineRefinementService(behaviors: [])
+        let harness = try makeHarness(
+            refinement: refinement,
+            voiceCapture: voiceCapture
+        )
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
+            notifyReady: false
+        ))
+        let originalRevisionID = try #require(
+            harness.engine.haloReviewState?.selectedRevision?.id
+        )
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForVoiceRefinement(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 1
+        )
+
+        #expect(refinement.requests.isEmpty)
+        #expect(harness.engine.haloReviewState?.revisions.count == 1)
+        #expect(harness.engine.haloReviewState?.selectedRevision?.id == originalRevisionID)
+        #expect(
+            harness.engine.haloReviewState?.notice
+                == .voiceRefinementFailed(.transcriptionFailed)
+        )
+        #expect(harness.outcomes.counts[.voiceRefinementTranscriptionFailed] == 1)
+    }
+
+    @Test func oversizedVoiceDirectiveShowsSpecificFailureAndCountsAsRefinementFailure() async throws {
+        let oversizedInstruction = String(
+            repeating: "a",
+            count: HaloSpokenRefinementDirective.maximumCharacterCount + 1
+        )
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [.result(.instruction(oversizedInstruction))]
+        )
+        let refinement = EngineRefinementService(behaviors: [])
+        let harness = try makeHarness(
+            refinement: refinement,
+            voiceCapture: voiceCapture
+        )
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
+            notifyReady: false
+        ))
+        let originalRevisionID = try #require(
+            harness.engine.haloReviewState?.selectedRevision?.id
+        )
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForVoiceRefinement(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 1
+        )
+
+        #expect(harness.engine.haloReviewState?.revisions.count == 1)
+        #expect(harness.engine.haloReviewState?.selectedRevision?.id == originalRevisionID)
+        #expect(
+            harness.engine.haloReviewState?.notice
+                == .voiceRefinementFailed(.tooLongInstruction)
+        )
+        #expect(refinement.requests.isEmpty)
+        #expect(harness.outcomes.counts[.voiceRefinementEmpty, default: 0] == 0)
+        #expect(harness.outcomes.counts[.voiceRefinementEnhancementFailed] == 1)
+    }
+
+    @Test func activeVoiceOperationBlocksCompetingReviewActions() async throws {
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [.suspended]
+        )
+        let refinement = EngineRefinementService(behaviors: [.success("Unused")])
+        let harness = try makeHarness(
+            refinement: refinement,
+            voiceCapture: voiceCapture
+        )
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
+            notifyReady: false
+        ))
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForVoiceCapture(in: voiceCapture, expectedCount: 1)
+        let requestID = try #require(voiceCapture.requestIDs.first)
+
+        #expect(!harness.engine.beginHaloVoiceRefinement())
+        #expect(!harness.engine.beginHaloRefinement(.formal))
+        #expect(!harness.engine.beginHaloManualEdit())
+        harness.engine.copyPendingPasteReview()
+        await harness.engine.approvePendingPasteReview()
+        #expect(harness.paste.copyCount == 0)
+        #expect(harness.paste.deliveryPayloads.isEmpty)
+        #expect(refinement.requests.isEmpty)
+
+        #expect(harness.engine.cancelHaloVoiceRefinementIfActive())
+        voiceCapture.resume(requestID: requestID, outcome: .cancelled)
+        await waitForVoiceCaptureToFinish(in: voiceCapture)
+    }
+
+    @Test func stopRequestedBeforeCaptureStartsIsAppliedOnListeningEvent() async throws {
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [.suspended]
+        )
+        let harness = try makeHarness(
+            refinement: EngineRefinementService(behaviors: []),
+            voiceCapture: voiceCapture
+        )
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
+            notifyReady: false
+        ))
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        #expect(harness.engine.requestStopHaloVoiceRefinementCapture())
+        #expect(voiceCapture.stopRequestIDs.isEmpty)
+
+        await waitForVoiceCapture(in: voiceCapture, expectedCount: 1)
+        let requestID = try #require(voiceCapture.requestIDs.first)
+        #expect(voiceCapture.stopRequestIDs == [requestID])
+
+        #expect(harness.engine.cancelHaloVoiceRefinementIfActive())
+        voiceCapture.resume(requestID: requestID, outcome: .cancelled)
+        await waitForVoiceCaptureToFinish(in: voiceCapture)
+    }
+
+    @Test func revisionLimitRejectsVoiceCaptureBeforeAcquiringTheMicrophone() async throws {
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [.result(.instruction("This must not be captured"))]
+        )
+        let harness = try makeHarness(
+            refinement: EngineRefinementService(behaviors: []),
+            voiceCapture: voiceCapture
+        )
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
+            notifyReady: false
+        ))
+
+        for version in 2...6 {
+            #expect(harness.engine.beginHaloManualEdit())
+            #expect(harness.engine.updateHaloManualEdit("Manual version \(version)"))
+            #expect(harness.engine.saveHaloManualEdit())
+        }
+        #expect(harness.engine.haloReviewState?.revisions.count == 6)
+
+        #expect(!harness.engine.beginHaloVoiceRefinement())
+        #expect(voiceCapture.requestIDs.isEmpty)
+        #expect(harness.engine.haloReviewState?.notice == .revisionLimitReached)
+        #expect(harness.outcomes.counts[.voiceRefinementStarted, default: 0] == 0)
+    }
+
     @Test func useOriginalAndManualEditPrepareExactImmutablePayloads() async throws {
         let harness = try makeHarness(refinement: EngineRefinementService(behaviors: []))
         let transcriptionID = UUID()
@@ -657,11 +1060,13 @@ struct HaloReviewRefinementEngineTests {
         let paste: EnginePasteDeliveryService
         let presenter: EngineHaloPresenter
         let outcomes: EngineOutcomeRecorder
+        let voiceCapture: EngineVoiceInstructionCaptureService
     }
 
     private func makeHarness(
         refinement: EngineRefinementService,
-        destinationService: (any PasteReviewDestinationServicing)? = nil
+        destinationService: (any PasteReviewDestinationServicing)? = nil,
+        voiceCapture: EngineVoiceInstructionCaptureService? = nil
     ) throws -> Harness {
         let schema = Schema([
             Transcription.self,
@@ -684,6 +1089,8 @@ struct HaloReviewRefinementEngineTests {
         let paste = EnginePasteDeliveryService()
         let presenter = EngineHaloPresenter()
         let outcomes = EngineOutcomeRecorder()
+        let resolvedVoiceCapture = voiceCapture
+            ?? EngineVoiceInstructionCaptureService(behaviors: [])
         let engine = VoiceInkEngine(
             modelContext: container.mainContext,
             whisperModelManager: whisper,
@@ -692,6 +1099,7 @@ struct HaloReviewRefinementEngineTests {
             pasteDeliveryService: paste,
             pasteReviewDestinationService: destinationService ?? EngineDestinationService(),
             haloRefinementService: refinement,
+            haloVoiceInstructionCaptureService: resolvedVoiceCapture,
             haloOutcomeRecorder: outcomes
         )
         engine.recorderUIManager = presenter
@@ -700,14 +1108,16 @@ struct HaloReviewRefinementEngineTests {
             engine: engine,
             paste: paste,
             presenter: presenter,
-            outcomes: outcomes
+            outcomes: outcomes,
+            voiceCapture: resolvedVoiceCapture
         )
     }
 
     private func makeReview(
         transcriptionID: UUID = UUID(),
         destination: PasteReviewDestinationSnapshot? = nil,
-        deliveryReviewReason: String? = nil
+        deliveryReviewReason: String? = nil,
+        transcriptionConfiguration: TranscriptionRuntimeConfiguration? = nil
     ) -> PendingPasteReview {
         let prompt = CustomPrompt(
             title: "Voice Dictation",
@@ -747,13 +1157,41 @@ struct HaloReviewRefinementEngineTests {
             modelLabel: "gpt-5.6-luna",
             deliveryReviewReason: deliveryReviewReason,
             output: output,
+            transcriptionConfiguration: transcriptionConfiguration,
             enhancementConfiguration: configuration,
+            refinementInputSnapshot: HaloRefinementInputSnapshot(
+                originalModeRequirements: "Keep every material fact.",
+                customVocabulary: "Important Vocabulary: VoiceInk"
+            ),
             frozenContext: RecordingContextSnapshot(
                 selectedText: "Frozen selection",
                 clipboardText: "Frozen clipboard",
                 screenText: "Frozen screen"
             ),
             destination: destination
+        )
+    }
+
+    private func makeVoiceTranscriptionConfiguration() -> TranscriptionRuntimeConfiguration {
+        TranscriptionRuntimeConfiguration(
+            mode: nil,
+            model: CloudModel(
+                name: "frozen-voice-model",
+                displayName: "Frozen Voice Model",
+                description: "Engine orchestration test model",
+                provider: .deepgram,
+                speed: 1,
+                accuracy: 1,
+                isMultilingual: true,
+                supportsStreaming: true,
+                supportedLanguages: ["pt": "Portuguese"]
+            ),
+            language: "pt",
+            isRealtimeEnabled: true,
+            requestContext: TranscriptionRequestContext(
+                language: "pt",
+                prompt: "Frozen voice prompt"
+            )
         )
     }
 
@@ -775,6 +1213,47 @@ struct HaloReviewRefinementEngineTests {
             try? await Task.sleep(for: .milliseconds(5))
         }
         Issue.record("Refinement did not finish")
+    }
+
+    private func waitForVoiceCapture(
+        in service: EngineVoiceInstructionCaptureService,
+        expectedCount: Int
+    ) async {
+        for _ in 0..<200 {
+            if service.requestIDs.count >= expectedCount {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Voice capture did not start")
+    }
+
+    private func waitForVoiceRefinement(
+        in engine: VoiceInkEngine,
+        capture: EngineVoiceInstructionCaptureService,
+        expectedCaptureCount: Int
+    ) async {
+        for _ in 0..<200 {
+            if capture.requestIDs.count >= expectedCaptureCount,
+                engine.haloReviewState?.isVoiceRefinementActive != true
+            {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Voice refinement did not finish")
+    }
+
+    private func waitForVoiceCaptureToFinish(
+        in service: EngineVoiceInstructionCaptureService
+    ) async {
+        for _ in 0..<200 {
+            if service.activeRequestID == nil {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Voice capture did not finish")
     }
 
     private func waitForCancellation(in service: EngineRefinementService) async {

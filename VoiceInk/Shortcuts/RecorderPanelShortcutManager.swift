@@ -258,7 +258,29 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
             shortcuts[.cancelRecorder] = cancelShortcut
         }
 
-        var builtInShortcuts: [(ShortcutAction, Shortcut)] = [
+        var builtInShortcuts = pasteReviewBuiltInShortcuts
+        if !includePlainReturn {
+            builtInShortcuts.removeAll { action, _ in
+                action == .recorderPanelApply
+            }
+        }
+
+        for (action, shortcut) in builtInShortcuts
+        where cancelShortcut?.conflicts(with: shortcut) != true {
+            shortcuts[action] = shortcut
+        }
+        return shortcuts
+    }
+
+    /// Review commands take precedence over user recording shortcuts. This
+    /// list is shared with shortcut validation and the global recording
+    /// monitor so an existing saved collision cannot trigger two actions.
+    nonisolated static var pasteReviewBuiltInShortcuts: [(ShortcutAction, Shortcut)] {
+        [
+            (
+                .recorderPanelApply,
+                .key(keyCode: UInt16(kVK_Return), modifierFlags: [])
+            ),
             (
                 .recorderPanelToggleHaloDelivery,
                 .key(keyCode: UInt16(kVK_Return), modifierFlags: [.command])
@@ -288,21 +310,14 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
                 .key(keyCode: UInt16(kVK_ANSI_RightBracket), modifierFlags: [.command])
             ),
         ]
-        if includePlainReturn {
-            builtInShortcuts.insert(
-                (
-                    .recorderPanelApply,
-                    .key(keyCode: UInt16(kVK_Return), modifierFlags: [])
-                ),
-                at: 0
-            )
-        }
+    }
 
-        for (action, shortcut) in builtInShortcuts
-        where cancelShortcut?.conflicts(with: shortcut) != true {
-            shortcuts[action] = shortcut
+    nonisolated static func isBuiltInPasteReviewShortcut(
+        _ candidate: Shortcut
+    ) -> Bool {
+        pasteReviewBuiltInShortcuts.contains { _, shortcut in
+            shortcut.conflicts(with: candidate)
         }
-        return shortcuts
     }
 
     private func handleRecorderPanelShortcut(_ action: ShortcutAction) async {

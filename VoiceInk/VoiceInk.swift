@@ -146,6 +146,7 @@ struct VoiceInkApp: App {
 
         // 7. Create other services that depend on engine
         let recordingShortcutManager = RecordingShortcutManager(engine: engine, recorderUIManager: recorderUIManager)
+        recordingShortcutManager.setHaloReviewVoiceShortcutRouter(engine)
         _recordingShortcutManager = StateObject(wrappedValue: recordingShortcutManager)
 
         let menuBarManager = MenuBarManager()

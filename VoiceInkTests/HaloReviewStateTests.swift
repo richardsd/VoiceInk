@@ -272,6 +272,197 @@ struct HaloReviewStateTests {
         #expect(state.selectedRevisionID == parentID)
     }
 
+    @Test func voiceRefinementAcceptsOnlyOrderedTransitionsAndRejectsStaleResults() throws {
+        let start = Date(timeIntervalSince1970: 3_000)
+        var state = makeState(raw: "Raw", final: "Initial", now: start)
+        let parent = try #require(state.selectedRevision)
+        let requestID = UUID()
+
+        let beginEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .beginVoiceRefinement(requestID: requestID, at: start)
+        )
+        #expect(
+            beginEffect == .voiceRefinementStarted(
+                HaloVoiceRefinementRequest(id: requestID, baseRevisionID: parent.id)
+            )
+        )
+        #expect(
+            state.voiceRefinementPhase
+                == .listening(HaloVoiceRefinementRequest(id: requestID, baseRevisionID: parent.id))
+        )
+
+        let outOfOrderEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .finishVoiceTranscription(requestID: requestID, at: start)
+        )
+        #expect(outOfOrderEffect == .ignored)
+        let staleCaptureEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .finishVoiceCapture(requestID: UUID(), at: start)
+        )
+        #expect(staleCaptureEffect == .ignored)
+
+        let captureEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .finishVoiceCapture(requestID: requestID, at: start)
+        )
+        #expect(
+            captureEffect == .voiceRefinementPhaseChanged(
+                .transcribing(HaloVoiceRefinementRequest(id: requestID, baseRevisionID: parent.id))
+            )
+        )
+        let transcriptionEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .finishVoiceTranscription(requestID: requestID, at: start)
+        )
+        #expect(
+            transcriptionEffect == .voiceRefinementPhaseChanged(
+                .refining(HaloVoiceRefinementRequest(id: requestID, baseRevisionID: parent.id))
+            )
+        )
+
+        let revision = makeRevision(
+            text: "Voice-refined result",
+            parentID: parent.id,
+            action: .voiceRefinement
+        )
+        let staleCompletionEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .completeVoiceRefinement(
+                requestID: UUID(),
+                revision: revision,
+                at: start
+            )
+        )
+        #expect(staleCompletionEffect == .ignored)
+        #expect(state.revisions.count == 1)
+
+        let completionEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .completeVoiceRefinement(
+                requestID: requestID,
+                revision: revision,
+                at: start
+            )
+        )
+        #expect(completionEffect == .revisionAppended(revision.id))
+        #expect(state.selectedRevision?.action == .voiceRefinement)
+        #expect(state.selectedRevision?.text == "Voice-refined result")
+        #expect(state.comparisonBaseText == "Initial")
+        #expect(state.lens == .changes)
+        #expect(state.voiceRefinementPhase == .idle)
+    }
+
+    @Test func voiceOperationIsMutuallyExclusiveAndEscapeCancelsItBeforeReview() throws {
+        let start = Date(timeIntervalSince1970: 4_000)
+        var state = makeState(raw: "Raw", final: "Initial", now: start)
+        let parent = try #require(state.selectedRevision)
+        let requestID = UUID()
+        _ = state.beginVoiceRefinement(requestID: requestID, at: start)
+
+        #expect(state.isVoiceRefinementActive)
+        #expect(!state.canResolveReview)
+        let duplicateVoiceRequest = state.beginVoiceRefinement()
+        let presetRequest = state.beginRefinement(action: .shorter)
+        #expect(duplicateVoiceRequest == nil)
+        #expect(presetRequest == nil)
+        let didBeginManualEdit = state.beginManualEdit()
+        let didSelectParent = state.selectRevision(id: parent.id)
+        #expect(!didBeginManualEdit)
+        #expect(!didSelectParent)
+        let copyEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .copied(succeeded: true, at: start)
+        )
+        #expect(copyEffect == .ignored)
+
+        let cancelEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .cancelActiveTransientAction(at: start.addingTimeInterval(5))
+        )
+        #expect(cancelEffect == .voiceRefinementCancelled(requestID))
+        #expect(state.voiceRefinementPhase == .idle)
+        #expect(state.notice == .voiceRefinementCancelled)
+        #expect(state.selectedRevisionID == parent.id)
+        #expect(state.canResolveReview)
+
+        // A second Escape has no transient work to consume, allowing the
+        // caller to continue with its existing review-cancel behavior.
+        let secondCancelEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .cancelActiveTransientAction(at: start.addingTimeInterval(6))
+        )
+        #expect(secondCancelEffect == .ignored)
+    }
+
+    @Test func voiceFailureIsNonDestructiveAndResetsPausedInactivity() throws {
+        let start = Date(timeIntervalSince1970: 5_000)
+        var state = makeState(raw: "Raw", final: "Initial", now: start)
+        let originalRevision = try #require(state.selectedRevision)
+        let requestID = UUID()
+        _ = state.beginVoiceRefinement(
+            requestID: requestID,
+            at: start.addingTimeInterval(119)
+        )
+
+        let pausedTimeoutEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .timeout(at: start.addingTimeInterval(500))
+        )
+        #expect(pausedTimeoutEffect == .ignored)
+        #expect(!state.isExpired)
+
+        let failureEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .failVoiceRefinement(
+                requestID: requestID,
+                failure: .transcriptionFailed,
+                at: start.addingTimeInterval(500)
+            )
+        )
+        #expect(failureEffect == .voiceRefinementPhaseChanged(.failed(.transcriptionFailed)))
+        #expect(state.selectedRevisionID == originalRevision.id)
+        #expect(state.revisions.count == 1)
+        #expect(state.notice == .voiceRefinementFailed(.transcriptionFailed))
+        #expect(state.secondsRemaining(at: start.addingTimeInterval(619)) == 1)
+        let expirationEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .timeout(at: start.addingTimeInterval(620))
+        )
+        #expect(expirationEffect == .expired)
+    }
+
+    @Test func oversizedVoiceDirectiveFailureIsDistinctAndNonDestructive() throws {
+        let start = Date(timeIntervalSince1970: 6_000)
+        var state = makeState(raw: "Raw", final: "Initial", now: start)
+        let originalRevision = try #require(state.selectedRevision)
+        let requestID = UUID()
+        let beginEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .beginVoiceRefinement(requestID: requestID, at: start)
+        )
+        #expect(beginEffect != .ignored)
+
+        let failureEffect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .failVoiceRefinement(
+                requestID: requestID,
+                failure: .tooLongInstruction,
+                at: start.addingTimeInterval(1)
+            )
+        )
+
+        #expect(failureEffect == .voiceRefinementPhaseChanged(.failed(.tooLongInstruction)))
+        #expect(state.selectedRevisionID == originalRevision.id)
+        #expect(state.revisions.count == 1)
+        #expect(state.notice == .voiceRefinementFailed(.tooLongInstruction))
+        #expect(
+            HaloVoiceRefinementFailure.tooLongInstruction.message
+                == String(localized: "The spoken change is too long. Try a shorter instruction.")
+        )
+    }
+
     private func makeState(
         raw: String,
         final: String,

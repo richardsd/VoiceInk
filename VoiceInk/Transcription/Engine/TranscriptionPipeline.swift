@@ -76,6 +76,7 @@ class TranscriptionPipeline {
         var outputForDelivery: OutputRuntimeConfiguration?
         var responseConfig: EnhancementRuntimeConfiguration?
         var enhancementConfigForDelivery: EnhancementRuntimeConfiguration?
+        var haloRefinementInputSnapshot: HaloRefinementInputSnapshot?
         var didUseRawEnhancementFallback = false
         var frozenRecordingContext: RecordingContextSnapshot?
         var didResolveRecordingContext = false
@@ -147,6 +148,12 @@ class TranscriptionPipeline {
             let formattingConfiguration = resolveFormattingConfiguration()
             let resolvedEnhancementConfiguration = enhancementConfiguration()
             enhancementConfigForDelivery = resolvedEnhancementConfiguration
+            if let resolvedEnhancementConfiguration {
+                haloRefinementInputSnapshot = enhancementService?
+                    .captureHaloRefinementInputSnapshot(
+                        for: resolvedEnhancementConfiguration
+                    )
+            }
             let resolvedOutputConfiguration = outputConfiguration()
             onOutputConfigurationResolved(resolvedOutputConfiguration)
             let resolvedMode = formattingConfiguration.mode ?? resolvedEnhancementConfiguration?.mode
@@ -323,6 +330,7 @@ class TranscriptionPipeline {
                 transcription: transcription,
                 text: finalText,
                 output: resolvedDeliveryOutput,
+                transcriptionConfiguration: transcriptionConfiguration,
                 enhancementConfiguration: enhancementConfigForDelivery,
                 responseConfig: responseConfig,
                 responseError: responseError,
@@ -330,6 +338,7 @@ class TranscriptionPipeline {
                 isAssistantFollowUp: assistant.isFollowUp,
                 usesHaloDelivery: usesHaloDelivery,
                 haloSessionOverride: haloSessionOverride(),
+                refinementInputSnapshot: haloRefinementInputSnapshot,
                 frozenContext: frozenRecordingContext
             ),
             actions: TranscriptionDelivery.Actions(

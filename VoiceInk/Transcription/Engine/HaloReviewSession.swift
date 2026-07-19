@@ -62,6 +62,9 @@ enum HaloRefinementAction: String, CaseIterable, Equatable, Identifiable, Sendab
 enum HaloReviewRevisionAction: Equatable, Sendable {
     case initial
     case refinement(HaloRefinementAction)
+    /// A voice-directed replacement. The recognized instruction is
+    /// intentionally not retained in revision metadata.
+    case voiceRefinement
     case original
     case manualEdit
 }
@@ -112,7 +115,9 @@ struct HaloReviewSession {
     let enhancementWarning: String?
     let deliveryReviewReason: String?
     let output: OutputRuntimeConfiguration
+    let transcriptionConfiguration: TranscriptionRuntimeConfiguration?
     let enhancementConfiguration: EnhancementRuntimeConfiguration?
+    let refinementInputSnapshot: HaloRefinementInputSnapshot?
     let frozenContext: RecordingContextSnapshot?
     let createdAt: Date
 
@@ -126,7 +131,9 @@ struct HaloReviewSession {
         enhancementWarning: String?,
         deliveryReviewReason: String? = nil,
         output: OutputRuntimeConfiguration,
+        transcriptionConfiguration: TranscriptionRuntimeConfiguration? = nil,
         enhancementConfiguration: EnhancementRuntimeConfiguration?,
+        refinementInputSnapshot: HaloRefinementInputSnapshot? = nil,
         frozenContext: RecordingContextSnapshot?,
         createdAt: Date = Date()
     ) {
@@ -139,7 +146,9 @@ struct HaloReviewSession {
         self.enhancementWarning = enhancementWarning
         self.deliveryReviewReason = deliveryReviewReason
         self.output = output
+        self.transcriptionConfiguration = transcriptionConfiguration
         self.enhancementConfiguration = enhancementConfiguration
+        self.refinementInputSnapshot = refinementInputSnapshot
         self.frozenContext = frozenContext
         self.createdAt = createdAt
     }
@@ -156,6 +165,62 @@ struct HaloReviewManualEdit: Equatable, Sendable {
     var text: String
 }
 
+struct HaloVoiceRefinementRequest: Equatable, Sendable {
+    let id: UUID
+    let baseRevisionID: UUID
+}
+
+enum HaloVoiceRefinementFailure: Equatable, Sendable {
+    case emptyInstruction
+    case tooLongInstruction
+    case captureUnavailable
+    case captureFailed
+    case transcriptionFailed
+    case refinementFailed
+    case emptyResult
+    case unchangedResult
+
+    var message: String {
+        switch self {
+        case .emptyInstruction:
+            return String(localized: "No spoken change was detected.")
+        case .tooLongInstruction:
+            return String(localized: "The spoken change is too long. Try a shorter instruction.")
+        case .captureUnavailable:
+            return String(localized: "Voice refinement cannot access the microphone.")
+        case .captureFailed:
+            return String(localized: "The spoken change could not be recorded.")
+        case .transcriptionFailed:
+            return String(localized: "The spoken change could not be understood.")
+        case .refinementFailed:
+            return String(localized: "The spoken change could not be applied. Your current version is unchanged.")
+        case .emptyResult:
+            return String(localized: "The spoken refinement returned no usable text.")
+        case .unchangedResult:
+            return String(localized: "The spoken refinement did not change this version.")
+        }
+    }
+}
+
+enum HaloVoiceRefinementPhase: Equatable, Sendable {
+    case idle
+    case listening(HaloVoiceRefinementRequest)
+    case transcribing(HaloVoiceRefinementRequest)
+    case refining(HaloVoiceRefinementRequest)
+    case failed(HaloVoiceRefinementFailure)
+
+    var activeRequest: HaloVoiceRefinementRequest? {
+        switch self {
+        case .listening(let request), .transcribing(let request), .refining(let request):
+            return request
+        case .idle, .failed:
+            return nil
+        }
+    }
+
+    var isActive: Bool { activeRequest != nil }
+}
+
 enum HaloReviewNotice: Equatable, Sendable {
     case copied
     case copyFailed
@@ -166,6 +231,8 @@ enum HaloReviewNotice: Equatable, Sendable {
     case revisionLimitReached
     case emptyManualEdit
     case unchangedManualEdit
+    case voiceRefinementCancelled
+    case voiceRefinementFailed(HaloVoiceRefinementFailure)
 
     var message: String {
         switch self {
@@ -187,6 +254,10 @@ enum HaloReviewNotice: Equatable, Sendable {
             return String(localized: "Manual edits cannot be empty.")
         case .unchangedManualEdit:
             return String(localized: "The manual edit did not change this version.")
+        case .voiceRefinementCancelled:
+            return String(localized: "Voice refinement cancelled")
+        case .voiceRefinementFailed(let failure):
+            return failure.message
         }
     }
 }
@@ -200,6 +271,7 @@ struct HaloReviewState {
     private(set) var selectedRevisionID: UUID
     private(set) var lens: HaloReviewLens
     private(set) var refinementRequest: HaloReviewRefinementRequest?
+    private(set) var voiceRefinementPhase: HaloVoiceRefinementPhase
     private(set) var manualEdit: HaloReviewManualEdit?
     private(set) var notice: HaloReviewNotice?
     private(set) var expiresAt: Date
@@ -215,6 +287,7 @@ struct HaloReviewState {
         selectedRevisionID = initialRevision.id
         lens = .final
         refinementRequest = nil
+        voiceRefinementPhase = .idle
         manualEdit = nil
         notice = nil
         expiresAt = now.addingTimeInterval(Self.inactivityLifetime)
@@ -238,22 +311,30 @@ struct HaloReviewState {
     }
 
     var canRefine: Bool {
-        !isExpired && refinementRequest == nil && manualEdit == nil
+        !isExpired && refinementRequest == nil && !voiceRefinementPhase.isActive && manualEdit == nil
             && revisions.count < Self.maximumRevisionCount
     }
 
     var isRefining: Bool { refinementRequest != nil }
+    var isVoiceRefinementActive: Bool { voiceRefinementPhase.isActive }
     var isEditingManually: Bool { manualEdit != nil }
+    var isReviewOperationActive: Bool {
+        isRefining || isVoiceRefinementActive || isEditingManually
+    }
+
+    var canResolveReview: Bool {
+        !isExpired && !isReviewOperationActive
+    }
 
     func secondsRemaining(at date: Date = Date()) -> Int {
-        if isRefining {
+        if isRefining || isVoiceRefinementActive {
             return max(1, Int(ceil(expiresAt.timeIntervalSince(date))))
         }
         return max(0, Int(ceil(expiresAt.timeIntervalSince(date))))
     }
 
     mutating func touch(at date: Date = Date()) {
-        guard !isExpired, !isRefining else { return }
+        guard !isExpired, !isRefining, !isVoiceRefinementActive else { return }
         expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
     }
 
@@ -270,7 +351,7 @@ struct HaloReviewState {
 
     @discardableResult
     mutating func selectRevision(id: UUID, at date: Date = Date()) -> Bool {
-        guard !isExpired, !isRefining, !isEditingManually,
+        guard !isExpired, !isRefining, !isVoiceRefinementActive, !isEditingManually,
             revisions.contains(where: { $0.id == id })
         else {
             return false
@@ -295,7 +376,7 @@ struct HaloReviewState {
         requestID: UUID = UUID(),
         at date: Date = Date()
     ) -> HaloReviewRefinementRequest? {
-        guard !isExpired, refinementRequest == nil, manualEdit == nil,
+        guard !isExpired, refinementRequest == nil, !voiceRefinementPhase.isActive, manualEdit == nil,
             let selectedRevision
         else {
             return nil
@@ -388,11 +469,134 @@ struct HaloReviewState {
     }
 
     @discardableResult
+    mutating func beginVoiceRefinement(
+        requestID: UUID = UUID(),
+        at date: Date = Date()
+    ) -> HaloVoiceRefinementRequest? {
+        guard !isExpired, refinementRequest == nil, !voiceRefinementPhase.isActive,
+            manualEdit == nil, let selectedRevision
+        else {
+            return nil
+        }
+        guard revisions.count < Self.maximumRevisionCount else {
+            notice = .revisionLimitReached
+            touch(at: date)
+            return nil
+        }
+
+        // Freeze expiry while capture, transcription, or replacement
+        // refinement is active. Every terminal path grants a fresh window.
+        expiresAt = max(expiresAt, date.addingTimeInterval(1))
+        let request = HaloVoiceRefinementRequest(
+            id: requestID,
+            baseRevisionID: selectedRevision.id
+        )
+        voiceRefinementPhase = .listening(request)
+        notice = nil
+        return request
+    }
+
+    @discardableResult
+    mutating func finishVoiceCapture(
+        requestID: UUID,
+        at date: Date = Date()
+    ) -> Bool {
+        guard case .listening(let request) = voiceRefinementPhase,
+            request.id == requestID
+        else {
+            return false
+        }
+        voiceRefinementPhase = .transcribing(request)
+        expiresAt = max(expiresAt, date.addingTimeInterval(1))
+        return true
+    }
+
+    @discardableResult
+    mutating func finishVoiceTranscription(
+        requestID: UUID,
+        at date: Date = Date()
+    ) -> Bool {
+        guard case .transcribing(let request) = voiceRefinementPhase,
+            request.id == requestID
+        else {
+            return false
+        }
+        voiceRefinementPhase = .refining(request)
+        expiresAt = max(expiresAt, date.addingTimeInterval(1))
+        return true
+    }
+
+    @discardableResult
+    mutating func completeVoiceRefinement(
+        requestID: UUID,
+        revision: HaloReviewRevision,
+        at date: Date = Date()
+    ) -> CompletionResult {
+        guard case .refining(let request) = voiceRefinementPhase,
+            request.id == requestID,
+            request.baseRevisionID == revision.parentID,
+            revision.action == .voiceRefinement,
+            let base = revisions.first(where: { $0.id == request.baseRevisionID })
+        else {
+            return .stale
+        }
+
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+        let trimmed = revision.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            voiceRefinementPhase = .failed(.emptyResult)
+            notice = .voiceRefinementFailed(.emptyResult)
+            return .empty
+        }
+        guard revision.text != base.text else {
+            voiceRefinementPhase = .failed(.unchangedResult)
+            notice = .voiceRefinementFailed(.unchangedResult)
+            return .unchanged
+        }
+        guard revisions.count < Self.maximumRevisionCount else {
+            voiceRefinementPhase = .idle
+            notice = .revisionLimitReached
+            return .limitReached
+        }
+
+        revisions.append(revision)
+        selectedRevisionID = revision.id
+        lens = .changes
+        voiceRefinementPhase = .idle
+        notice = nil
+        return .appended
+    }
+
+    @discardableResult
+    mutating func finishVoiceRefinementFailure(
+        requestID: UUID,
+        failure: HaloVoiceRefinementFailure,
+        at date: Date = Date()
+    ) -> Bool {
+        guard voiceRefinementPhase.activeRequest?.id == requestID else { return false }
+        voiceRefinementPhase = .failed(failure)
+        notice = .voiceRefinementFailed(failure)
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+        return true
+    }
+
+    @discardableResult
+    mutating func cancelVoiceRefinement(at date: Date = Date()) -> HaloVoiceRefinementRequest? {
+        guard let request = voiceRefinementPhase.activeRequest else { return nil }
+        voiceRefinementPhase = .idle
+        notice = .voiceRefinementCancelled
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+        return request
+    }
+
+    @discardableResult
     mutating func useOriginal(
         revision: HaloReviewRevision,
         at date: Date = Date()
     ) -> Bool {
-        guard !isExpired, !isRefining, !isEditingManually else { return false }
+        guard !isExpired, !isRefining, !isVoiceRefinementActive, !isEditingManually else {
+            return false
+        }
 
         if let existing = revisions.first(where: { $0.action == .original }) {
             selectedRevisionID = existing.id
@@ -420,7 +624,7 @@ struct HaloReviewState {
 
     @discardableResult
     mutating func beginManualEdit(at date: Date = Date()) -> Bool {
-        guard !isExpired, !isRefining, manualEdit == nil,
+        guard !isExpired, !isRefining, !isVoiceRefinementActive, manualEdit == nil,
             revisions.count < Self.maximumRevisionCount,
             let selectedRevision
         else {
@@ -497,7 +701,9 @@ struct HaloReviewState {
 
     @discardableResult
     mutating func expireIfNeeded(at date: Date = Date()) -> Bool {
-        guard !isExpired, !isRefining, date >= expiresAt else { return false }
+        guard !isExpired, !isRefining, !isVoiceRefinementActive, date >= expiresAt else {
+            return false
+        }
         isExpired = true
         return true
     }
@@ -512,6 +718,13 @@ enum HaloReviewReducerAction: Equatable {
     case completeRefinement(requestID: UUID, revision: HaloReviewRevision, at: Date)
     case failRefinement(requestID: UUID, notice: HaloReviewNotice, at: Date)
     case cancelRefinement(at: Date)
+    case beginVoiceRefinement(requestID: UUID, at: Date)
+    case finishVoiceCapture(requestID: UUID, at: Date)
+    case finishVoiceTranscription(requestID: UUID, at: Date)
+    case completeVoiceRefinement(requestID: UUID, revision: HaloReviewRevision, at: Date)
+    case failVoiceRefinement(requestID: UUID, failure: HaloVoiceRefinementFailure, at: Date)
+    case cancelVoiceRefinement(at: Date)
+    case cancelActiveTransientAction(at: Date)
     case useOriginal(HaloReviewRevision, at: Date)
     case beginManualEdit(at: Date)
     case updateManualEdit(String, at: Date)
@@ -524,6 +737,9 @@ enum HaloReviewReducerAction: Equatable {
 enum HaloReviewReducerEffect: Equatable {
     case none
     case refinementStarted(HaloReviewRefinementRequest)
+    case voiceRefinementStarted(HaloVoiceRefinementRequest)
+    case voiceRefinementPhaseChanged(HaloVoiceRefinementPhase)
+    case voiceRefinementCancelled(UUID)
     case revisionAppended(UUID)
     case expired
     case ignored
@@ -547,6 +763,7 @@ enum HaloReviewReducer {
             return state.moveRevision(by: offset, at: date) ? .none : .ignored
 
         case .copied(let succeeded, let date):
+            guard !state.isVoiceRefinementActive else { return .ignored }
             state.setNotice(succeeded ? .copied : .copyFailed, at: date)
             return .none
 
@@ -577,6 +794,63 @@ enum HaloReviewReducer {
 
         case .cancelRefinement(let date):
             return state.cancelRefinement(at: date) ? .none : .ignored
+
+        case .beginVoiceRefinement(let requestID, let date):
+            guard let request = state.beginVoiceRefinement(
+                requestID: requestID,
+                at: date
+            ) else {
+                return .ignored
+            }
+            return .voiceRefinementStarted(request)
+
+        case .finishVoiceCapture(let requestID, let date):
+            guard state.finishVoiceCapture(requestID: requestID, at: date) else {
+                return .ignored
+            }
+            return .voiceRefinementPhaseChanged(state.voiceRefinementPhase)
+
+        case .finishVoiceTranscription(let requestID, let date):
+            guard state.finishVoiceTranscription(requestID: requestID, at: date) else {
+                return .ignored
+            }
+            return .voiceRefinementPhaseChanged(state.voiceRefinementPhase)
+
+        case .completeVoiceRefinement(let requestID, let revision, let date):
+            let result = state.completeVoiceRefinement(
+                requestID: requestID,
+                revision: revision,
+                at: date
+            )
+            return result == .appended ? .revisionAppended(revision.id) : .ignored
+
+        case .failVoiceRefinement(let requestID, let failure, let date):
+            guard state.finishVoiceRefinementFailure(
+                requestID: requestID,
+                failure: failure,
+                at: date
+            ) else {
+                return .ignored
+            }
+            return .voiceRefinementPhaseChanged(state.voiceRefinementPhase)
+
+        case .cancelVoiceRefinement(let date):
+            guard let request = state.cancelVoiceRefinement(at: date) else {
+                return .ignored
+            }
+            return .voiceRefinementCancelled(request.id)
+
+        case .cancelActiveTransientAction(let date):
+            if let request = state.cancelVoiceRefinement(at: date) {
+                return .voiceRefinementCancelled(request.id)
+            }
+            if state.cancelRefinement(at: date) {
+                return .none
+            }
+            if state.cancelManualEdit(at: date) {
+                return .none
+            }
+            return .ignored
 
         case .useOriginal(let revision, let date):
             return state.useOriginal(revision: revision, at: date)

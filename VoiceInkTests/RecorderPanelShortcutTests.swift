@@ -138,6 +138,52 @@ struct RecorderPanelShortcutTests {
         )
     }
 
+    @Test func reviewBuiltInsWinRecordingShortcutCollisions() {
+        let commandReturn = Shortcut.key(
+            keyCode: UInt16(kVK_Return),
+            modifierFlags: [.command]
+        )
+        let commandTwo = Shortcut.key(
+            keyCode: UInt16(kVK_ANSI_2),
+            modifierFlags: [.command]
+        )
+        let nonConflicting = Shortcut.key(
+            keyCode: UInt16(kVK_ANSI_R),
+            modifierFlags: [.control, .option]
+        )
+
+        #expect(RecorderPanelShortcutManager.isBuiltInPasteReviewShortcut(commandReturn))
+        #expect(RecorderPanelShortcutManager.isBuiltInPasteReviewShortcut(commandTwo))
+        #expect(!RecorderPanelShortcutManager.isBuiltInPasteReviewShortcut(nonConflicting))
+        #expect(
+            !RecordingShortcutManager.shouldInstallRecordingShortcut(
+                commandReturn,
+                whileReviewing: true
+            )
+        )
+        #expect(
+            RecordingShortcutManager.shouldInstallRecordingShortcut(
+                commandReturn,
+                whileReviewing: false
+            )
+        )
+        #expect(
+            RecordingShortcutManager.shouldInstallRecordingShortcut(
+                nonConflicting,
+                whileReviewing: true
+            )
+        )
+        #expect(
+            ShortcutValidator.validationError(
+                for: commandReturn,
+                action: .primaryRecording
+            )
+                == .alreadyUsedBy(
+                    ShortcutAction.recorderPanelToggleHaloDelivery.displayName
+                )
+        )
+    }
+
     @Test func manualEditingLeavesPlainReturnForMultilineTextAndKeepsCommandReturnSave() {
         let shortcuts = RecorderPanelShortcutManager.pasteReviewShortcuts(
             cancelShortcut: nil,

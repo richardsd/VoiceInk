@@ -351,6 +351,12 @@ final class HaloWindowManager {
             },
             onCancel: { [weak engine] in
                 Task { @MainActor in
+                    if engine?.cancelHaloVoiceRefinementIfActive() == true {
+                        return
+                    }
+                    if engine?.cancelHaloRefinementIfActive() == true {
+                        return
+                    }
                     await engine?.cancelPendingPasteReview()
                 }
             },
@@ -388,6 +394,9 @@ final class HaloWindowManager {
             },
             onRefine: { [weak engine] action in
                 _ = engine?.beginHaloRefinement(action)
+            },
+            onToggleVoiceRefinement: { [weak engine] in
+                _ = engine?.toggleHaloVoiceRefinementCapture()
             },
             onReviewInteractiveRegionsChange: { [weak newPanel] regions in
                 newPanel?.updateReviewInteractiveRegions(regions)
@@ -442,6 +451,20 @@ final class HaloWindowManager {
                 }
             }
             .store(in: &cancellables)
+
+        Publishers.CombineLatest3(
+            engine.$isHaloVoiceRefinementReady,
+            engine.$haloVoiceInstructionAudioMeter,
+            engine.$haloVoiceInstructionPartialTranscript
+        )
+        .sink { [weak self] isReady, audioMeter, partialTranscript in
+            self?.presentation.updateVoiceRefinementPresentation(
+                isReady: isReady,
+                audioMeter: audioMeter,
+                partialTranscript: partialTranscript
+            )
+        }
+        .store(in: &cancellables)
 
         Publishers.CombineLatest(
             engine.$pasteReviewFeedback,

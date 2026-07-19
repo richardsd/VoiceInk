@@ -12,6 +12,34 @@ struct AIEnhancementResult: Sendable {
     let userMessage: String?
 }
 
+/// Request-scoped behavior for the shared enhancement pipeline. Normal
+/// transcription requests keep the existing diagnostic/history behavior,
+/// while Halo refinements keep their spoken instruction and frozen context
+/// out of shared observable state.
+private struct AIEnhancementRequestOptions {
+    enum VocabularySource {
+        case current
+        case frozen(String)
+    }
+
+    let recordsDiagnostics: Bool
+    let vocabularySource: VocabularySource
+
+    static let standard = AIEnhancementRequestOptions(
+        recordsDiagnostics: true,
+        vocabularySource: .current
+    )
+
+    static func haloRefinement(
+        frozenCustomVocabulary: String
+    ) -> AIEnhancementRequestOptions {
+        AIEnhancementRequestOptions(
+            recordsDiagnostics: false,
+            vocabularySource: .frozen(frozenCustomVocabulary)
+        )
+    }
+}
+
 @MainActor
 class AIEnhancementService: ObservableObject {
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "AIEnhancementService")
@@ -121,14 +149,19 @@ class AIEnhancementService: ObservableObject {
     private func getSystemMessage(
         prompt: CustomPrompt,
         configuration: EnhancementRuntimeConfiguration,
-        contextSnapshot: RecordingContextSnapshot?
+        contextSnapshot: RecordingContextSnapshot?,
+        options: AIEnhancementRequestOptions
     ) async -> String {
         let useSelectedText = configuration.useSelectedTextContext
         let useClipboard = configuration.useClipboardContext
         let useScreenCapture = configuration.useScreenCaptureContext
 
-        lastCapturedClipboard = contextSnapshot?.clipboardText
-        screenCaptureService.lastCapturedText = contextSnapshot?.screenText
+        let capturedClipboard = contextSnapshot?.clipboardText
+        let capturedScreenText = contextSnapshot?.screenText
+        if options.recordsDiagnostics {
+            lastCapturedClipboard = capturedClipboard
+            screenCaptureService.lastCapturedText = capturedScreenText
+        }
 
         let selectedTextContext: String
         if useSelectedText,
@@ -142,7 +175,7 @@ class AIEnhancementService: ObservableObject {
 
         let clipboardContext =
             if useClipboard,
-                let clipboardText = lastCapturedClipboard,
+                let clipboardText = capturedClipboard,
                 !clipboardText.isEmpty
             {
                 "<CLIPBOARD_CONTEXT>\n\(clipboardText)\n</CLIPBOARD_CONTEXT>"
@@ -152,7 +185,7 @@ class AIEnhancementService: ObservableObject {
 
         let screenCaptureContext =
             if useScreenCapture,
-                let capturedText = screenCaptureService.lastCapturedText,
+                let capturedText = capturedScreenText,
                 !capturedText.isEmpty
             {
                 "<CURRENT_WINDOW_CONTEXT>\n\(capturedText)\n</CURRENT_WINDOW_CONTEXT>"
@@ -160,7 +193,13 @@ class AIEnhancementService: ObservableObject {
                 ""
             }
 
-        let customVocabulary = customVocabularyService.getCustomVocabulary(from: modelContext)
+        let customVocabulary: String
+        switch options.vocabularySource {
+        case .current:
+            customVocabulary = customVocabularyService.getCustomVocabulary(from: modelContext)
+        case .frozen(let vocabulary):
+            customVocabulary = vocabulary
+        }
 
         let customVocabularySection =
             if !customVocabulary.isEmpty {
@@ -197,7 +236,8 @@ class AIEnhancementService: ObservableObject {
     private func makeRequest(
         text: String,
         configuration: EnhancementRuntimeConfiguration,
-        contextSnapshot: RecordingContextSnapshot?
+        contextSnapshot: RecordingContextSnapshot?,
+        options: AIEnhancementRequestOptions
     ) async throws -> (text: String, systemMessage: String?, userMessage: String?) {
         guard isConfigured(for: configuration) else {
             throw EnhancementError.notConfigured
@@ -241,7 +281,8 @@ class AIEnhancementService: ObservableObject {
         let systemMessage = await getSystemMessage(
             prompt: prompt,
             configuration: configuration,
-            contextSnapshot: contextSnapshot
+            contextSnapshot: contextSnapshot,
+            options: options
         )
 
         if provider == .ollama {
@@ -294,11 +335,12 @@ class AIEnhancementService: ObservableObject {
         try await waitForRateLimit()
 
         if provider == .openAI && configuration.openAIAuthMode == .oauth {
-            return try await makeCodexOAuthRequest(
+            let result = try await makeCodexOAuthRequest(
                 formattedText: formattedText,
                 systemMessage: systemMessage,
                 modelName: modelName
             )
+            return (result, systemMessage, formattedText)
         }
 
         do {
@@ -485,6 +527,7 @@ class AIEnhancementService: ObservableObject {
         text: String,
         configuration: EnhancementRuntimeConfiguration,
         contextSnapshot: RecordingContextSnapshot?,
+        options: AIEnhancementRequestOptions,
         maxRetries: Int = 3,
         initialDelay: TimeInterval = 1.0
     ) async throws -> (text: String, systemMessage: String?, userMessage: String?) {
@@ -496,7 +539,8 @@ class AIEnhancementService: ObservableObject {
                 return try await makeRequest(
                     text: text,
                     configuration: configuration,
-                    contextSnapshot: contextSnapshot
+                    contextSnapshot: contextSnapshot,
+                    options: options
                 )
             } catch let error as EnhancementError {
                 switch error {
@@ -568,7 +612,8 @@ class AIEnhancementService: ObservableObject {
             let requestResult = try await makeRequestWithRetry(
                 text: text,
                 configuration: configuration,
-                contextSnapshot: contextSnapshot
+                contextSnapshot: contextSnapshot,
+                options: .standard
             )
             let endTime = Date()
             let duration = endTime.timeIntervalSince(startTime)
@@ -589,6 +634,44 @@ class AIEnhancementService: ObservableObject {
             )
             throw error
         }
+    }
+
+    /// Executes a Halo refinement through the same frozen provider/auth/model
+    /// route as a normal enhancement without mutating normal request
+    /// diagnostics. The supplied vocabulary is the immutable review-lifetime
+    /// snapshot, including the intentionally empty case.
+    func enhanceForHaloRefinement(
+        _ text: String,
+        configuration: EnhancementRuntimeConfiguration,
+        contextSnapshot: RecordingContextSnapshot?,
+        frozenCustomVocabulary: String
+    ) async throws -> (String, TimeInterval, String?) {
+        let startTime = Date()
+        let promptName = configuration.prompt?.title
+        let result = try await makeRequestWithRetry(
+            text: text,
+            configuration: configuration,
+            contextSnapshot: contextSnapshot,
+            options: .haloRefinement(
+                frozenCustomVocabulary: frozenCustomVocabulary
+            )
+        )
+        return (result.text, Date().timeIntervalSince(startTime), promptName)
+    }
+
+    func captureHaloRefinementInputSnapshot(
+        for configuration: EnhancementRuntimeConfiguration
+    ) -> HaloRefinementInputSnapshot? {
+        guard let prompt = configuration.prompt else { return nil }
+        return HaloRefinementInputSnapshot(
+            originalModeRequirements: PromptResolver.resolvedPromptText(
+                for: prompt,
+                in: allPrompts
+            ),
+            customVocabulary: customVocabularyService.getCustomVocabulary(
+                from: modelContext
+            )
+        )
     }
 
     func captureScreenContext() async {

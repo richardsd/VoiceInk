@@ -14,6 +14,7 @@ final class TranscriptionDelivery {
         let transcription: Transcription
         let text: String?
         let output: OutputRuntimeConfiguration
+        let transcriptionConfiguration: TranscriptionRuntimeConfiguration?
         let enhancementConfiguration: EnhancementRuntimeConfiguration?
         let responseConfig: EnhancementRuntimeConfiguration?
         let responseError: String?
@@ -23,7 +24,38 @@ final class TranscriptionDelivery {
         /// either direct Halo delivery or a review becomes actionable.
         let usesHaloDelivery: Bool
         let haloSessionOverride: HaloSessionDeliveryOverride?
+        let refinementInputSnapshot: HaloRefinementInputSnapshot?
         let frozenContext: RecordingContextSnapshot?
+
+        init(
+            transcription: Transcription,
+            text: String?,
+            output: OutputRuntimeConfiguration,
+            transcriptionConfiguration: TranscriptionRuntimeConfiguration? = nil,
+            enhancementConfiguration: EnhancementRuntimeConfiguration?,
+            responseConfig: EnhancementRuntimeConfiguration?,
+            responseError: String?,
+            usedRawEnhancementFallback: Bool,
+            isAssistantFollowUp: Bool,
+            usesHaloDelivery: Bool,
+            haloSessionOverride: HaloSessionDeliveryOverride?,
+            refinementInputSnapshot: HaloRefinementInputSnapshot? = nil,
+            frozenContext: RecordingContextSnapshot?
+        ) {
+            self.transcription = transcription
+            self.text = text
+            self.output = output
+            self.transcriptionConfiguration = transcriptionConfiguration
+            self.enhancementConfiguration = enhancementConfiguration
+            self.responseConfig = responseConfig
+            self.responseError = responseError
+            self.usedRawEnhancementFallback = usedRawEnhancementFallback
+            self.isAssistantFollowUp = isAssistantFollowUp
+            self.usesHaloDelivery = usesHaloDelivery
+            self.haloSessionOverride = haloSessionOverride
+            self.refinementInputSnapshot = refinementInputSnapshot
+            self.frozenContext = frozenContext
+        }
     }
 
     struct Actions {
@@ -274,7 +306,9 @@ final class TranscriptionDelivery {
                 : nil,
             deliveryReviewReason: deliveryReviewReason,
             output: request.output,
+            transcriptionConfiguration: request.transcriptionConfiguration,
             enhancementConfiguration: request.enhancementConfiguration,
+            refinementInputSnapshot: request.refinementInputSnapshot,
             frozenContext: request.frozenContext
         )
     }

@@ -120,6 +120,7 @@ private struct HaloStateGalleryStage: View {
                 onSelectReviewLens: { _ in },
                 onMoveReviewRevision: { _ in },
                 onRefine: { _ in },
+                onToggleVoiceRefinement: {},
                 onReviewInteractiveRegionsChange: { _ in }
             )
             .frame(width: panelWindowSize.width, height: panelWindowSize.height)
@@ -173,6 +174,14 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
     case reviewFocusMismatch
     case reviewFocusRecovery
     case reviewManualEdit
+    case reviewVoiceReady
+    case reviewVoiceListening
+    case reviewVoiceUnderstanding
+    case reviewVoiceRefining
+    case reviewVoiceSuccess
+    case reviewVoiceEmpty
+    case reviewVoiceFailure
+    case reviewVoiceCancelled
     case pastedConfirmation
 
     var id: Self { self }
@@ -197,6 +206,22 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
             return "Review · manual focus recovery"
         case .reviewManualEdit:
             return "Review · manual edit"
+        case .reviewVoiceReady:
+            return "Review · voice refinement ready"
+        case .reviewVoiceListening:
+            return "Review · listening for a change"
+        case .reviewVoiceUnderstanding:
+            return "Review · understanding spoken change"
+        case .reviewVoiceRefining:
+            return "Review · applying spoken change"
+        case .reviewVoiceSuccess:
+            return "Review · voice change applied"
+        case .reviewVoiceEmpty:
+            return "Review · no spoken change detected"
+        case .reviewVoiceFailure:
+            return "Review · voice refinement failed"
+        case .reviewVoiceCancelled:
+            return "Review · voice refinement cancelled"
         case .pastedConfirmation:
             return "Direct delivery · confirmation pulse"
         }
@@ -214,7 +239,15 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
             .reviewFallbackWarning,
             .reviewFocusMismatch,
             .reviewFocusRecovery,
-            .reviewManualEdit:
+            .reviewManualEdit,
+            .reviewVoiceReady,
+            .reviewVoiceListening,
+            .reviewVoiceUnderstanding,
+            .reviewVoiceRefining,
+            .reviewVoiceSuccess,
+            .reviewVoiceEmpty,
+            .reviewVoiceFailure,
+            .reviewVoiceCancelled:
             return .reviewing
         case .pastedConfirmation:
             return .confirmed
@@ -239,6 +272,29 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
     var partialTranscript: String {
         guard self == .liveTranscript else { return "" }
         return "We can move forward with the restructuring, but let’s do one section at a time and start with the introduction."
+    }
+
+    private var voiceScenario: HaloGalleryVoiceScenario? {
+        switch self {
+        case .reviewVoiceReady:
+            return .ready
+        case .reviewVoiceListening:
+            return .listening
+        case .reviewVoiceUnderstanding:
+            return .understanding
+        case .reviewVoiceRefining:
+            return .refining
+        case .reviewVoiceSuccess:
+            return .success
+        case .reviewVoiceEmpty:
+            return .empty
+        case .reviewVoiceFailure:
+            return .failure
+        case .reviewVoiceCancelled:
+            return .cancelled
+        default:
+            return nil
+        }
     }
 
     @MainActor
@@ -305,6 +361,21 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
                 isEditingManually: true
             )
 
+        case .reviewVoiceReady,
+            .reviewVoiceListening,
+            .reviewVoiceUnderstanding,
+            .reviewVoiceRefining,
+            .reviewVoiceSuccess,
+            .reviewVoiceEmpty,
+            .reviewVoiceFailure,
+            .reviewVoiceCancelled:
+            presentReview(
+                on: presentation,
+                warning: nil,
+                feedback: nil,
+                voiceScenario: voiceScenario
+            )
+
         case .pastedConfirmation:
             presentation.presentPasteConfirmation()
         }
@@ -316,7 +387,8 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
         finalText: String = "We can move forward with the restructuring, but let’s handle one section at a time, beginning with the introduction.",
         warning: String?,
         feedback: PasteReviewFeedback?,
-        isEditingManually: Bool = false
+        isEditingManually: Bool = false,
+        voiceScenario: HaloGalleryVoiceScenario? = nil
     ) {
         let rawText = "We can move forward with the restructuring but lets do one section at a time and start with the introduction please."
         let metadata = HaloReviewModelMetadata(
@@ -357,7 +429,16 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
             metadata: metadata,
             enhancementWarning: warning,
             output: output,
+            transcriptionConfiguration: voiceScenario == nil
+                ? nil
+                : Self.voiceTranscriptionConfiguration,
             enhancementConfiguration: configuration,
+            refinementInputSnapshot: voiceScenario == nil
+                ? nil
+                : HaloRefinementInputSnapshot(
+                    originalModeRequirements: "Preserve the speaker's meaning.",
+                    customVocabulary: "VoiceInk"
+                ),
             frozenContext: nil
         )
         let initialRevision = HaloReviewRevision(
@@ -386,13 +467,112 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
                 )
             )
         }
+        configureVoiceScenario(voiceScenario, state: &state, metadata: metadata)
         presentation.updateReviewState(state)
+        presentation.updateVoiceRefinementPresentation(
+            isReady: voiceScenario != nil,
+            audioMeter: voiceScenario == .listening
+                ? AudioMeter(averagePower: 0.64, peakPower: 0.82)
+                : AudioMeter(averagePower: 0, peakPower: 0),
+            partialTranscript: voiceScenario == .listening
+                ? "Make it shorter and more direct."
+                : ""
+        )
         presentation.updateReviewStatus(
             feedback: feedback,
             secondsRemaining: feedback == nil ? 12 : 84,
             isDelivering: false
         )
     }
+
+    @MainActor
+    private func configureVoiceScenario(
+        _ scenario: HaloGalleryVoiceScenario?,
+        state: inout HaloReviewState,
+        metadata: HaloReviewModelMetadata
+    ) {
+        guard let scenario, scenario != .ready else { return }
+
+        let requestID = UUID()
+        guard state.beginVoiceRefinement(requestID: requestID) != nil else { return }
+
+        switch scenario {
+        case .ready, .listening:
+            return
+
+        case .understanding:
+            _ = state.finishVoiceCapture(requestID: requestID)
+
+        case .refining:
+            _ = state.finishVoiceCapture(requestID: requestID)
+            _ = state.finishVoiceTranscription(requestID: requestID)
+
+        case .success:
+            _ = state.finishVoiceCapture(requestID: requestID)
+            _ = state.finishVoiceTranscription(requestID: requestID)
+            guard let parent = state.selectedRevision else { return }
+            let text = "We can restructure this one section at a time, beginning with the introduction."
+            _ = state.completeVoiceRefinement(
+                requestID: requestID,
+                revision: HaloReviewRevision(
+                    parentID: parent.id,
+                    action: .voiceRefinement,
+                    text: text,
+                    metadata: metadata,
+                    payload: PreparedPastePayload(
+                        displayText: text,
+                        pastedText: text,
+                        autoSendKey: .none
+                    )
+                )
+            )
+
+        case .empty:
+            _ = state.finishVoiceRefinementFailure(
+                requestID: requestID,
+                failure: .emptyInstruction
+            )
+
+        case .failure:
+            _ = state.finishVoiceRefinementFailure(
+                requestID: requestID,
+                failure: .transcriptionFailed
+            )
+
+        case .cancelled:
+            _ = state.cancelVoiceRefinement()
+        }
+    }
+
+    private static var voiceTranscriptionConfiguration: TranscriptionRuntimeConfiguration {
+        TranscriptionRuntimeConfiguration(
+            mode: nil,
+            model: CloudModel(
+                name: "gallery-realtime",
+                displayName: "Realtime",
+                description: "Halo gallery model",
+                provider: .deepgram,
+                speed: 1,
+                accuracy: 1,
+                isMultilingual: true,
+                supportsStreaming: true,
+                supportedLanguages: ["en": "English"]
+            ),
+            language: "en",
+            isRealtimeEnabled: true
+        )
+    }
+}
+
+private enum HaloGalleryVoiceScenario: Equatable {
+    case ready
+    case listening
+    case understanding
+    case refining
+    case success
+    case empty
+    case failure
+    case cancelled
 }
 
 private enum HaloGalleryBackdrop: String, CaseIterable, Identifiable {

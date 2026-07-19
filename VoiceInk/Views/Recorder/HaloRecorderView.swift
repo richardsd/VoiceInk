@@ -63,6 +63,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     let onSelectReviewLens: (HaloReviewLens) -> Void
     let onMoveReviewRevision: (Int) -> Void
     let onRefine: (HaloRefinementAction) -> Void
+    let onToggleVoiceRefinement: () -> Void
     let onReviewInteractiveRegionsChange: ([HaloInteractionRegion]) -> Void
 
     private let coral = Color(red: 0.96, green: 0.34, blue: 0.29)
@@ -85,6 +86,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         onSelectReviewLens: @escaping (HaloReviewLens) -> Void,
         onMoveReviewRevision: @escaping (Int) -> Void,
         onRefine: @escaping (HaloRefinementAction) -> Void,
+        onToggleVoiceRefinement: @escaping () -> Void = {},
         onReviewInteractiveRegionsChange: @escaping ([HaloInteractionRegion]) -> Void
     ) {
         self.stateProvider = stateProvider
@@ -103,6 +105,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         self.onSelectReviewLens = onSelectReviewLens
         self.onMoveReviewRevision = onMoveReviewRevision
         self.onRefine = onRefine
+        self.onToggleVoiceRefinement = onToggleVoiceRefinement
         self.onReviewInteractiveRegionsChange = onReviewInteractiveRegionsChange
     }
 
@@ -356,10 +359,18 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             HStack(spacing: 8) {
                 ZStack {
                     Circle()
-                        .fill(AppTheme.Accent.fillStrong)
-                    Image(systemName: "checkmark")
+                        .fill(
+                            presentation.isVoiceRefinementActive
+                                ? coral.opacity(0.16)
+                                : AppTheme.Accent.fillStrong
+                        )
+                    Image(systemName: reviewHeaderSystemImage)
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Color.white.opacity(0.92))
+                        .foregroundStyle(
+                            presentation.isVoiceRefinementActive
+                                ? coral
+                                : Color.white.opacity(0.92)
+                        )
                 }
                 .frame(width: 22, height: 22)
 
@@ -367,7 +378,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                     Text(
                         presentation.isEditingManually
                             ? String(localized: "Edit final transcript")
-                            : String(localized: "Ready to apply")
+                            : reviewHeaderTitle
                     )
                         .font(HaloTypography.reviewTitle)
                         .foregroundStyle(Color.white.opacity(0.94))
@@ -390,7 +401,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 } else {
                     reviewNavigation
                     reviewTextViewport(review)
-                    refinementOrbit
+                    refinementControls
                 }
 
                 if let warning = sanitized(review.enhancementWarning), !warning.isEmpty {
@@ -451,11 +462,12 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                                 : String(localized: "Apply")),
                         systemImage: showsRefocus ? "scope" : nil,
                         emphasized: true,
-                        isDisabled: presentation.isReviewDelivering || presentation.isRefining,
+                        isDisabled: presentation.isReviewDelivering
+                            || presentation.isReviewOperationActive,
                         action: showsRetry ? onRetry : (showsRefocus ? onRefocus : onApply)
                     )
                     HaloReviewActionButton(
-                        key: presentation.isRefining ? nil : "Esc",
+                        key: "Esc",
                         title: String(localized: "Cancel"),
                         systemImage: nil,
                         emphasized: false,
@@ -467,7 +479,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                         title: String(localized: "Copy"),
                         systemImage: "doc.on.doc",
                         emphasized: false,
-                        isDisabled: presentation.isReviewDelivering || presentation.isRefining,
+                        isDisabled: presentation.isReviewDelivering
+                            || presentation.isReviewOperationActive,
                         action: onCopy
                     )
                 }
@@ -523,7 +536,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 systemImage: "arrow.uturn.backward",
                 emphasized: false,
                 isDisabled: !presentation.canUseOriginal
-                    || presentation.isReviewDelivering,
+                    || presentation.isReviewDelivering
+                    || presentation.isVoiceRefinementActive,
                 action: onUseOriginal
             )
             HaloReviewActionButton(
@@ -532,7 +546,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 systemImage: "pencil",
                 emphasized: false,
                 isDisabled: !presentation.canBeginManualEdit
-                    || presentation.isReviewDelivering,
+                    || presentation.isReviewDelivering
+                    || presentation.isVoiceRefinementActive,
                 action: onBeginManualEdit
             )
             Spacer(minLength: 0)
@@ -545,6 +560,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         HStack(spacing: 8) {
             HaloReviewLensSelector(
                 selection: presentation.reviewLens,
+                isDisabled: presentation.isVoiceRefinementActive,
                 onSelect: onSelectReviewLens
             )
 
@@ -556,30 +572,54 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                     count: presentation.revisionCount,
                     canMovePrevious: presentation.canMovePrevious,
                     canMoveNext: presentation.canMoveNext,
-                    isDisabled: presentation.isReviewDelivering || presentation.isRefining,
+                    isDisabled: presentation.isReviewDelivering
+                        || presentation.isReviewOperationActive,
                     onMove: onMoveReviewRevision
                 )
             }
         }
     }
 
-    private var refinementOrbit: some View {
-        HaloRefinementOrbit(
-            actions: HaloRefinementOrbitPolicy.actions,
-            activeAction: presentation.activeRefinementAction,
-            actionsAreEnabled: HaloRefinementOrbitPolicy.actionsAreEnabled(
-                canRefine: presentation.canRefine,
-                isRefining: presentation.isRefining,
-                isDelivering: presentation.isReviewDelivering
-            ),
-            hasReachedRevisionLimit: presentation.hasReachedRevisionLimit,
-            onSelect: onRefine
-        )
+    private var refinementControls: some View {
+        HStack(spacing: 6) {
+            HaloVoiceRefinementButton(
+                isListening: presentation.isVoiceRefinementListening,
+                isProcessing: presentation.isVoiceRefinementActive
+                    && !presentation.isVoiceRefinementListening,
+                isDisabled: !presentation.isVoiceRefinementListening
+                    && !presentation.canStartVoiceRefinement,
+                onToggle: onToggleVoiceRefinement
+            )
+
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 1, height: 18)
+                .accessibilityHidden(true)
+
+            HaloRefinementOrbit(
+                actions: HaloRefinementOrbitPolicy.actions,
+                activeAction: presentation.activeRefinementAction,
+                actionsAreEnabled: HaloRefinementOrbitPolicy.actionsAreEnabled(
+                    canRefine: presentation.canRefine,
+                    isRefining: presentation.isReviewOperationActive,
+                    isDelivering: presentation.isReviewDelivering
+                ),
+                hasReachedRevisionLimit: presentation.hasReachedRevisionLimit,
+                onSelect: onRefine
+            )
+        }
+        .frame(height: HaloRefinementOrbitPolicy.rowHeight)
     }
 
     @ViewBuilder
     private var reviewStatusRows: some View {
-        if presentation.isRefining, let activeAction = presentation.activeRefinementAction {
+        if presentation.isVoiceRefinementActive {
+            HaloVoiceRefinementProgressStatus(
+                phase: presentation.voiceRefinementPhase,
+                audioMeter: presentation.voiceInstructionAudioMeter,
+                partialTranscript: presentation.voiceInstructionPartialTranscript
+            )
+        } else if presentation.isRefining, let activeAction = presentation.activeRefinementAction {
             HaloRefinementProgressStatus(action: activeAction)
         } else {
             if let notice = presentation.reviewNoticeMessage {
@@ -763,6 +803,32 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         return parts.isEmpty ? String(localized: "Paste Mode") : parts.joined(separator: " · ")
     }
 
+    private var reviewHeaderTitle: String {
+        switch presentation.voiceRefinementPhase {
+        case .listening:
+            return String(localized: "Listening for a change")
+        case .transcribing:
+            return String(localized: "Understanding your request…")
+        case .refining:
+            return String(localized: "Applying your spoken change…")
+        case .idle, .failed:
+            return String(localized: "Ready to apply")
+        }
+    }
+
+    private var reviewHeaderSystemImage: String {
+        switch presentation.voiceRefinementPhase {
+        case .listening:
+            return "waveform"
+        case .transcribing:
+            return "text.bubble"
+        case .refining:
+            return "sparkles"
+        case .idle, .failed:
+            return "checkmark"
+        }
+    }
+
     private var horizontalPadding: CGFloat {
         presentation.phase == .reviewing ? 13 : 12
     }
@@ -827,6 +893,16 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             }
             if presentation.isEditingManually {
                 return String(localized: "Editing the final transcript")
+            }
+            switch presentation.voiceRefinementPhase {
+            case .listening:
+                return String(localized: "Listening for a spoken transcript change")
+            case .transcribing:
+                return String(localized: "Understanding the spoken transcript change")
+            case .refining:
+                return String(localized: "Applying the spoken transcript change")
+            case .idle, .failed:
+                break
             }
             return String(localized: "Transcript ready. Press Return to apply or Escape to cancel.")
         case .confirmed:
@@ -996,6 +1072,70 @@ private struct HaloRefinementOrbit: View {
     }
 }
 
+private struct HaloVoiceRefinementButton: View {
+    let isListening: Bool
+    let isProcessing: Bool
+    let isDisabled: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: 5) {
+                if isProcessing {
+                    ProcessingIndicator(color: HaloVisualPalette.activity)
+                        .scaleEffect(0.7)
+                        .frame(width: 11, height: 11)
+                } else {
+                    Image(systemName: isListening ? "stop.fill" : "mic.fill")
+                        .font(.system(size: 9, weight: .bold))
+                }
+
+                Text(
+                    isListening
+                        ? String(localized: "Finish")
+                        : String(localized: "Say change")
+                )
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+            }
+            .font(HaloTypography.refinementAction)
+            .foregroundStyle(isListening ? Color.white.opacity(0.94) : AppTheme.Accent.strong)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(isListening ? Color.red.opacity(0.22) : AppTheme.Accent.fill)
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(
+                        isListening
+                            ? Color.red.opacity(0.45)
+                            : AppTheme.Accent.border.opacity(0.7),
+                        lineWidth: 0.6
+                    )
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled || isProcessing)
+        .opacity(isDisabled && !isListening ? 0.42 : 1)
+        .haloReviewInteractiveRegion(enabled: !isDisabled && !isProcessing)
+        .accessibilityLabel(
+            Text(
+                isListening
+                    ? String(localized: "Finish spoken change")
+                    : String(localized: "Say a transcript change")
+            )
+        )
+        .accessibilityHint(
+            Text(
+                isListening
+                    ? String(localized: "Stops listening and applies the instruction as a new revision")
+                    : String(localized: "Speak a change using the configured recording shortcut or microphone")
+            )
+        )
+    }
+}
+
 private struct HaloRefinementActionButton: View {
     let action: HaloRefinementAction
     let isActive: Bool
@@ -1108,8 +1248,91 @@ private struct HaloRefinementProgressStatus: View {
     }
 }
 
+private struct HaloVoiceRefinementProgressStatus: View {
+    let phase: HaloVoiceRefinementPhase
+    let audioMeter: AudioMeter
+    let partialTranscript: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            switch phase {
+            case .listening:
+                AudioVisualizer(
+                    audioMeter: audioMeter,
+                    color: Color(red: 0.96, green: 0.34, blue: 0.29),
+                    isActive: true
+                )
+                .scaleEffect(x: 0.66, y: 0.58)
+                .frame(width: 58, height: 20)
+
+            case .transcribing, .refining:
+                ProcessingIndicator(color: HaloVisualPalette.activity)
+
+            case .idle, .failed:
+                EmptyView()
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(statusTitle)
+                    .font(HaloTypography.warning)
+                    .foregroundStyle(Color.white.opacity(0.88))
+                    .lineLimit(1)
+
+                if case .listening = phase,
+                    !partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    Text(partialTranscript)
+                        .font(HaloTypography.tertiary)
+                        .foregroundStyle(Color.white.opacity(0.54))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                } else {
+                    Text(statusDetail)
+                        .font(HaloTypography.tertiary)
+                        .foregroundStyle(Color.white.opacity(0.46))
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(statusTitle))
+        .accessibilityValue(Text(partialTranscript))
+        .accessibilityHint(Text("Press Escape to stop voice refinement."))
+    }
+
+    private var statusTitle: String {
+        switch phase {
+        case .listening:
+            return String(localized: "Listening for a change")
+        case .transcribing:
+            return String(localized: "Understanding your request…")
+        case .refining:
+            return String(localized: "Applying your spoken change…")
+        case .idle, .failed:
+            return ""
+        }
+    }
+
+    private var statusDetail: String {
+        switch phase {
+        case .listening:
+            return String(localized: "Use the shortcut again or choose Finish")
+        case .transcribing:
+            return String(localized: "Using the original transcription model")
+        case .refining:
+            return String(localized: "Using the original provider and model")
+        case .idle, .failed:
+            return ""
+        }
+    }
+}
+
 private struct HaloReviewLensSelector: View {
     let selection: HaloReviewLens
+    let isDisabled: Bool
     let onSelect: (HaloReviewLens) -> Void
 
     var body: some View {
@@ -1144,6 +1367,8 @@ private struct HaloReviewLensSelector: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .disabled(isDisabled)
+                .opacity(isDisabled && !isSelected ? 0.42 : 1)
                 .accessibilityLabel(Text(lens.displayName))
                 .accessibilityValue(Text(isSelected ? "Selected" : ""))
                 .accessibilityHint(Text("Keyboard shortcut: \(shortcut(for: lens))"))
@@ -1156,7 +1381,7 @@ private struct HaloReviewLensSelector: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.065), lineWidth: 0.5)
         }
-        .haloReviewInteractiveRegion()
+        .haloReviewInteractiveRegion(enabled: !isDisabled)
     }
 
     private func shortcut(for lens: HaloReviewLens) -> String {
