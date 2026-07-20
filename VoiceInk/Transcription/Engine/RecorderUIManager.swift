@@ -48,10 +48,17 @@ protocol RecorderPanelPresenting: AnyObject {
     func presentPasteReview(_ review: PendingPasteReview)
     func clearPasteReview()
     func showHaloPasteConfirmation()
+    func showNoSpeechDetected()
 }
 
 extension RecorderPanelPresenting {
     func refreshPasteReviewKeyboardHandling() {}
+
+    func showNoSpeechDetected() {
+        Task { @MainActor in
+            await dismissRecorderPanel()
+        }
+    }
 }
 
 @MainActor
@@ -88,6 +95,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
     private var haloWindowManager: HaloWindowManager?
     private weak var reviewShortcutController: (any RecorderReviewShortcutControlling)?
     private var haloPasteConfirmationTask: Task<Void, Never>?
+    private var haloNoSpeechTask: Task<Void, Never>?
 
     private weak var engine: VoiceInkEngine?
     private var recorder: Recorder?
@@ -230,6 +238,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
     private func handleStoredStyleChange() {
         haloPasteConfirmationTask?.cancel()
         haloPasteConfirmationTask = nil
+        haloNoSpeechTask?.cancel()
+        haloNoSpeechTask = nil
         engine?.clearHaloSessionDeliveryOverride()
         if engine?.recordingState == .reviewing {
             Task { @MainActor [weak self] in
@@ -335,6 +345,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         hideRecorderPanel()
         haloPasteConfirmationTask?.cancel()
         haloPasteConfirmationTask = nil
+        haloNoSpeechTask?.cancel()
+        haloNoSpeechTask = nil
         isRecorderPanelVisible = false
         haloWindowManager?.endRecordingSession()
         finishPasteReviewKeyboardHandling()
@@ -347,6 +359,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         await engine.resetRecordingSession()
         haloPasteConfirmationTask?.cancel()
         haloPasteConfirmationTask = nil
+        haloNoSpeechTask?.cancel()
+        haloNoSpeechTask = nil
         hideRecorderPanel()
         isRecorderPanelVisible = false
         haloWindowManager?.endRecordingSession()
@@ -484,6 +498,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         }
 
         finishPasteReviewKeyboardHandling()
+        haloNoSpeechTask?.cancel()
+        haloNoSpeechTask = nil
         haloWindowManager?.presentPasteConfirmation()
         haloPasteConfirmationTask?.cancel()
         haloPasteConfirmationTask = Task { @MainActor [weak self] in
@@ -494,6 +510,39 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
             }
             guard let self else { return }
             self.haloPasteConfirmationTask = nil
+            await self.dismissRecorderPanel()
+        }
+    }
+
+    func showNoSpeechDetected() {
+        SoundManager.shared.playStopSound()
+
+        guard isRecorderPanelVisible,
+            effectiveRecorderPanelStyle == .halo
+        else {
+            Task { @MainActor [weak self] in
+                await self?.dismissRecorderPanel()
+            }
+            return
+        }
+
+        haloPasteConfirmationTask?.cancel()
+        haloPasteConfirmationTask = nil
+        finishPasteReviewKeyboardHandling()
+        haloWindowManager?.presentNoSpeechDetected()
+        haloNoSpeechTask?.cancel()
+        haloNoSpeechTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(1_250))
+            } catch {
+                return
+            }
+            guard let self,
+                self.haloWindowManager?.presentation.phase == .noSpeechDetected
+            else {
+                return
+            }
+            self.haloNoSpeechTask = nil
             await self.dismissRecorderPanel()
         }
     }

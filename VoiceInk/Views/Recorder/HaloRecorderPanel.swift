@@ -61,6 +61,24 @@ enum HaloInteractionHitTester {
     }
 }
 
+enum HaloReviewInteractionRegionResolver {
+    static func pendingRegions(
+        from regions: [HaloInteractionRegion]
+    ) -> [HaloInteractionRegion] {
+        // Preserve regions that are outside the panel's compact/intermediate
+        // bounds while it expands into review. They are clipped only after the
+        // final AppKit layout has been applied.
+        HaloInteractionHitTester.clipped(regions, to: .zero)
+    }
+
+    static func activeRegions(
+        from pendingRegions: [HaloInteractionRegion],
+        within bounds: CGRect
+    ) -> [HaloInteractionRegion] {
+        HaloInteractionHitTester.clipped(pendingRegions, to: bounds)
+    }
+}
+
 enum HaloInteractionCoordinateConverter {
     static func swiftUIPoint(fromAppKitPoint point: CGPoint, contentHeight: CGFloat) -> CGPoint {
         CGPoint(x: point.x, y: contentHeight - point.y)
@@ -219,13 +237,20 @@ final class HaloRecorderPanel: NSPanel {
     func updateReviewInteractiveRegions(_ regions: [HaloInteractionRegion]) {
         guard interactionState != .inactive else { return }
 
-        let bounds = contentView?.bounds ?? .zero
-        let clippedRegions = HaloInteractionHitTester.clipped(regions, to: bounds)
-        pendingInteractiveRegions = clippedRegions
+        let pendingRegions = HaloReviewInteractionRegionResolver.pendingRegions(
+            from: regions
+        )
+        pendingInteractiveRegions = pendingRegions
 
         guard !isReviewLayoutTransitioning else { return }
 
-        applyInteractiveRegions(clippedRegions)
+        let bounds = contentView?.bounds ?? .zero
+        applyInteractiveRegions(
+            HaloReviewInteractionRegionResolver.activeRegions(
+                from: pendingRegions,
+                within: bounds
+            )
+        )
         refreshMouseTransparency()
     }
 
@@ -303,8 +328,13 @@ final class HaloRecorderPanel: NSPanel {
         guard isReviewLayoutTransitioning else { return }
 
         isReviewLayoutTransitioning = false
-        applyInteractiveRegions(pendingInteractiveRegions)
         contentView?.layoutSubtreeIfNeeded()
+        applyInteractiveRegions(
+            HaloReviewInteractionRegionResolver.activeRegions(
+                from: pendingInteractiveRegions,
+                within: contentView?.bounds ?? .zero
+            )
+        )
     }
 
     private func applyInteractiveRegions(_ regions: [HaloInteractionRegion]) {

@@ -182,6 +182,7 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
     case reviewVoiceEmpty
     case reviewVoiceFailure
     case reviewVoiceCancelled
+    case noSpeechDetected
     case pastedConfirmation
 
     var id: Self { self }
@@ -222,6 +223,8 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
             return "Review · voice refinement failed"
         case .reviewVoiceCancelled:
             return "Review · voice refinement cancelled"
+        case .noSpeechDetected:
+            return "No speech detected"
         case .pastedConfirmation:
             return "Direct delivery · confirmation pulse"
         }
@@ -251,6 +254,8 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
             return .reviewing
         case .pastedConfirmation:
             return .confirmed
+        case .noSpeechDetected:
+            return .noSpeechDetected
         }
     }
 
@@ -265,6 +270,8 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
         case .reviewing:
             return .reviewing
         case .confirmed:
+            return .idle
+        case .noSpeechDetected:
             return .idle
         }
     }
@@ -378,6 +385,9 @@ private enum HaloGalleryScenario: String, CaseIterable, Identifiable {
 
         case .pastedConfirmation:
             presentation.presentPasteConfirmation()
+
+        case .noSpeechDetected:
+            presentation.presentNoSpeechDetected()
         }
     }
 

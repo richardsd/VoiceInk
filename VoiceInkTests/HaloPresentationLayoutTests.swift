@@ -43,6 +43,12 @@ struct HaloPresentationLayoutTests {
                 hasVisiblePartialTranscript: true
             ) == CGSize(width: 132, height: 44)
         )
+        #expect(
+            HaloPanelMetrics.size(
+                for: .noSpeechDetected,
+                hasVisiblePartialTranscript: true
+            ) == CGSize(width: 240, height: 48)
+        )
     }
 
     @Test func refinementOrbitUsesTheFiveProductActionsInOrder() {

@@ -637,7 +637,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         let transcriptionID = transcription.id
         activePipelineTranscriptionID = transcriptionID
 
-        await pipeline.run(
+        let pipelineOutcome = await pipeline.run(
             transcription: transcription,
             audioURL: audioURL,
             transcriptionConfiguration: transcriptionConfiguration,
@@ -753,6 +753,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
         canceledPipelineTranscriptionIDs.remove(transcriptionID)
 
         if didFinishActivePipeline
+            && pipelineOutcome == .noSpeechDetected
+        {
+            recordingState = .idle
+            recorderUIManager?.showNoSpeechDetected()
+        } else if didFinishActivePipeline
             && PasteReviewLifecycle.canReturnToIdle(
                 hasActivePipeline: false,
                 isResolvingReview: isResolvingPasteReview

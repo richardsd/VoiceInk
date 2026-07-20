@@ -7,6 +7,7 @@ enum HaloPresentationPhase: Equatable, Sendable {
     case enhancing
     case reviewing
     case confirmed
+    case noSpeechDetected
 
     static func resolve(recordingState: RecordingState) -> HaloPresentationPhase {
         switch recordingState {
@@ -297,6 +298,12 @@ final class HaloPresentationModel: ObservableObject {
         clearReview()
         deliveryOverride = nil
         phase = .confirmed
+    }
+
+    func presentNoSpeechDetected() {
+        clearReview()
+        deliveryOverride = nil
+        phase = .noSpeechDetected
     }
 
     func updateMetadata(_ updated: HaloPresentationMetadata) {

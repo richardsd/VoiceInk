@@ -2,6 +2,21 @@ import AppKit
 import Combine
 import SwiftUI
 
+enum HaloWindowNotificationPublisher {
+    static func userDefaultsChanges(
+        center: NotificationCenter = .default,
+        defaults: UserDefaults = .standard
+    ) -> AnyPublisher<Void, Never> {
+        center.publisher(
+            for: UserDefaults.didChangeNotification,
+            object: defaults
+        )
+        .receive(on: DispatchQueue.main)
+        .map { _ in () }
+        .eraseToAnyPublisher()
+    }
+}
+
 enum HaloPanelMetrics {
     /// The content surface is deliberately smaller than the transparent window
     /// that hosts it. The margin exists only for the close rounded shadow, so
@@ -41,6 +56,8 @@ enum HaloPanelMetrics {
             return review
         case .confirmed:
             return confirmation
+        case .noSpeechDetected:
+            return compact
         }
     }
 
@@ -332,6 +349,15 @@ final class HaloWindowManager {
         positionAndShowPanel(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
+    func presentNoSpeechDetected() {
+        isShowingPasteConfirmation = false
+        isShowRequested = true
+        panel?.endReviewInteraction()
+        presentation.presentNoSpeechDetected()
+        initializeWindowIfNeeded()
+        positionAndShowPanel(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    }
+
     private func initializeWindowIfNeeded() {
         guard panel == nil else { return }
 
@@ -495,14 +521,11 @@ final class HaloWindowManager {
             }
             .store(in: &cancellables)
 
-        NotificationCenter.default.publisher(
-            for: UserDefaults.didChangeNotification,
-            object: UserDefaults.standard
-        )
-        .sink { [weak self] _ in
-            self?.resizeVisiblePanel(animated: true)
-        }
-        .store(in: &cancellables)
+        HaloWindowNotificationPublisher.userDefaultsChanges()
+            .sink { [weak self] _ in
+                self?.resizeVisiblePanel(animated: true)
+            }
+            .store(in: &cancellables)
     }
 
     private func observeDisplayConfiguration() {

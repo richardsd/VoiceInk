@@ -49,6 +49,85 @@ private final class SpyPasteDeliveryService: PasteDeliveryServicing {
 
 struct TranscriptionDeliveryReviewTests {
     @MainActor
+    @Test func emptyRawTranscriptNeverPastesOrStagesReview() async {
+        let service = SpyPasteDeliveryService()
+        let delivery = TranscriptionDelivery(pasteDeliveryService: service)
+        var dismissCount = 0
+        var stageCount = 0
+
+        await delivery.deliver(
+            .init(
+                transcription: completedTranscription(text: " \n\t "),
+                text: "",
+                output: output(.paste, haloDeliveryPolicy: .alwaysReview),
+                enhancementConfiguration: nil,
+                responseConfig: nil,
+                responseError: nil,
+                usedRawEnhancementFallback: false,
+                isAssistantFollowUp: false,
+                usesHaloDelivery: true,
+                haloSessionOverride: nil,
+                frozenContext: nil
+            ),
+            actions: actions(
+                dismiss: { dismissCount += 1 },
+                stage: { _ in
+                    stageCount += 1
+                    return true
+                }
+            )
+        )
+
+        #expect(dismissCount == 1)
+        #expect(stageCount == 0)
+        #expect(service.preparedTexts.isEmpty)
+        #expect(service.deliveredPayloads.isEmpty)
+    }
+
+    @MainActor
+    @Test func emptyEnhancedResultWithUsableRawTranscriptStillStagesReview() async throws {
+        let service = SpyPasteDeliveryService()
+        let delivery = TranscriptionDelivery(pasteDeliveryService: service)
+        var stagedReview: PendingPasteReview?
+        var route: HaloDeliveryRoute?
+
+        await delivery.deliver(
+            .init(
+                transcription: completedTranscription(text: "Usable raw transcript"),
+                text: "",
+                output: output(.paste, haloDeliveryPolicy: .reviewWhenNeeded),
+                enhancementConfiguration: nil,
+                responseConfig: nil,
+                responseError: nil,
+                usedRawEnhancementFallback: false,
+                isAssistantFollowUp: false,
+                usesHaloDelivery: true,
+                haloSessionOverride: nil,
+                frozenContext: nil
+            ),
+            actions: .init(
+                setState: { _ in },
+                dismiss: {},
+                sendFollowUp: { _, _ in },
+                showResponse: { _, _ in },
+                failResponse: { _ in },
+                handleHaloPaste: { review, resolvedRoute in
+                    stagedReview = review
+                    route = resolvedRoute
+                    return true
+                }
+            )
+        )
+
+        let review = try #require(stagedReview)
+        #expect(route == .review)
+        #expect(review.rawText == "Usable raw transcript")
+        #expect(review.finalText.isEmpty)
+        #expect(review.deliveryReviewReason?.contains("empty") == true)
+        #expect(service.deliveredPayloads.isEmpty)
+    }
+
+    @MainActor
     @Test func pasteStagesImmutableReviewWithoutDismissingOrPasting() async throws {
         let service = SpyPasteDeliveryService()
         let delivery = TranscriptionDelivery(pasteDeliveryService: service)

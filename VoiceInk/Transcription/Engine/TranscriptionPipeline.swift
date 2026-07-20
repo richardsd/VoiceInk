@@ -2,6 +2,18 @@ import Foundation
 import SwiftData
 import os
 
+enum TranscriptionPipelineOutcome: Equatable {
+    case finished
+    case canceled
+    case noSpeechDetected
+}
+
+enum TranscriptionContentPolicy {
+    static func hasUsableRawTranscript(_ text: String) -> Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 /// Handles the full post-recording pipeline:
 /// transcribe → filter → format → word-replace → AI enhance → deliver → save
 @MainActor
@@ -69,7 +81,7 @@ class TranscriptionPipeline {
         haloSessionOverride: @escaping () -> HaloSessionDeliveryOverride? = { nil },
         handleHaloPaste: @escaping (PendingPasteReview, HaloDeliveryRoute) async -> Bool = { _, _ in false },
         assistant: AssistantHooks = .inactive
-    ) async {
+    ) async -> TranscriptionPipelineOutcome {
         let model = transcriptionConfiguration.model
         var finalText: String?
         var responseError: String?
@@ -112,9 +124,28 @@ class TranscriptionPipeline {
             }
         }
 
+        func discardEmptyTranscription() {
+            modelContext.delete(transcription)
+
+            do {
+                try modelContext.save()
+                NotificationCenter.default.post(name: .transcriptionDeleted, object: nil)
+
+                do {
+                    try FileManager.default.removeItem(at: audioURL)
+                } catch where (error as NSError).code == NSFileNoSuchFileError {
+                    // The recorder or a transcription service already removed it.
+                } catch {
+                    logger.error("Failed to remove audio for an empty transcription")
+                }
+            } catch {
+                logger.error("Failed to discard empty transcription: \(error, privacy: .public)")
+            }
+        }
+
         if shouldCancel() {
             await finishCanceledTranscription()
-            return
+            return .canceled
         }
 
         do {
@@ -134,10 +165,15 @@ class TranscriptionPipeline {
 
             if shouldCancel() {
                 await finishCanceledTranscription()
-                return
+                return .canceled
             }
 
             text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard TranscriptionContentPolicy.hasUsableRawTranscript(text) else {
+                discardEmptyTranscription()
+                return .noSpeechDetected
+            }
 
             if !assistant.isFollowUp,
                 let processedText = triggerWordModeSelection(text)
@@ -211,7 +247,7 @@ class TranscriptionPipeline {
                 {
                     if shouldCancel() {
                         await finishCanceledTranscription()
-                        return
+                        return .canceled
                     }
 
                     onStateChange(.enhancing)
@@ -258,7 +294,7 @@ class TranscriptionPipeline {
                         }
                         if shouldCancel() {
                             await finishCanceledTranscription()
-                            return
+                            return .canceled
                         }
                     }
                 }
@@ -312,7 +348,7 @@ class TranscriptionPipeline {
 
         if shouldCancel() {
             await finishCanceledTranscription()
-            return
+            return .canceled
         }
 
         let resolvedDeliveryOutput = outputForDelivery ?? outputConfiguration()
@@ -354,6 +390,8 @@ class TranscriptionPipeline {
         if !usesHaloDelivery {
             saveTranscriptionAndPostCompletion()
         }
+
+        return .finished
     }
 
     private func metadata(for mode: ModeConfig?) -> (name: String?, emoji: String?) {

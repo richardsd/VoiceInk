@@ -89,6 +89,14 @@ final class TranscriptionDelivery {
             return
         }
 
+        // An empty raw transcript is a no-capture outcome, not a result to
+        // paste or review. The pipeline normally handles it earlier; this
+        // guard keeps the delivery boundary safe if another caller regresses.
+        guard TranscriptionContentPolicy.hasUsableRawTranscript(request.transcription.text) else {
+            await actions.dismiss()
+            return
+        }
+
         if request.isAssistantFollowUp {
             await deliverFollowUp(request, actions: actions)
             return

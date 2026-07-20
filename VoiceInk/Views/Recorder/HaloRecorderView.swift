@@ -197,6 +197,9 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         case .confirmed:
             confirmationContent
                 .transition(phaseTransition)
+        case .noSpeechDetected:
+            noSpeechDetectedContent
+                .transition(phaseTransition)
         }
     }
 
@@ -301,6 +304,31 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 .foregroundStyle(Color.white.opacity(0.94))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
+    }
+
+    private var noSpeechDetectedContent: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(AppTheme.Accent.fill)
+                Image(systemName: "waveform.slash")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(AppTheme.Accent.strong)
+            }
+            .frame(width: 24, height: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(String(localized: "No speech detected"))
+                    .font(HaloTypography.statusTitle)
+                    .foregroundStyle(Color.white.opacity(0.92))
+                Text(String(localized: "Try recording again"))
+                    .font(HaloTypography.statusDetail)
+                    .foregroundStyle(Color.white.opacity(0.52))
+            }
+
+            Spacer(minLength: 0)
+        }
         .allowsHitTesting(false)
     }
 
@@ -907,6 +935,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             return String(localized: "Transcript ready. Press Return to apply or Escape to cancel.")
         case .confirmed:
             return String(localized: "Transcript pasted")
+        case .noSpeechDetected:
+            return String(localized: "No speech detected. Try recording again.")
         }
     }
 

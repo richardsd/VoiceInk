@@ -28,6 +28,25 @@ private actor HaloReviewDiffTestComputer {
 
 @MainActor
 struct HaloPresentationModelTests {
+    @Test func noSpeechOutcomeClearsReviewAndUsesDedicatedPhase() {
+        let model = HaloPresentationModel()
+        model.presentReview(
+            rawText: "Raw",
+            finalText: "Final",
+            modeName: nil,
+            providerLabel: nil,
+            connectionLabel: nil,
+            modelLabel: nil,
+            enhancementWarning: nil
+        )
+
+        model.presentNoSpeechDetected()
+
+        #expect(model.phase == .noSpeechDetected)
+        #expect(model.review == nil)
+        #expect(model.revisionCount == 0)
+    }
+
     @Test func reviewStateProjectsOnlyUISafeRevisionValuesAndStartsOnFinal() throws {
         let state = makeState(raw: "Raw words", final: "Polished words")
         let selectedRevision = try #require(state.selectedRevision)

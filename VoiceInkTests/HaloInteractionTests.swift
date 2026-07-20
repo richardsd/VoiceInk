@@ -1,8 +1,43 @@
+import Combine
 import CoreGraphics
+import Foundation
 import Testing
 @testable import VoiceInk
 
 struct HaloInteractionTests {
+    @Test func userDefaultsChangesPostedOffMainAreDeliveredOnMainQueue() async {
+        let center = NotificationCenter()
+        let suiteName = "HaloInteractionTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let defaultsBox = HaloInteractionUncheckedSendableBox(defaults)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let stream = AsyncStream<Bool> { continuation in
+            let cancellable = HaloWindowNotificationPublisher.userDefaultsChanges(
+                center: center,
+                defaults: defaults
+            )
+            .first()
+            .sink { _ in
+                continuation.yield(Thread.isMainThread)
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in
+                cancellable.cancel()
+            }
+
+            DispatchQueue.global(qos: .utility).async {
+                center.post(
+                    name: UserDefaults.didChangeNotification,
+                    object: defaultsBox.value
+                )
+            }
+        }
+
+        var iterator = stream.makeAsyncIterator()
+        #expect(await iterator.next() == true)
+    }
+
     @Test func convertsAppKitBottomLeftPointIntoSwiftUITopLeftPoint() {
         let converted = HaloInteractionCoordinateConverter.swiftUIPoint(
             fromAppKitPoint: CGPoint(x: 32, y: 70),
@@ -127,5 +162,40 @@ struct HaloInteractionTests {
             .rectangle(CGRect(x: 20, y: 20, width: 80, height: 30)),
             .rectangle(CGRect(x: 0, y: 40, width: 15, height: 30)),
         ])
+    }
+
+    @Test func reviewExpansionDefersRegionClippingUntilFinalPanelBounds() {
+        let surface = HaloInteractionRegion.roundedRectangle(
+            CGRect(x: 10, y: 8, width: 500, height: 380),
+            cornerRadius: 16
+        )
+        let lowerRefinementButton = HaloInteractionRegion.roundedRectangle(
+            CGRect(x: 24, y: 292, width: 86, height: 28),
+            cornerRadius: 14
+        )
+
+        let pending = HaloReviewInteractionRegionResolver.pendingRegions(
+            from: [surface, lowerRefinementButton]
+        )
+        let compactRegions = HaloReviewInteractionRegionResolver.activeRegions(
+            from: pending,
+            within: CGRect(x: 0, y: 0, width: 260, height: 70)
+        )
+        let reviewRegions = HaloReviewInteractionRegionResolver.activeRegions(
+            from: pending,
+            within: CGRect(x: 0, y: 0, width: 520, height: 402)
+        )
+
+        #expect(pending == [surface, lowerRefinementButton])
+        #expect(!compactRegions.contains(lowerRefinementButton))
+        #expect(reviewRegions == [surface, lowerRefinementButton])
+    }
+}
+
+private final class HaloInteractionUncheckedSendableBox<Value>: @unchecked Sendable {
+    let value: Value
+
+    init(_ value: Value) {
+        self.value = value
     }
 }
