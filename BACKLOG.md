@@ -2,13 +2,15 @@
 
 ## Cursor Halo review workflow
 
-**Status:** Halo Review 2.0, Halo 3.0, and Halo 4.0 delivered; Halo 5.0 planning is next
+**Status:** Halo Review 2.0, Halo 3.0, and Halo 4.0 delivered; Halo 5.0 implementation is active
 
 **Delivered:** `docs/HALO_REVIEW_2_ROADMAP.md`
 
 **Completed reliability work:** `docs/HALO_3_ROADMAP.md`
 
 **Completed voice-refinement work:** `docs/HALO_4_ROADMAP.md`
+
+**Current work:** `docs/HALO_5_ROADMAP.md`
 
 Halo Review 2.0 delivered per-Mode Always Review, Review When Needed, and Paste Immediately policies; session Quick Apply/Review overrides; destination-safe direct delivery; Final/Changes/Original lenses; revision history; and five provider-stable refinements.
 
@@ -22,16 +24,18 @@ Halo 3.0 delivered the reliability and control work:
 
 Halo 4.0 built on that foundation with ephemeral, voice-directed refinement inside the existing Halo review. It reuses the user's recording shortcuts and original transcription/enhancement route, adds a microphone fallback and futuristic listening states, and creates immutable parent-linked revisions without persisting the spoken instruction.
 
-### Halo 5.0 planning candidates
+### Halo 5.0 committed scope
 
-- Displaying, editing, confirming, or persisting recognized voice-refinement instructions.
+- Displaying, editing, and confirming recognized voice-refinement instructions without persisting them.
 - Free-form typed refinement through the same immutable revision pipeline.
-- Voice commands for Apply, Copy, Cancel, and lens or revision navigation.
-- Continuous caret and destination tracking.
-- True post-paste Undo with target-safe behavior across native, browser, Electron, and contenteditable inputs.
-- Parallel refinement variants with explicit latency, cost, and provider-limit controls.
-- Time-Shift Capture with an explicit privacy and resource-management contract.
-- Safe destination activation or guided focus recovery without silently pasting into a different field.
+- Exact local voice commands for Apply, Copy, Cancel, and lens or revision navigation.
+- Opt-in, identity-safe continuous caret tracking.
+- Sequential Another Take plus opt-in Precise/Natural two-request comparison.
+- Strict fifteen-second, one-shot, memory-only Time-Shift Capture.
+- User-triggered guided return to the original application without silently pasting into a different field.
+- A guided Settings → Halo surface controlling capability availability while preserving non-disableable privacy and delivery safety.
+
+True post-paste Undo, exact destination-field activation, cross-model variants, and persistent or disk-backed Time-Shift remain deferred beyond Halo 5.0.
 
 ## Confirmed bugs
 
