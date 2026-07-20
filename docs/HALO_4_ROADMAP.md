@@ -27,7 +27,7 @@ Halo remains opt-in, Mini remains the application default, and Respond and Custo
 | H4-07 | **Done** | H4-04, H4-06 | Listening, Understanding, and Refining review UI with accessible feedback |
 | H4-08 | **Done** | H4-06 | Cancellation, timeouts, cleanup, destination safety, and aggregate outcome metrics |
 | H4-09 | **Done** | H4-07, H4-08 | Development gallery, localization hooks, accessibility, and focused verification |
-| H4-10 | **Manual validation** | H4-09 | Automated gates complete; manual application acceptance remains |
+| H4-10 | **Done** | H4-09 | Automated gates and manual application acceptance complete |
 
 ## Story acceptance criteria
 
@@ -113,7 +113,7 @@ Halo remains opt-in, Mini remains the application default, and Respond and Custo
 - [x] The complete non-UI `VoiceInkTests` target passes using temporary Derived Data.
 - [x] A Debug build succeeds using temporary Derived Data and the existing resolved package cache.
 - [x] Compatibility with Mini, Notch, Respond, Custom Command, direct delivery, preset refinement, manual edit, History, clipboard restoration, and auto-send is audited.
-- [ ] Manual acceptance is recorded for native, browser, Electron, fullscreen, multi-display, Accessibility-denied, realtime, batch, OAuth, API-key, shortcut modes, microphone fallback, and destination focus changes.
+- [x] Manual acceptance is recorded for native, browser, Electron, fullscreen, multi-display, Accessibility-denied, realtime, batch, OAuth, API-key, shortcut modes, microphone fallback, and destination focus changes.
 
 ## Delivery order
 
@@ -167,11 +167,11 @@ Automated verification completed on 2026-07-19:
 - The complete non-UI `VoiceInkTests` target passed with `-parallel-testing-enabled NO` using `/tmp/VoiceInk-Halo4-Final`.
 - A Debug build passed using the same temporary Derived Data and the existing resolved package cache.
 - Source-level compatibility review confirmed that Halo voice refinement is reachable only from an active Halo Paste review; Mini, Notch, Respond, Custom Command, direct delivery, preset refinement, manual edit, History finalization, clipboard restoration, and auto-send retain their existing paths.
-- `VoiceInk/Localizable.xcstrings` contained unrelated user-owned changes before Halo 4.0 work and was intentionally left untouched.
+- `VoiceInk/Localizable.xcstrings` was incorporated in the follow-up `Include strings` commit after the Halo 4.0 implementation commit.
 
-Manual application acceptance remains the only open gate. Use the matrix above, with particular attention to Toggle, Push to Talk, Hybrid, the mouse-only **Say change** fallback, realtime partial text, batch transcription, destination focus changes, and temporary-file cleanup after cancellation.
+Manual application acceptance was confirmed by the product owner on 2026-07-20 after live experimentation with the Halo workflow. Halo 4.0 has no remaining delivery gates.
 
-## Deferred work
+## Deferred from Halo 4.0 and candidates for Halo 5.0
 
 - Displaying, editing, confirming, or persisting the recognized spoken instruction.
 - Parallel refinement variants, continuous caret tracking, true post-paste Undo, Time-Shift Capture, and automatic destination activation.

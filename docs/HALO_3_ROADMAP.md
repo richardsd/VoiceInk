@@ -103,14 +103,14 @@ Halo 3.0 makes the review surface focus-safe, gives users a deliberate recovery 
 
 - [x] Focused Halo, routing, reducer, delivery, History, and counter tests pass.
 - [x] The complete non-UI test suite and a Debug build pass with temporary Derived Data.
-- [ ] Manual acceptance covers native, browser, Electron, fullscreen, multi-display, Accessibility-denied, Reduce Motion, VoiceOver, OAuth/API enhancement, every delivery policy, focus loss/recovery, and History.
+- [x] Manual acceptance covers native, browser, Electron, fullscreen, multi-display, Accessibility-denied, Reduce Motion, VoiceOver, OAuth/API enhancement, every delivery policy, focus loss/recovery, and History.
 
 ## Verification evidence
 
 - 2026-07-17: focused Halo safety, delivery-risk, shortcut, review/refinement, interaction, and outcome-metric tests passed serially.
 - 2026-07-17: the complete `VoiceInkTests` non-UI target passed with parallel testing disabled.
 - 2026-07-17: the VoiceInk Debug scheme built successfully using temporary Derived Data and the existing resolved package cache.
-- Manual application acceptance remains intentionally open for the handoff checklist above.
+- 2026-07-20: product-owner acceptance was confirmed after live experimentation with the Halo workflow, closing the manual handoff gate.
 
 ## Delivery order
 
@@ -124,8 +124,8 @@ Halo 3.0 makes the review surface focus-safe, gives users a deliberate recovery 
 
 H3-04, H3-06, H3-08, and H3-09 may proceed in parallel after H3-00. H3-02 and H3-03 may proceed in parallel after H3-01 but must share one final validation contract.
 
-## Deferred work
+## Deferred from Halo 3.0
 
 - True post-paste Undo across native, browser, Electron, and contenteditable destinations.
 - Automatic activation or clicking of a destination field.
-- Free-form voice refinement, parallel model variants, continuous caret tracking, and Time-Shift Capture.
+- Free-form voice refinement was delivered in Halo 4.0. Parallel model variants, continuous caret tracking, and Time-Shift Capture remain candidates for Halo 5.0 planning.
