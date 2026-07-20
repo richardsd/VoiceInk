@@ -455,6 +455,10 @@ class RecordingShortcutManager: ObservableObject {
             )
         case .quickAddToDictionary:
             DictionaryQuickAddManager.shared.toggle(modelContainer: engine.modelContext.container)
+        case .toggleTimeShift:
+            NotificationCenter.default.post(name: .haloTimeShiftToggleRequested, object: nil)
+        case .captureTimeShift:
+            NotificationCenter.default.post(name: .haloTimeShiftCaptureRequested, object: nil)
         default:
             break
         }

@@ -22,7 +22,8 @@ enum BackupImporter {
         _ backup: BackupFile, categories: Set<BackupCategory>, enhancementService: AIEnhancementService,
         recordingShortcutManager: RecordingShortcutManager, menuBarManager: MenuBarManager,
         mediaController: MediaController, playbackController: PlaybackController, recorderUIManager: RecorderUIManager,
-        modelContext: ModelContext, transcriptionModelManager: TranscriptionModelManager
+        haloCapabilityStore: HaloCapabilityStore, modelContext: ModelContext,
+        transcriptionModelManager: TranscriptionModelManager
     ) throws {
         var shouldRepairModePromptSelections = false
 
@@ -37,7 +38,8 @@ enum BackupImporter {
                 menuBarManager: menuBarManager,
                 mediaController: mediaController,
                 playbackController: playbackController,
-                recorderUIManager: recorderUIManager
+                recorderUIManager: recorderUIManager,
+                haloCapabilityStore: haloCapabilityStore
             )
         }
 
@@ -71,7 +73,8 @@ enum BackupImporter {
     @MainActor
     private static func importGeneral(
         _ general: GeneralBackup?, recordingShortcutManager: RecordingShortcutManager, menuBarManager: MenuBarManager,
-        mediaController: MediaController, playbackController: PlaybackController, recorderUIManager: RecorderUIManager
+        mediaController: MediaController, playbackController: PlaybackController, recorderUIManager: RecorderUIManager,
+        haloCapabilityStore: HaloCapabilityStore
     ) {
         guard let general else {
             print("No general settings found in the imported file.")
@@ -103,6 +106,25 @@ enum BackupImporter {
         }
         if let dictionaryShortcut = general.quickAddToDictionaryShortcut {
             ShortcutStore.setShortcut(dictionaryShortcut.shortcut, for: .quickAddToDictionary)
+        }
+        if let toggleTimeShiftShortcut = general.toggleTimeShiftShortcut {
+            ShortcutStore.setShortcut(toggleTimeShiftShortcut.shortcut, for: .toggleTimeShift)
+        }
+        if let captureTimeShiftShortcut = general.captureTimeShiftShortcut {
+            ShortcutStore.setShortcut(captureTimeShiftShortcut.shortcut, for: .captureTimeShift)
+        }
+
+        if let halo = general.haloPreferences {
+            haloCapabilityStore.apply(
+                spokenRefinementEnabled: halo.spokenRefinementEnabled,
+                typedRefinementEnabled: halo.typedRefinementEnabled,
+                voiceCommandsEnabled: halo.voiceCommandsEnabled,
+                anotherTakeEnabled: halo.anotherTakeEnabled,
+                parallelComparisonEnabled: halo.parallelComparisonEnabled,
+                guidedRecoveryEnabled: halo.guidedRecoveryEnabled,
+                positionBehaviorRawValue: halo.positionBehaviorRawValue,
+                timeShiftEnabled: halo.timeShiftEnabled
+            )
         }
 
         if let shortcutRawValue = general.primaryRecordingShortcutRawValue,

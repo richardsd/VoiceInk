@@ -19,6 +19,7 @@ struct VoiceInkApp: App {
     @StateObject private var updaterViewModel: UpdaterViewModel
     @StateObject private var menuBarManager: MenuBarManager
     @StateObject private var mainWindowNavigation = MainWindowNavigation.shared
+    @StateObject private var haloCapabilityStore: HaloCapabilityStore
     @StateObject private var aiService = AIService()
     @StateObject private var enhancementService: AIEnhancementService
     @StateObject private var licenseViewModel = LicenseViewModel.shared
@@ -94,6 +95,7 @@ struct VoiceInkApp: App {
         // Initialize services with proper sharing of instances
         let aiService = AIService()
         _aiService = StateObject(wrappedValue: aiService)
+        _haloCapabilityStore = StateObject(wrappedValue: HaloCapabilityStore())
         aiService.refreshOllamaAvailabilityInBackground()
 
         let updaterViewModel = UpdaterViewModel()
@@ -292,6 +294,7 @@ struct VoiceInkApp: App {
                         .environmentObject(updaterViewModel)
                         .environmentObject(menuBarManager)
                         .environmentObject(mainWindowNavigation)
+                        .environmentObject(haloCapabilityStore)
                         .environmentObject(aiService)
                         .environmentObject(enhancementService)
                         .modelContainer(container)
@@ -382,6 +385,7 @@ struct VoiceInkApp: App {
                 .environmentObject(recordingShortcutManager)
                 .environmentObject(menuBarManager)
                 .environmentObject(mainWindowNavigation)
+                .environmentObject(haloCapabilityStore)
                 .environmentObject(updaterViewModel)
                 .environmentObject(aiService)
                 .environmentObject(enhancementService)

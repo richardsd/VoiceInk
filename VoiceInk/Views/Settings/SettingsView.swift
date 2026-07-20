@@ -11,6 +11,7 @@ struct SettingsView: View {
     @EnvironmentObject private var transcriptionModelManager: TranscriptionModelManager
     @EnvironmentObject private var enhancementService: AIEnhancementService
     @ObservedObject private var launchAtLoginManager = LaunchAtLoginManager.shared
+    @EnvironmentObject private var haloCapabilityStore: HaloCapabilityStore
     @ObservedObject private var mediaController = MediaController.shared
     @ObservedObject private var playbackController = PlaybackController.shared
     @AppStorage("hasCompletedOnboardingV2") private var hasCompletedOnboardingV2 = true
@@ -30,8 +31,26 @@ struct SettingsView: View {
 
     @State private var isMiddleClickExpanded = false
     @State private var isRestoreClipboardExpanded = false
+    @State private var selectedSection: SettingsSection = .general
 
     var body: some View {
+        VStack(spacing: 0) {
+            SettingsSectionTabBar(selection: $selectedSection)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 14)
+
+            Divider()
+
+            switch selectedSection {
+            case .general:
+                generalSettings
+            case .halo:
+                HaloSettingsView()
+            }
+        }
+    }
+
+    private var generalSettings: some View {
         Form {
             Section {
                 LabeledContent("Primary Shortcut") {
@@ -308,6 +327,7 @@ struct SettingsView: View {
                             mediaController: mediaController,
                             playbackController: playbackController,
                             recorderUIManager: recorderUIManager,
+                            haloCapabilityStore: haloCapabilityStore,
                             modelContext: modelContext,
                             transcriptionModelManager: transcriptionModelManager
                         )
@@ -356,6 +376,54 @@ struct SettingsView: View {
         }
         .labelsHidden()
         .fixedSize()
+    }
+}
+
+private enum SettingsSection: String, CaseIterable, Identifiable {
+    case general
+    case halo
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general:
+            return String(localized: "General")
+        case .halo:
+            return String(localized: "Halo")
+        }
+    }
+}
+
+private struct SettingsSectionTabBar: View {
+    @Binding var selection: SettingsSection
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(SettingsSection.allCases) { section in
+                Button {
+                    selection = section
+                } label: {
+                    Text(section.title)
+                        .font(.system(size: 13, weight: selection == section ? .semibold : .medium))
+                        .foregroundStyle(selection == section ? Color.white : Color.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(selection == section ? AppTheme.Accent.primary : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selection == section ? .isSelected : [])
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(AppTheme.Surface.card.opacity(0.65))
+        )
+        .frame(maxWidth: 360)
     }
 }
 

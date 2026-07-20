@@ -42,6 +42,16 @@ enum AppDefaults {
             "RecorderType": "mini",
             RecorderDisplaySettingsKeys.showLiveTranscript: true,
 
+            // Halo capabilities
+            HaloCapabilitySettingsKeys.spokenRefinementEnabled: true,
+            HaloCapabilitySettingsKeys.typedRefinementEnabled: true,
+            HaloCapabilitySettingsKeys.voiceCommandsEnabled: true,
+            HaloCapabilitySettingsKeys.anotherTakeEnabled: true,
+            HaloCapabilitySettingsKeys.parallelComparisonEnabled: false,
+            HaloCapabilitySettingsKeys.guidedRecoveryEnabled: true,
+            HaloCapabilitySettingsKeys.positionBehavior: HaloPositionBehavior.stableAnchor.rawValue,
+            HaloCapabilitySettingsKeys.timeShiftEnabled: false,
+
             // Cleanup
             CleanupSettingsKeys.isTranscriptionCleanupEnabled: false,
             CleanupSettingsKeys.transcriptionRetentionMinutes: 1440,

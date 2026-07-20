@@ -21,4 +21,8 @@ extension Notification.Name {
     static let sessionMetricsDidChange = Notification.Name("sessionMetricsDidChange")
     static let openFileForTranscription = Notification.Name("openFileForTranscription")
     static let recordingDeviceChangeRequired = Notification.Name("recordingDeviceChangeRequired")
+    static let haloCapabilitiesDidChange = Notification.Name("haloCapabilitiesDidChange")
+    static let haloTimeShiftDisableRequested = Notification.Name("haloTimeShiftDisableRequested")
+    static let haloTimeShiftToggleRequested = Notification.Name("haloTimeShiftToggleRequested")
+    static let haloTimeShiftCaptureRequested = Notification.Name("haloTimeShiftCaptureRequested")
 }

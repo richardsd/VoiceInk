@@ -98,6 +98,8 @@ struct GeneralBackup: Codable {
     let cancelRecorderShortcut: ShortcutBackup?
     let openHistoryWindowShortcut: ShortcutBackup?
     let quickAddToDictionaryShortcut: ShortcutBackup?
+    let toggleTimeShiftShortcut: ShortcutBackup?
+    let captureTimeShiftShortcut: ShortcutBackup?
     let primaryRecordingShortcutRawValue: String?
     let secondaryRecordingShortcutRawValue: String?
     let primaryRecordingShortcutModeRawValue: String?
@@ -135,6 +137,18 @@ struct GeneralBackup: Codable {
     let customStartSoundFilename: String?
     let isUsingCustomStopSound: Bool?
     let customStopSoundFilename: String?
+    let haloPreferences: HaloPreferencesBackup?
+}
+
+struct HaloPreferencesBackup: Codable {
+    let spokenRefinementEnabled: Bool?
+    let typedRefinementEnabled: Bool?
+    let voiceCommandsEnabled: Bool?
+    let anotherTakeEnabled: Bool?
+    let parallelComparisonEnabled: Bool?
+    let guidedRecoveryEnabled: Bool?
+    let positionBehaviorRawValue: String?
+    let timeShiftEnabled: Bool?
 }
 
 struct EnhancementSettingsBackup: Codable {
@@ -192,7 +206,7 @@ struct WordBackup: Codable {
 }
 
 struct BackupFile: Codable {
-    static let currentSchemaVersion = 2
+    static let currentSchemaVersion = 3
 
     let schemaVersion: Int
     let metadata: BackupMetadata?
@@ -271,6 +285,8 @@ struct BackupFile: Codable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encodeIfPresent(metadata, forKey: .metadata)
         try container.encode(version, forKey: .version)
         try container.encode(customPrompts, forKey: .customPrompts)
         try container.encode(modeConfigs, forKey: .modeConfigs)

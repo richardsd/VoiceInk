@@ -24,7 +24,7 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 | Story | Status | Depends on | Milestone deliverable |
 | --- | --- | --- | --- |
 | H5-00 | **Done** | — | Roadmap, dependency board, baseline reconciliation, and acceptance contract |
-| H5-01 | **Planned** | H5-00 | Capability store, defaults, backup v3, Settings tabs, and guided Halo overview |
+| H5-01 | **Done** | H5-00 | Capability store, defaults, backup v3, Settings tabs, and guided Halo overview |
 | H5-02 | **Planned** | H5-01 | Unified instruction draft, reducer, privacy lifecycle, and free-form prompt boundary |
 | H5-03 | **Planned** | H5-02 | Voice confirmation/correction, typed refinement, and Settings controls |
 | H5-04 | **Planned** | H5-03 | Exact local `Halo …` commands and consequential-command confirmation |
@@ -50,11 +50,11 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 
 ### H5-01 — User-controlled capabilities
 
-- [ ] Settings contains General and Halo tabs; Halo remains discoverable when Mini or Notch is selected.
-- [ ] The guided Halo page exposes the approved global controls, defaults, status, `Use Halo`, and `Manage Modes` actions.
-- [ ] A typed, injectable capability store publishes runtime snapshots and reconciles disabling changes immediately.
-- [ ] Backup schema v3 exports optional Halo preferences and Time-Shift shortcuts while v1/v2 imports retain recommended defaults.
-- [ ] Armed state, audio, drafts, recovery state, variants, and session overrides are never persisted or backed up.
+- [x] Settings contains General and Halo tabs; Halo remains discoverable when Mini or Notch is selected.
+- [x] The guided Halo page exposes the approved global controls, defaults, status, `Use Halo`, and `Manage Modes` actions.
+- [x] A typed, injectable capability store publishes runtime snapshots and capability-change reconciliation notifications.
+- [x] Backup schema v3 exports optional Halo preferences and Time-Shift shortcuts while v1/v2 imports retain recommended defaults.
+- [x] Armed state, audio, drafts, recovery state, variants, and session overrides are never persisted or backed up.
 
 ### H5-02 — Unified instruction foundation
 
@@ -152,6 +152,8 @@ Stories use focused `H5-XX …` commits in dependency order. H5-05, H5-07, and H
 
 - 2026-07-20: `881a3acc` isolated the no-speech and Halo review edge-case baseline.
 - 2026-07-20: `9ceb8db7` closed Halo 3.0 and Halo 4.0 documentation after product-owner acceptance.
+- 2026-07-20: `f6e820a9` materialized H5-00 and established this status board.
+- 2026-07-20: H5-01 focused capability/default/backup tests passed (6 tests), and the Debug build succeeded using `/tmp/VoiceInk-H5-01`.
 
 ## Deferred beyond Halo 5.0
 

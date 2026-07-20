@@ -9,6 +9,8 @@ enum ShortcutAction: Hashable {
     case cancelRecorder
     case openHistoryWindow
     case quickAddToDictionary
+    case toggleTimeShift
+    case captureTimeShift
     case mode(UUID)
     case recorderPanelEscape
     case recorderPanelApply
@@ -59,6 +61,10 @@ enum ShortcutAction: Hashable {
             return "openHistoryWindow"
         case .quickAddToDictionary:
             return "quickAddToDictionary"
+        case .toggleTimeShift:
+            return "toggleTimeShift"
+        case .captureTimeShift:
+            return "captureTimeShift"
         case .mode(let id):
             return "mode_\(id.uuidString)"
         case .recorderPanelEscape:
@@ -100,6 +106,10 @@ enum ShortcutAction: Hashable {
             return String(localized: "Open History Window")
         case .quickAddToDictionary:
             return String(localized: "Quick Add to Dictionary")
+        case .toggleTimeShift:
+            return String(localized: "Arm or Disarm Time-Shift")
+        case .captureTimeShift:
+            return String(localized: "Capture Last 15 Seconds")
         case .mode(let id):
             if let config = ModeManager.shared.getConfiguration(with: id) {
                 return String(format: String(localized: "%@ Mode"), config.name)
@@ -137,6 +147,8 @@ enum ShortcutAction: Hashable {
         .retryLastTranscription,
         .openHistoryWindow,
         .quickAddToDictionary,
+        .toggleTimeShift,
+        .captureTimeShift,
     ]
 
     static let recorderPanelStoredActions: [Self] = [
@@ -152,6 +164,8 @@ enum ShortcutAction: Hashable {
         .cancelRecorder,
         .openHistoryWindow,
         .quickAddToDictionary,
+        .toggleTimeShift,
+        .captureTimeShift,
     ]
 
     private static func displayNumber(forRecorderPanelIndex index: Int) -> String {

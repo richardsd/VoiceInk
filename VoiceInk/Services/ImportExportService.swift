@@ -208,6 +208,8 @@ class ImportExportService {
             cancelRecorderShortcut: ShortcutStore.shortcut(for: .cancelRecorder).map(ShortcutBackup.init),
             openHistoryWindowShortcut: ShortcutStore.shortcut(for: .openHistoryWindow).map(ShortcutBackup.init),
             quickAddToDictionaryShortcut: ShortcutStore.shortcut(for: .quickAddToDictionary).map(ShortcutBackup.init),
+            toggleTimeShiftShortcut: ShortcutStore.shortcut(for: .toggleTimeShift).map(ShortcutBackup.init),
+            captureTimeShiftShortcut: ShortcutStore.shortcut(for: .captureTimeShift).map(ShortcutBackup.init),
             primaryRecordingShortcutRawValue: recordingShortcutManager.primaryRecordingShortcut.rawValue,
             secondaryRecordingShortcutRawValue: recordingShortcutManager.secondaryRecordingShortcut.rawValue,
             primaryRecordingShortcutModeRawValue: recordingShortcutManager.primaryRecordingShortcutMode.rawValue,
@@ -244,7 +246,17 @@ class ImportExportService {
             isUsingCustomStartSound: defaults.string(forKey: CustomSoundManager.SoundType.start.selectionKey) == "custom",
             customStartSoundFilename: defaults.string(forKey: CustomSoundManager.SoundType.start.filenameKey),
             isUsingCustomStopSound: defaults.string(forKey: CustomSoundManager.SoundType.stop.selectionKey) == "custom",
-            customStopSoundFilename: defaults.string(forKey: CustomSoundManager.SoundType.stop.filenameKey)
+            customStopSoundFilename: defaults.string(forKey: CustomSoundManager.SoundType.stop.filenameKey),
+            haloPreferences: HaloPreferencesBackup(
+                spokenRefinementEnabled: defaults.bool(forKey: HaloCapabilitySettingsKeys.spokenRefinementEnabled),
+                typedRefinementEnabled: defaults.bool(forKey: HaloCapabilitySettingsKeys.typedRefinementEnabled),
+                voiceCommandsEnabled: defaults.bool(forKey: HaloCapabilitySettingsKeys.voiceCommandsEnabled),
+                anotherTakeEnabled: defaults.bool(forKey: HaloCapabilitySettingsKeys.anotherTakeEnabled),
+                parallelComparisonEnabled: defaults.bool(forKey: HaloCapabilitySettingsKeys.parallelComparisonEnabled),
+                guidedRecoveryEnabled: defaults.bool(forKey: HaloCapabilitySettingsKeys.guidedRecoveryEnabled),
+                positionBehaviorRawValue: defaults.string(forKey: HaloCapabilitySettingsKeys.positionBehavior),
+                timeShiftEnabled: defaults.bool(forKey: HaloCapabilitySettingsKeys.timeShiftEnabled)
+            )
         )
 
         let currentMode = modeManager.currentEffectiveConfiguration
@@ -320,6 +332,7 @@ class ImportExportService {
         mediaController: MediaController,
         playbackController: PlaybackController,
         recorderUIManager: RecorderUIManager,
+        haloCapabilityStore: HaloCapabilityStore,
         modelContext: ModelContext,
         transcriptionModelManager: TranscriptionModelManager
     ) {
@@ -381,6 +394,7 @@ class ImportExportService {
                 mediaController: mediaController,
                 playbackController: playbackController,
                 recorderUIManager: recorderUIManager,
+                haloCapabilityStore: haloCapabilityStore,
                 modelContext: modelContext,
                 transcriptionModelManager: transcriptionModelManager
             )
