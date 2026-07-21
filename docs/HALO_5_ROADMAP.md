@@ -36,7 +36,7 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 | H5-10 | **Done** | H5-09 | In-memory transcription boundary, provider adapters, and capability checks |
 | H5-11 | **Done** | H5-10 | Forced-review Time-Shift pipeline, menu controls, shortcuts, and armed pulse |
 | H5-12 | **Done** | H5-07 | Concurrent Precise/Natural variant engine and stale-result handling |
-| H5-13 | **Planned** | H5-12 | Variant Deck UI, winner materialization, and opt-in cost disclosure |
+| H5-13 | **Done** | H5-12 | Variant Deck UI, winner materialization, and opt-in cost disclosure |
 | H5-14 | **Planned** | H5-04, H5-06, H5-11, H5-13 | Localization, accessibility, compatibility audit, full verification, and acceptance |
 
 ## Story acceptance criteria
@@ -132,9 +132,9 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 
 ### H5-13 — Variant Deck
 
-- [ ] The review displays an accessible A/B segmented deck rather than a side-by-side layout.
-- [ ] Only an explicitly selected winner becomes a revision; the unselected candidate is cleared from memory.
-- [ ] Settings and the review disclose that comparison uses two model requests.
+- [x] The review displays an accessible A/B segmented deck rather than a side-by-side layout.
+- [x] Only an explicitly selected winner becomes a revision; the unselected candidate is cleared from memory.
+- [x] Settings and the review disclose that comparison uses two model requests.
 
 ### H5-14 — Hardening and acceptance
 
@@ -164,7 +164,8 @@ Stories use focused `H5-XX …` commits in dependency order. H5-05, H5-07, and H
 - 2026-07-21: `e6145528` completed H5-09; lifecycle, controller, presentation, normal-recorder lease, and Halo voice-lease suites passed 40 focused tests serially in `/tmp/VoiceInk-H5-refine-final`; normal recording preempts Time-Shift only after memory clearing, Halo voice capture never preempts it, late lease acquisition is cancellation-safe, lifecycle invalidation zeroes retained snapshots, and metrics expose only action, duration, and sanitized outcome.
 - 2026-07-21: `633c6b1c` completed H5-10; shared file/memory routing, strict model resolution, cloud WAV adapters, direct-PCM Whisper/FluidAudio adapters, error sanitization, and zeroization passed 25 focused tests in `/tmp/VoiceInk-H5-refine-final`; unsupported routes remain explicit and no adapter retries through another source, provider, authentication path, or model.
 - 2026-07-21: `432e957d` completed H5-11; Time-Shift workflow, lifecycle, presentation, destination safety, delivery, and recorder-routing suites passed 73 focused tests in `/tmp/VoiceInk-H5-refine-final`; arming performs no Mode, destination, context, History, or network work, Capture uses one exact memory-only route, and missing destinations remain Copy-only.
-- 2026-07-21: H5-12 variant reducer and engine integration passed 44 focused tests in `/tmp/VoiceInk-H5-variants-pure`; comparison starts exactly two same-route requests, keeps candidates provisional, rejects stale identities without refreshing inactivity, and materializes only the selected winner.
+- 2026-07-21: `fd5c1b55` completed H5-12; variant reducer and engine integration passed 44 focused tests in `/tmp/VoiceInk-H5-variants-pure`; comparison starts exactly two same-route requests, keeps candidates provisional, rejects stale identities without refreshing inactivity, and materializes only the selected winner.
+- 2026-07-21: H5-13 Variant Deck presentation, review integration, interaction, layout, and refinement-engine suites passed 74 focused tests in `/tmp/VoiceInk-H5-variants-pure`; the A/B deck scrolls each candidate from its first line, scopes cancellation and selection to the current comparison, announces settled outcomes, honors Reduce Motion, discloses two same-route requests, and materializes exactly one selected winner.
 
 ## Deferred beyond Halo 5.0
 

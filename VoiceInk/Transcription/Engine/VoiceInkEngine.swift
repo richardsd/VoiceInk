@@ -1716,6 +1716,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         haloReviewState = state
         pasteReviewSecondsRemaining = nil
         schedulePasteReviewInactivity(for: review.id)
+        announceHaloVoiceRefinement(
+            String(localized: "Creating two transcript alternatives")
+        )
 
         for variantRequest in launch.requests {
             let refinementRequest = HaloRefinementRequest(
@@ -1750,11 +1753,28 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     @discardableResult
     func cancelHaloVariantComparisonIfActive(at date: Date = Date()) -> Bool {
+        guard let comparisonID = haloReviewState?.variantComparison.comparisonID else {
+            return false
+        }
+        return cancelHaloVariantComparison(
+            comparisonID: comparisonID,
+            at: date
+        )
+    }
+
+    /// Cancels only the comparison represented by the visible Variant Deck.
+    /// A stale mouse event must never fall through and cancel the review itself.
+    @discardableResult
+    func cancelHaloVariantComparison(
+        comparisonID: UUID,
+        at date: Date = Date()
+    ) -> Bool {
         guard recordingState == .reviewing,
             let review = pendingPasteReview,
             pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
             var state = haloReviewState,
             state.session.id == review.id,
+            state.variantComparison.comparisonID == comparisonID,
             state.isVariantComparisonActive,
             let pendingRequestIDs = state.cancelVariantComparison(at: date)
         else {
@@ -1765,6 +1785,39 @@ class VoiceInkEngine: NSObject, ObservableObject {
             haloVariantTasks.removeValue(forKey: requestID)?.cancel()
         }
         stopActiveHaloVariantTasks()
+        haloReviewState = state
+        schedulePasteReviewInactivity(for: review.id)
+        return true
+    }
+
+    /// Records an A/B deck interaction without persisting the selected tab.
+    /// Running comparisons already pause expiry; settled comparisons restart
+    /// the normal two-minute inactivity window.
+    @discardableResult
+    func touchHaloVariantComparison(
+        comparisonID: UUID,
+        at date: Date = Date()
+    ) -> Bool {
+        guard recordingState == .reviewing,
+            let review = pendingPasteReview,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
+            var state = haloReviewState,
+            state.session.id == review.id,
+            state.variantComparison.comparisonID == comparisonID,
+            state.isVariantComparisonActive,
+            !state.isExpired
+        else {
+            return false
+        }
+
+        guard state.isVariantComparisonRunning || date < state.expiresAt else {
+            _ = HaloReviewReducer.reduce(state: &state, action: .timeout(at: date))
+            haloReviewState = state
+            pasteReviewSecondsRemaining = 0
+            return false
+        }
+
+        state.touch(at: date)
         haloReviewState = state
         schedulePasteReviewInactivity(for: review.id)
         return true
@@ -3094,8 +3147,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         }
 
         haloVariantTasks.removeValue(forKey: request.id)
+        let event: HaloVariantEventResult
         if result.requestID != request.id || result.baseRevisionID != request.baseRevisionID {
-            _ = state.receiveVariantFailure(
+            event = state.receiveVariantFailure(
                 comparisonID: request.comparisonID,
                 requestID: request.id,
                 baseRevisionID: request.baseRevisionID,
@@ -3104,7 +3158,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 at: date
             )
         } else {
-            _ = state.receiveVariantResponse(
+            event = state.receiveVariantResponse(
                 HaloVariantResponse(
                     comparisonID: request.comparisonID,
                     requestID: request.id,
@@ -3117,6 +3171,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         }
         haloReviewState = state
         updateHaloVariantInactivity(for: reviewID, state: state)
+        announceHaloVariantSettlementIfNeeded(event: event, state: state)
     }
 
     private func failHaloVariant(
@@ -3136,7 +3191,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         }
 
         haloVariantTasks.removeValue(forKey: request.id)
-        _ = state.receiveVariantFailure(
+        let event = state.receiveVariantFailure(
             comparisonID: request.comparisonID,
             requestID: request.id,
             baseRevisionID: request.baseRevisionID,
@@ -3146,6 +3201,31 @@ class VoiceInkEngine: NSObject, ObservableObject {
         )
         haloReviewState = state
         updateHaloVariantInactivity(for: reviewID, state: state)
+        announceHaloVariantSettlementIfNeeded(event: event, state: state)
+    }
+
+    private func announceHaloVariantSettlementIfNeeded(
+        event: HaloVariantEventResult,
+        state: HaloReviewState
+    ) {
+        guard event != .stale, !state.isVariantComparisonRunning else { return }
+
+        switch state.variantComparison.status {
+        case .ready:
+            announceHaloVoiceRefinement(
+                String(localized: "Two transcript alternatives are ready")
+            )
+        case .partialFailure:
+            announceHaloVoiceRefinement(
+                String(localized: "One transcript alternative is ready")
+            )
+        case .totalFailure:
+            announceHaloVoiceRefinement(
+                String(localized: "Transcript alternatives could not be created. Your current version is unchanged.")
+            )
+        case .idle, .comparing, .cancelled, .materialized:
+            break
+        }
     }
 
     private func updateHaloVariantInactivity(

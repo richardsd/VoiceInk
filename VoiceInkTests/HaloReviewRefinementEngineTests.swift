@@ -1380,6 +1380,8 @@ struct HaloReviewRefinementEngineTests {
         #expect(harness.engine.haloReviewState?.lens == .changes)
         #expect(harness.engine.haloReviewState?.variantComparison.status == .materialized)
         #expect(harness.engine.haloReviewState?.variantComparison.provisionalCandidates.isEmpty == true)
+        #expect(!harness.engine.chooseHaloVariant(.precise, comparisonID: comparisonID))
+        #expect(harness.engine.haloReviewState?.revisions.count == 2)
     }
 
     @Test func oneVariantFailureKeepsTheSurvivingCandidateSelectable() async throws {
@@ -1433,6 +1435,62 @@ struct HaloReviewRefinementEngineTests {
         #expect(harness.engine.haloReviewState?.selectedRevision?.id == originalID)
         #expect(harness.engine.haloReviewState?.revisions.count == 1)
         #expect(!harness.engine.beginHaloVariantComparison())
+    }
+
+    @Test func staleDeckCancelNeverCancelsTheReviewOrActiveComparison() async throws {
+        let refinement = EngineRefinementService(behaviors: [.suspended, .suspended])
+        let harness = try makeHarness(refinement: refinement)
+        harness.capabilities.parallelComparisonEnabled = true
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+        #expect(harness.engine.beginHaloVariantComparison())
+
+        for _ in 0..<200 {
+            if refinement.requests.count == 2 { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        let comparisonID = try #require(
+            harness.engine.haloReviewState?.variantComparison.comparisonID
+        )
+
+        #expect(!harness.engine.cancelHaloVariantComparison(comparisonID: UUID()))
+        #expect(harness.engine.pendingPasteReview != nil)
+        #expect(harness.engine.haloReviewState?.isVariantComparisonRunning == true)
+
+        #expect(harness.engine.cancelHaloVariantComparison(comparisonID: comparisonID))
+        #expect(harness.engine.pendingPasteReview != nil)
+        #expect(harness.engine.haloReviewState?.isVariantComparisonActive == false)
+        #expect(harness.engine.haloReviewState?.revisions.count == 1)
+    }
+
+    @Test func settledVariantTabInteractionRestartsReviewInactivity() async throws {
+        let refinement = EngineRefinementService(
+            behaviors: [.success("Precise candidate"), .success("Natural candidate")]
+        )
+        let harness = try makeHarness(refinement: refinement)
+        harness.capabilities.parallelComparisonEnabled = true
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+        #expect(harness.engine.beginHaloVariantComparison())
+        await waitForVariantComparison(in: harness.engine)
+
+        let comparisonID = try #require(
+            harness.engine.haloReviewState?.variantComparison.comparisonID
+        )
+        let previousExpiry = try #require(harness.engine.haloReviewState?.expiresAt)
+        let interactionDate = previousExpiry.addingTimeInterval(-1)
+
+        #expect(
+            harness.engine.touchHaloVariantComparison(
+                comparisonID: comparisonID,
+                at: interactionDate
+            )
+        )
+        let updatedExpiry = try #require(harness.engine.haloReviewState?.expiresAt)
+        #expect(updatedExpiry > previousExpiry)
+        #expect(
+            updatedExpiry
+                == interactionDate.addingTimeInterval(HaloReviewState.inactivityLifetime)
+        )
+        #expect(!harness.engine.touchHaloVariantComparison(comparisonID: UUID()))
     }
 
     @Test func useOriginalAndManualEditPrepareExactImmutablePayloads() async throws {

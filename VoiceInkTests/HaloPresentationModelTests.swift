@@ -490,6 +490,65 @@ struct HaloPresentationModelTests {
         #expect(model.canStartVoiceRefinement)
     }
 
+    @Test func variantDeckSelectionIsEphemeralScopedAndResetsForANewComparison() throws {
+        let model = HaloPresentationModel()
+        model.updateCapabilities(
+            HaloCapabilitySnapshot(
+                spokenRefinementEnabled: true,
+                typedRefinementEnabled: true,
+                voiceCommandsEnabled: true,
+                anotherTakeEnabled: true,
+                parallelComparisonEnabled: true,
+                guidedRecoveryEnabled: true,
+                positionBehavior: .stableAnchor,
+                timeShiftEnabled: false
+            )
+        )
+        var state = makeState(raw: "Raw", final: "Enhanced")
+
+        model.updateReviewState(state)
+        #expect(model.canCompareVariants)
+
+        let firstLaunchValue = state.beginVariantComparison(
+            routeToken: HaloVariantFrozenRouteToken()
+        )
+        let firstLaunch = try #require(firstLaunchValue)
+        model.updateReviewState(state)
+
+        #expect(model.isVariantComparisonActive)
+        #expect(!model.canCompareVariants)
+        #expect(model.variantDeckPresentation?.selectedProfile == .precise)
+        #expect(
+            model.selectVariantProfile(
+                .natural,
+                comparisonID: firstLaunch.comparisonID
+            )
+        )
+        #expect(model.variantDeckPresentation?.selectedProfile == .natural)
+        #expect(
+            !model.selectVariantProfile(
+                .precise,
+                comparisonID: UUID()
+            )
+        )
+        #expect(model.variantDeckPresentation?.selectedProfile == .natural)
+
+        _ = state.cancelVariantComparison()
+        model.updateReviewState(state)
+        #expect(model.variantDeckPresentation == nil)
+
+        let nextLaunchValue = state.beginVariantComparison(
+            routeToken: HaloVariantFrozenRouteToken()
+        )
+        let nextLaunch = try #require(nextLaunchValue)
+        #expect(nextLaunch.comparisonID != firstLaunch.comparisonID)
+        model.updateReviewState(state)
+        #expect(model.variantDeckPresentation?.selectedProfile == .precise)
+
+        model.clearReview()
+        #expect(model.selectedVariantProfile == .precise)
+    }
+
     private func waitUntil(
         attempts: Int = 200,
         condition: @escaping @MainActor () async -> Bool

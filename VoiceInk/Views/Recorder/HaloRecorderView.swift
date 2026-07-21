@@ -65,6 +65,10 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     let onMoveReviewRevision: (Int) -> Void
     let onRefine: (HaloRefinementAction) -> Void
     let onAnotherTake: () -> Void
+    let onCompareVariants: () -> Void
+    let onSelectVariantProfile: (HaloVariantProfile, UUID) -> Void
+    let onCancelVariantComparison: (UUID) -> Void
+    let onChooseVariant: (HaloVariantProfile, UUID) -> Void
     let onToggleVoiceRefinement: () -> Void
     let onBeginTypedInstruction: () -> Void
     let onEditInstruction: () -> Void
@@ -96,6 +100,10 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         onMoveReviewRevision: @escaping (Int) -> Void,
         onRefine: @escaping (HaloRefinementAction) -> Void,
         onAnotherTake: @escaping () -> Void = {},
+        onCompareVariants: @escaping () -> Void = {},
+        onSelectVariantProfile: @escaping (HaloVariantProfile, UUID) -> Void = { _, _ in },
+        onCancelVariantComparison: @escaping (UUID) -> Void = { _ in },
+        onChooseVariant: @escaping (HaloVariantProfile, UUID) -> Void = { _, _ in },
         onToggleVoiceRefinement: @escaping () -> Void = {},
         onBeginTypedInstruction: @escaping () -> Void = {},
         onEditInstruction: @escaping () -> Void = {},
@@ -123,6 +131,10 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         self.onMoveReviewRevision = onMoveReviewRevision
         self.onRefine = onRefine
         self.onAnotherTake = onAnotherTake
+        self.onCompareVariants = onCompareVariants
+        self.onSelectVariantProfile = onSelectVariantProfile
+        self.onCancelVariantComparison = onCancelVariantComparison
+        self.onChooseVariant = onChooseVariant
         self.onToggleVoiceRefinement = onToggleVoiceRefinement
         self.onBeginTypedInstruction = onBeginTypedInstruction
         self.onEditInstruction = onEditInstruction
@@ -464,9 +476,25 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 {
                     instructionEditorViewport(requestID: requestID)
                 } else {
-                    reviewNavigation
-                    reviewTextViewport(review)
-                    refinementControls
+                    if let variantDeck = presentation.variantDeckPresentation {
+                        HaloVariantDeckView(
+                            presentation: variantDeck,
+                            onSelectProfile: { profile in
+                                onSelectVariantProfile(profile, variantDeck.comparisonID)
+                            },
+                            onChooseWinner: { profile in
+                                onChooseVariant(profile, variantDeck.comparisonID)
+                            },
+                            onCancel: {
+                                onCancelVariantComparison(variantDeck.comparisonID)
+                            }
+                        )
+                        .haloReviewInteractiveRegion()
+                    } else {
+                        reviewNavigation
+                        reviewTextViewport(review)
+                        refinementControls
+                    }
                 }
 
                 if let warning = sanitized(review.enhancementWarning), !warning.isEmpty {
@@ -486,7 +514,9 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
 
                 reviewStatusRows
 
-                if !presentation.isTextEntryActive {
+                if !presentation.isTextEntryActive
+                    && !presentation.isVariantComparisonActive
+                {
                     reviewUtilityActions
                 }
             } else {
@@ -663,38 +693,52 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     }
 
     private var reviewUtilityActions: some View {
-        HStack(spacing: 6) {
-            HaloReviewActionButton(
-                key: nil,
-                title: String(localized: "Original"),
-                systemImage: "arrow.uturn.backward",
-                emphasized: false,
-                isDisabled: !presentation.canUseOriginal
-                    || presentation.isReviewDelivering
-                    || presentation.isVoiceRefinementActive,
-                action: onUseOriginal
-            )
-            HaloReviewActionButton(
-                key: nil,
-                title: String(localized: "Edit"),
-                systemImage: "pencil",
-                emphasized: false,
-                isDisabled: !presentation.canBeginManualEdit
-                    || presentation.isReviewDelivering
-                    || presentation.isVoiceRefinementActive,
-                action: onBeginManualEdit
-            )
-            HaloReviewActionButton(
-                key: nil,
-                title: String(localized: "Another Take"),
-                systemImage: "arrow.triangle.2.circlepath",
-                emphasized: false,
-                isDisabled: !presentation.canAnotherTake
-                    || presentation.isReviewDelivering,
-                action: onAnotherTake
-            )
-            Spacer(minLength: 0)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                HaloReviewActionButton(
+                    key: nil,
+                    title: String(localized: "Original"),
+                    systemImage: "arrow.uturn.backward",
+                    emphasized: false,
+                    isDisabled: !presentation.canUseOriginal
+                        || presentation.isReviewDelivering
+                        || presentation.isVoiceRefinementActive,
+                    action: onUseOriginal
+                )
+                HaloReviewActionButton(
+                    key: nil,
+                    title: String(localized: "Edit"),
+                    systemImage: "pencil",
+                    emphasized: false,
+                    isDisabled: !presentation.canBeginManualEdit
+                        || presentation.isReviewDelivering
+                        || presentation.isVoiceRefinementActive,
+                    action: onBeginManualEdit
+                )
+                HaloReviewActionButton(
+                    key: nil,
+                    title: String(localized: "Another Take"),
+                    systemImage: "arrow.triangle.2.circlepath",
+                    emphasized: false,
+                    isDisabled: !presentation.canAnotherTake
+                        || presentation.isReviewDelivering,
+                    action: onAnotherTake
+                )
+                HaloReviewActionButton(
+                    key: nil,
+                    title: HaloVariantDeckPolicy.compareActionTitle,
+                    systemImage: "square.split.2x1",
+                    emphasized: false,
+                    isDisabled: !presentation.canCompareVariants
+                        || presentation.isReviewDelivering,
+                    accessibilityHintText: HaloVariantDeckPolicy.compareActionHint,
+                    action: onCompareVariants
+                )
+            }
+            .fixedSize(horizontal: true, vertical: false)
         }
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Transcript alternatives"))
     }
@@ -1051,6 +1095,9 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     }
 
     private var reviewHeaderTitle: String {
+        if let deck = presentation.variantDeckPresentation {
+            return deck.headerTitle
+        }
         if presentation.isVoiceCommandConfirmationActive {
             return String(localized: "Confirm voice command")
         }
@@ -1071,6 +1118,9 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     }
 
     private var reviewHeaderSystemImage: String {
+        if presentation.variantDeckPresentation != nil {
+            return "square.split.2x1"
+        }
         if presentation.isVoiceCommandConfirmationActive {
             return "waveform.badge.checkmark"
         }
@@ -1279,7 +1329,26 @@ private struct HaloReviewActionButton: View {
     let systemImage: String?
     let emphasized: Bool
     let isDisabled: Bool
+    let accessibilityHintText: String?
     let action: () -> Void
+
+    init(
+        key: String?,
+        title: String,
+        systemImage: String?,
+        emphasized: Bool,
+        isDisabled: Bool,
+        accessibilityHintText: String? = nil,
+        action: @escaping () -> Void
+    ) {
+        self.key = key
+        self.title = title
+        self.systemImage = systemImage
+        self.emphasized = emphasized
+        self.isDisabled = isDisabled
+        self.accessibilityHintText = accessibilityHintText
+        self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
@@ -1310,7 +1379,13 @@ private struct HaloReviewActionButton: View {
         .opacity(isDisabled ? 0.48 : 1)
         .haloReviewInteractiveRegion(enabled: !isDisabled)
         .accessibilityLabel(Text(title))
-        .accessibilityHint(key.map { Text("Keyboard shortcut: \($0)") } ?? Text(""))
+        .accessibilityHint(
+            Text(
+                accessibilityHintText
+                    ?? key.map { String(localized: "Keyboard shortcut: \($0)") }
+                    ?? ""
+            )
+        )
     }
 }
 

@@ -100,6 +100,8 @@ private struct HaloReviewPresentationSnapshot: Equatable, Sendable {
     let activeRefinementAction: HaloRefinementAction?
     let isAnotherTakeActive: Bool
     let canAnotherTake: Bool
+    let variantComparison: HaloVariantComparisonState
+    let canCompareVariants: Bool
     let hasReachedRevisionLimit: Bool
     let noticeMessage: String?
     let noticeTone: HaloReviewNoticeTone?
@@ -108,12 +110,23 @@ private struct HaloReviewPresentationSnapshot: Equatable, Sendable {
 
     var canMovePrevious: Bool {
         !isRefining && !voiceRefinementPhase.isActive && !isEditingManually
+            && !isVariantComparisonActive
             && selectedRevisionIndex > 0
     }
 
     var canMoveNext: Bool {
         !isRefining && !voiceRefinementPhase.isActive && !isEditingManually
+            && !isVariantComparisonActive
             && selectedRevisionIndex + 1 < revisionCount
+    }
+
+    var isVariantComparisonActive: Bool {
+        switch variantComparison.status {
+        case .comparing, .partialFailure, .ready, .totalFailure:
+            return true
+        case .idle, .cancelled, .materialized:
+            return false
+        }
     }
 
     var viewportIdentity: HaloReviewViewportIdentity {
@@ -161,6 +174,7 @@ final class HaloPresentationModel: ObservableObject {
     @Published private(set) var voiceInstructionPartialTranscript = ""
     @Published private(set) var voiceCommandConfirmation: HaloVoiceCommandConfirmation?
     @Published private(set) var capabilitySnapshot = HaloCapabilityStore.recommendedDefaults
+    @Published private(set) var selectedVariantProfile: HaloVariantProfile = .precise
 
     @Published private var reviewSnapshot: HaloReviewPresentationSnapshot?
 
@@ -299,7 +313,7 @@ final class HaloPresentationModel: ObservableObject {
     }
 
     var isReviewOperationActive: Bool {
-        isRefining || isVoiceRefinementActive
+        isRefining || isVoiceRefinementActive || isVariantComparisonActive
     }
 
     var activeRefinementAction: HaloRefinementAction? {
@@ -313,6 +327,23 @@ final class HaloPresentationModel: ObservableObject {
     var canAnotherTake: Bool {
         capabilitySnapshot.anotherTakeEnabled
             && (reviewSnapshot?.canAnotherTake ?? false)
+    }
+
+    var isVariantComparisonActive: Bool {
+        reviewSnapshot?.isVariantComparisonActive ?? false
+    }
+
+    var canCompareVariants: Bool {
+        capabilitySnapshot.parallelComparisonEnabled
+            && (reviewSnapshot?.canCompareVariants ?? false)
+    }
+
+    var variantDeckPresentation: HaloVariantDeckPresentation? {
+        guard let comparison = reviewSnapshot?.variantComparison else { return nil }
+        return HaloVariantDeckProjection.make(
+            from: comparison,
+            selectedProfile: selectedVariantProfile
+        )
     }
 
     var isEditingManually: Bool {
@@ -420,6 +451,7 @@ final class HaloPresentationModel: ObservableObject {
             state.notice,
             hasReachedRevisionLimit: hasReachedRevisionLimit
         )
+        let previousComparisonID = reviewSnapshot?.variantComparison.comparisonID
         let snapshot = HaloReviewPresentationSnapshot(
             sessionID: state.session.id,
             revisionID: selectedRevision.id,
@@ -447,6 +479,7 @@ final class HaloPresentationModel: ObservableObject {
                 && !state.isRefining
                 && !state.isVoiceRefinementActive
                 && !state.isEditingManually
+                && !state.isVariantComparisonActive
                 && selectedRevision.text != state.session.rawText
                 && (state.revisions.contains(where: { $0.action == .original })
                     || state.revisions.count < HaloReviewState.maximumRevisionCount),
@@ -454,10 +487,15 @@ final class HaloPresentationModel: ObservableObject {
                 && !state.isRefining
                 && !state.isVoiceRefinementActive
                 && !state.isEditingManually
+                && !state.isVariantComparisonActive
                 && state.revisions.count < HaloReviewState.maximumRevisionCount,
             activeRefinementAction: state.refinementRequest?.action,
             isAnotherTakeActive: state.refinementRequest?.kind == .anotherTake,
             canAnotherTake: state.canRefine
+                && state.session.enhancementConfiguration != nil
+                && state.session.refinementInputSnapshot != nil,
+            variantComparison: state.variantComparison,
+            canCompareVariants: state.canRefine
                 && state.session.enhancementConfiguration != nil
                 && state.session.refinementInputSnapshot != nil,
             hasReachedRevisionLimit: hasReachedRevisionLimit,
@@ -469,6 +507,9 @@ final class HaloPresentationModel: ObservableObject {
 
         if reviewSnapshot != snapshot {
             reviewSnapshot = snapshot
+        }
+        if previousComparisonID != snapshot.variantComparison.comparisonID {
+            selectedVariantProfile = .precise
         }
 
         let updatedReview = HaloReviewPresentation(
@@ -502,6 +543,7 @@ final class HaloPresentationModel: ObservableObject {
         voiceInstructionAudioMeter = AudioMeter(averagePower: 0, peakPower: 0)
         voiceInstructionPartialTranscript = ""
         voiceCommandConfirmation = nil
+        selectedVariantProfile = .precise
     }
 
     func updateFocusRecovery(isRefocusing: Bool) {
@@ -528,6 +570,21 @@ final class HaloPresentationModel: ObservableObject {
         capabilitySnapshot = snapshot
     }
 
+    @discardableResult
+    func selectVariantProfile(
+        _ profile: HaloVariantProfile,
+        comparisonID: UUID
+    ) -> Bool {
+        guard variantDeckPresentation?.comparisonID == comparisonID,
+            variantDeckPresentation?.candidates.contains(where: {
+            $0.profile == profile
+        }) == true else {
+            return false
+        }
+        selectedVariantProfile = profile
+        return true
+    }
+
     func updateReviewStatus(
         feedback: PasteReviewFeedback?,
         secondsRemaining: Int?,
@@ -551,6 +608,7 @@ final class HaloPresentationModel: ObservableObject {
         voiceInstructionAudioMeter = AudioMeter(averagePower: 0, peakPower: 0)
         voiceInstructionPartialTranscript = ""
         voiceCommandConfirmation = nil
+        selectedVariantProfile = .precise
         deliveryOverride = nil
         reviewSnapshot = nil
     }
@@ -634,10 +692,11 @@ final class HaloPresentationModel: ObservableObject {
     ) -> (message: String?, tone: HaloReviewNoticeTone?) {
         switch notice {
         case .emptyRefinement, .unchangedRefinement, .refinementCancelled,
-            .emptyManualEdit, .unchangedManualEdit, .voiceRefinementCancelled:
+            .emptyManualEdit, .unchangedManualEdit, .voiceRefinementCancelled,
+            .variantComparisonCancelled:
             return (notice?.message, .neutral)
         case .refinementFailed, .revisionLimitReached, .voiceRefinementFailed,
-            .instructionValidation:
+            .instructionValidation, .variantComparisonFailed:
             return (notice?.message, .warning)
         case .copied, .copyFailed, nil:
             if hasReachedRevisionLimit {

@@ -391,6 +391,9 @@ final class HaloWindowManager {
                     if engine?.cancelHaloRefinementIfActive() == true {
                         return
                     }
+                    if engine?.cancelHaloVariantComparisonIfActive() == true {
+                        return
+                    }
                     await engine?.cancelPendingPasteReview()
                 }
             },
@@ -431,6 +434,31 @@ final class HaloWindowManager {
             },
             onAnotherTake: { [weak engine] in
                 _ = engine?.beginHaloAnotherTake()
+            },
+            onCompareVariants: { [weak engine] in
+                _ = engine?.beginHaloVariantComparison()
+            },
+            onSelectVariantProfile: { [weak engine, weak presentation = presentation] profile, comparisonID in
+                guard engine?.touchHaloVariantComparison(
+                    comparisonID: comparisonID
+                ) == true else {
+                    return
+                }
+                _ = presentation?.selectVariantProfile(
+                    profile,
+                    comparisonID: comparisonID
+                )
+            },
+            onCancelVariantComparison: { [weak engine] comparisonID in
+                _ = engine?.cancelHaloVariantComparison(
+                    comparisonID: comparisonID
+                )
+            },
+            onChooseVariant: { [weak engine] profile, comparisonID in
+                _ = engine?.chooseHaloVariant(
+                    profile,
+                    comparisonID: comparisonID
+                )
             },
             onToggleVoiceRefinement: { [weak engine] in
                 _ = engine?.toggleHaloVoiceRefinementCapture()
