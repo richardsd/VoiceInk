@@ -49,6 +49,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     @AppStorage(RecorderDisplaySettingsKeys.showLiveTranscript) private var showLiveTranscript = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isManualEditorFocused: Bool
+    @FocusState private var isInstructionEditorFocused: Bool
 
     let onApply: () -> Void
     let onCancel: () -> Void
@@ -64,6 +65,11 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     let onMoveReviewRevision: (Int) -> Void
     let onRefine: (HaloRefinementAction) -> Void
     let onToggleVoiceRefinement: () -> Void
+    let onBeginTypedInstruction: () -> Void
+    let onEditInstruction: () -> Void
+    let onUpdateInstruction: (UUID, String) -> Void
+    let onSubmitInstruction: () -> Void
+    let onCancelInstruction: () -> Void
     let onReviewInteractiveRegionsChange: ([HaloInteractionRegion]) -> Void
 
     private let coral = Color(red: 0.96, green: 0.34, blue: 0.29)
@@ -87,6 +93,11 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         onMoveReviewRevision: @escaping (Int) -> Void,
         onRefine: @escaping (HaloRefinementAction) -> Void,
         onToggleVoiceRefinement: @escaping () -> Void = {},
+        onBeginTypedInstruction: @escaping () -> Void = {},
+        onEditInstruction: @escaping () -> Void = {},
+        onUpdateInstruction: @escaping (UUID, String) -> Void = { _, _ in },
+        onSubmitInstruction: @escaping () -> Void = {},
+        onCancelInstruction: @escaping () -> Void = {},
         onReviewInteractiveRegionsChange: @escaping ([HaloInteractionRegion]) -> Void
     ) {
         self.stateProvider = stateProvider
@@ -106,6 +117,11 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         self.onMoveReviewRevision = onMoveReviewRevision
         self.onRefine = onRefine
         self.onToggleVoiceRefinement = onToggleVoiceRefinement
+        self.onBeginTypedInstruction = onBeginTypedInstruction
+        self.onEditInstruction = onEditInstruction
+        self.onUpdateInstruction = onUpdateInstruction
+        self.onSubmitInstruction = onSubmitInstruction
+        self.onCancelInstruction = onCancelInstruction
         self.onReviewInteractiveRegionsChange = onReviewInteractiveRegionsChange
     }
 
@@ -419,13 +435,17 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 Spacer(minLength: 0)
             }
 
-            if !presentation.isEditingManually {
+            if !presentation.isTextEntryActive {
                 metadataRow
             }
 
             if let review = presentation.review {
                 if presentation.isEditingManually {
                     manualEditViewport
+                } else if presentation.isEditingInstruction,
+                    let requestID = presentation.instructionDraftRequestID
+                {
+                    instructionEditorViewport(requestID: requestID)
                 } else {
                     reviewNavigation
                     reviewTextViewport(review)
@@ -449,7 +469,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
 
                 reviewStatusRows
 
-                if !presentation.isEditingManually {
+                if !presentation.isTextEntryActive {
                     reviewUtilityActions
                 }
             } else {
@@ -477,6 +497,23 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                         emphasized: false,
                         isDisabled: false,
                         action: onCancelManualEdit
+                    )
+                } else if presentation.isEditingInstruction {
+                    HaloReviewActionButton(
+                        key: "⌘↩",
+                        title: String(localized: "Refine"),
+                        systemImage: "sparkles",
+                        emphasized: true,
+                        isDisabled: !presentation.canSubmitInstructionDraft,
+                        action: onSubmitInstruction
+                    )
+                    HaloReviewActionButton(
+                        key: "Esc",
+                        title: String(localized: "Cancel"),
+                        systemImage: nil,
+                        emphasized: false,
+                        isDisabled: false,
+                        action: onCancelInstruction
                     )
                 } else {
                     let showsRetry = presentation.reviewFeedback?.allowsRetry == true
@@ -556,6 +593,55 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         .accessibilityLabel(Text("Edit final transcript"))
     }
 
+    private func instructionEditorViewport(requestID: UUID) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextEditor(
+                text: Binding(
+                    get: { presentation.instructionDraftText },
+                    set: { onUpdateInstruction(requestID, $0) }
+                )
+            )
+            .font(HaloTypography.reviewFinal)
+            .foregroundStyle(Color.white.opacity(0.94))
+            .scrollContentBackground(.hidden)
+            .padding(8)
+            .background(Color.white.opacity(0.045))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(AppTheme.Accent.strong.opacity(0.45), lineWidth: 0.8)
+            }
+            .focused($isInstructionEditorFocused)
+
+            HStack {
+                Text("Instruction stays in memory only")
+                Spacer()
+                Text(
+                    "\(presentation.instructionDraftText.count)/\(HaloFreeformRefinementDirective.maximumCharacterCount)"
+                )
+                .foregroundStyle(
+                    presentation.instructionDraftText.count
+                        > HaloFreeformRefinementDirective.maximumCharacterCount
+                        ? AppTheme.Status.warningStrong
+                        : Color.white.opacity(0.46)
+                )
+            }
+            .font(HaloTypography.tertiary)
+            .foregroundStyle(Color.white.opacity(0.46))
+        }
+        .onAppear {
+            DispatchQueue.main.async {
+                guard presentation.isEditingInstruction else { return }
+                isInstructionEditorFocused = true
+            }
+        }
+        .onDisappear {
+            isInstructionEditorFocused = false
+        }
+        .haloReviewInteractiveRegion()
+        .accessibilityLabel(Text("Type a refinement instruction"))
+    }
+
     private var reviewUtilityActions: some View {
         HStack(spacing: 6) {
             HaloReviewActionButton(
@@ -608,8 +694,12 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         }
     }
 
+    @ViewBuilder
     private var refinementControls: some View {
-        HStack(spacing: 6) {
+        if presentation.isAwaitingInstructionConfirmation {
+            instructionConfirmationCard
+        } else {
+            HStack(spacing: 6) {
             HaloVoiceRefinementButton(
                 isListening: presentation.isVoiceRefinementListening,
                 isProcessing: presentation.isVoiceRefinementActive
@@ -617,6 +707,15 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 isDisabled: !presentation.isVoiceRefinementListening
                     && !presentation.canStartVoiceRefinement,
                 onToggle: onToggleVoiceRefinement
+            )
+
+            HaloReviewActionButton(
+                key: nil,
+                title: String(localized: "Type change"),
+                systemImage: "text.cursor",
+                emphasized: false,
+                isDisabled: !presentation.canStartTypedRefinement,
+                action: onBeginTypedInstruction
             )
 
             Rectangle()
@@ -635,13 +734,61 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 hasReachedRevisionLimit: presentation.hasReachedRevisionLimit,
                 onSelect: onRefine
             )
+            }
+            .frame(height: HaloRefinementOrbitPolicy.rowHeight)
         }
-        .frame(height: HaloRefinementOrbitPolicy.rowHeight)
+    }
+
+    private var instructionConfirmationCard: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("I heard: “\(presentation.instructionDraftText)”")
+                .font(HaloTypography.warning)
+                .foregroundStyle(Color.white.opacity(0.9))
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 6) {
+                HaloReviewActionButton(
+                    key: nil,
+                    title: String(localized: "Refine"),
+                    systemImage: "sparkles",
+                    emphasized: true,
+                    isDisabled: !presentation.canSubmitInstructionDraft,
+                    action: onSubmitInstruction
+                )
+                HaloReviewActionButton(
+                    key: nil,
+                    title: String(localized: "Edit"),
+                    systemImage: "pencil",
+                    emphasized: false,
+                    isDisabled: false,
+                    action: onEditInstruction
+                )
+                HaloReviewActionButton(
+                    key: nil,
+                    title: String(localized: "Cancel"),
+                    systemImage: nil,
+                    emphasized: false,
+                    isDisabled: false,
+                    action: onCancelInstruction
+                )
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(8)
+        .background(Color.white.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .haloReviewInteractiveRegion()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Confirm the recognized refinement instruction"))
     }
 
     @ViewBuilder
     private var reviewStatusRows: some View {
-        if presentation.isVoiceRefinementActive {
+        if presentation.isVoiceRefinementActive
+            && !presentation.isAwaitingInstructionConfirmation
+            && !presentation.isEditingInstruction
+        {
             HaloVoiceRefinementProgressStatus(
                 phase: presentation.voiceRefinementPhase,
                 audioMeter: presentation.voiceInstructionAudioMeter,
@@ -837,6 +984,10 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             return String(localized: "Listening for a change")
         case .transcribing:
             return String(localized: "Understanding your request…")
+        case .awaitingConfirmation:
+            return String(localized: "Confirm your change")
+        case .editingInstruction:
+            return String(localized: "Edit your change")
         case .refining:
             return String(localized: "Applying your spoken change…")
         case .idle, .failed:
@@ -850,6 +1001,10 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             return "waveform"
         case .transcribing:
             return "text.bubble"
+        case .awaitingConfirmation:
+            return "quote.bubble"
+        case .editingInstruction:
+            return "text.cursor"
         case .refining:
             return "sparkles"
         case .idle, .failed:
@@ -927,6 +1082,10 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 return String(localized: "Listening for a spoken transcript change")
             case .transcribing:
                 return String(localized: "Understanding the spoken transcript change")
+            case .awaitingConfirmation:
+                return String(localized: "Confirm the recognized transcript change")
+            case .editingInstruction:
+                return String(localized: "Editing the transcript change instruction")
             case .refining:
                 return String(localized: "Applying the spoken transcript change")
             case .idle, .failed:
@@ -1298,6 +1457,11 @@ private struct HaloVoiceRefinementProgressStatus: View {
             case .transcribing, .refining:
                 ProcessingIndicator(color: HaloVisualPalette.activity)
 
+            case .awaitingConfirmation, .editingInstruction:
+                Image(systemName: "text.cursor")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(HaloVisualPalette.activity)
+
             case .idle, .failed:
                 EmptyView()
             }
@@ -1339,6 +1503,10 @@ private struct HaloVoiceRefinementProgressStatus: View {
             return String(localized: "Listening for a change")
         case .transcribing:
             return String(localized: "Understanding your request…")
+        case .awaitingConfirmation:
+            return String(localized: "Confirm your change")
+        case .editingInstruction:
+            return String(localized: "Edit your change")
         case .refining:
             return String(localized: "Applying your spoken change…")
         case .idle, .failed:
@@ -1352,6 +1520,10 @@ private struct HaloVoiceRefinementProgressStatus: View {
             return String(localized: "Use the shortcut again or choose Finish")
         case .transcribing:
             return String(localized: "Using the original transcription model")
+        case .awaitingConfirmation:
+            return String(localized: "No model request has been sent")
+        case .editingInstruction:
+            return String(localized: "Your instruction stays in memory only")
         case .refining:
             return String(localized: "Using the original provider and model")
         case .idle, .failed:

@@ -165,7 +165,7 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
         if isHandlingPasteReview {
             shortcuts = Self.pasteReviewShortcuts(
                 cancelShortcut: ShortcutStore.shortcut(for: .cancelRecorder),
-                includePlainReturn: !recorderUIManager.isHaloManualEditActive
+                includePlainReturn: !recorderUIManager.isHaloTextEntryActive
             )
         } else {
             shortcuts = ShortcutStore.shortcuts(for: ShortcutAction.recorderPanelStoredActions)
@@ -326,11 +326,15 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
         if isHandlingPasteReview {
             switch action {
             case .recorderPanelApply, .recorderPanelToggleHaloDelivery:
-                if recorderUIManager.isHaloManualEditActive {
+                if recorderUIManager.isHaloTextEntryActive {
                     // A multiline editor owns plain Return. Only Cmd-Return is
                     // registered while editing and explicitly saves the draft.
                     if action == .recorderPanelToggleHaloDelivery {
-                        _ = recorderUIManager.saveHaloManualEdit()
+                        if recorderUIManager.isHaloManualEditActive {
+                            _ = recorderUIManager.saveHaloManualEdit()
+                        } else {
+                            _ = recorderUIManager.submitHaloInstructionDraft()
+                        }
                     }
                 } else {
                     await recorderUIManager.approvePendingPasteReview()

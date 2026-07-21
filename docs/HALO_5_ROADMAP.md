@@ -25,8 +25,8 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 | --- | --- | --- | --- |
 | H5-00 | **Done** | — | Roadmap, dependency board, baseline reconciliation, and acceptance contract |
 | H5-01 | **Done** | H5-00 | Capability store, defaults, backup v3, Settings tabs, and guided Halo overview |
-| H5-02 | **Planned** | H5-01 | Unified instruction draft, reducer, privacy lifecycle, and free-form prompt boundary |
-| H5-03 | **Planned** | H5-02 | Voice confirmation/correction, typed refinement, and Settings controls |
+| H5-02 | **Done** | H5-01 | Unified instruction draft, reducer, privacy lifecycle, and free-form prompt boundary |
+| H5-03 | **Done** | H5-02 | Voice confirmation/correction, typed refinement, and Settings controls |
 | H5-04 | **Planned** | H5-03 | Exact local `Halo …` commands and consequential-command confirmation |
 | H5-05 | **Planned** | H5-01 | Guided application return with manual recovery fallback |
 | H5-06 | **Planned** | H5-05 | Identity-safe continuous caret tracking and position setting |
@@ -58,17 +58,17 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 
 ### H5-02 — Unified instruction foundation
 
-- [ ] Voice and typed instructions share an ephemeral draft, reducer, bounds, escaping, and complete-replacement prompt contract.
-- [ ] The draft freezes its base revision and rejects stale capture, edit, submission, and refinement completions.
-- [ ] Instruction text never enters revisions, History, logs, diagnostics, defaults, backups, or aggregate metrics.
-- [ ] Provider, authentication, model, Mode prompt, vocabulary, and frozen context never reroute.
+- [x] Voice and typed instructions share an ephemeral draft, reducer, bounds, escaping, and complete-replacement prompt contract.
+- [x] The draft freezes its base revision and rejects stale capture, edit, submission, and refinement completions.
+- [x] Instruction text never enters revisions, History, logs, diagnostics, defaults, backups, or aggregate metrics.
+- [x] Provider, authentication, model, Mode prompt, vocabulary, and frozen context never reroute.
 
 ### H5-03 — Confirmable voice and typed refinement
 
-- [ ] Final voice recognition shows `I heard: …` with Refine, Edit, and Cancel before any model call.
-- [ ] `Type change` opens an accessible editor; Command-Return submits and Escape exits text entry first.
-- [ ] Empty, excessive, unchanged, failed, cancelled, and expired instructions preserve the selected review revision.
-- [ ] Disabling either capability cancels only its active operation and keeps review usable.
+- [x] Final voice recognition shows `I heard: …` with Refine, Edit, and Cancel before any model call.
+- [x] `Type change` opens an accessible editor; Command-Return submits and Escape exits text entry first.
+- [x] Empty, excessive, unchanged, failed, cancelled, and expired instructions preserve the selected review revision.
+- [x] Disabling either capability cancels only its active operation and keeps review usable.
 
 ### H5-04 — Exact local voice commands
 
@@ -153,7 +153,9 @@ Stories use focused `H5-XX …` commits in dependency order. H5-05, H5-07, and H
 - 2026-07-20: `881a3acc` isolated the no-speech and Halo review edge-case baseline.
 - 2026-07-20: `9ceb8db7` closed Halo 3.0 and Halo 4.0 documentation after product-owner acceptance.
 - 2026-07-20: `f6e820a9` materialized H5-00 and established this status board.
-- 2026-07-20: H5-01 focused capability/default/backup tests passed (6 tests), and the Debug build succeeded using `/tmp/VoiceInk-H5-01`.
+- 2026-07-20: `ed573cb6` completed H5-01; focused capability/default/backup tests passed (6 tests), and the Debug build succeeded using `/tmp/VoiceInk-H5-01`.
+- 2026-07-21: `64b23a13` completed H5-02 with the unified memory-only instruction draft, reducer, bounds, prompt escaping, and frozen-route contract.
+- 2026-07-21: H5-03 focused instruction, reducer, refinement-service, keyboard, and presentation suites passed serially with code signing disabled in `/tmp/VoiceInk-H5-refine-final`; the same run compiled the full application and test targets.
 
 ## Deferred beyond Halo 5.0
 

@@ -95,7 +95,8 @@ struct VoiceInkApp: App {
         // Initialize services with proper sharing of instances
         let aiService = AIService()
         _aiService = StateObject(wrappedValue: aiService)
-        _haloCapabilityStore = StateObject(wrappedValue: HaloCapabilityStore())
+        let haloCapabilityStore = HaloCapabilityStore()
+        _haloCapabilityStore = StateObject(wrappedValue: haloCapabilityStore)
         aiService.refreshOllamaAvailabilityInBackground()
 
         let updaterViewModel = UpdaterViewModel()
@@ -125,7 +126,8 @@ struct VoiceInkApp: App {
             modelContext: resolvedContainer.mainContext,
             whisperModelManager: whisperModelManager,
             transcriptionModelManager: transcriptionModelManager,
-            enhancementService: enhancementService
+            enhancementService: enhancementService,
+            haloCapabilityStore: haloCapabilityStore
         )
 
         // 5. Configure circular deps

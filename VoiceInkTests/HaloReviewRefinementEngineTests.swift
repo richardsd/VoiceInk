@@ -726,6 +726,22 @@ struct HaloReviewRefinementEngineTests {
         #expect(harness.engine.isHaloVoiceRefinementReady)
 
         #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForInstructionDraft(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 1
+        )
+        #expect(refinement.requests.isEmpty)
+        guard case .awaitingConfirmation(let draft) = harness.engine.haloReviewState?
+            .voiceRefinementPhase
+        else {
+            Issue.record("Expected spoken instruction confirmation")
+            return
+        }
+        #expect(draft.text == "Make it more concise")
+        #expect(draft.source == .voice)
+
+        #expect(harness.engine.submitHaloInstructionDraft())
         await waitForVoiceRefinement(
             in: harness.engine,
             capture: voiceCapture,
@@ -761,6 +777,47 @@ struct HaloReviewRefinementEngineTests {
         #expect(selected.payload.pastedText == "licensed:Concise final version ")
         #expect(harness.outcomes.counts[.voiceRefinementStarted] == 1)
         #expect(harness.outcomes.counts[.voiceRefinementCompleted] == 1)
+    }
+
+    @Test func typedInstructionWaitsForSubmissionAndUsesFrozenRoute() async throws {
+        let refinement = EngineRefinementService(
+            behaviors: [.success("A friendlier final version")]
+        )
+        let harness = try makeHarness(refinement: refinement)
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
+            notifyReady: false
+        ))
+
+        #expect(harness.engine.beginHaloTypedInstruction())
+        let requestID = try #require(
+            harness.engine.haloReviewState?.voiceRefinementPhase.instructionDraft?.requestID
+        )
+        #expect(
+            harness.engine.updateHaloInstructionDraft(
+                requestID: requestID,
+                text: "Use a friendlier opening"
+            )
+        )
+        #expect(refinement.requests.isEmpty)
+        #expect(harness.engine.submitHaloInstructionDraft())
+
+        for _ in 0..<200 {
+            if harness.engine.haloReviewState?.isVoiceRefinementActive != true { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+
+        let request = try #require(refinement.requests.first)
+        #expect(request.instruction.freeformDirective?.text == "Use a friendlier opening")
+        guard case .freeform(.typed, _) = request.instruction else {
+            Issue.record("Expected a typed free-form instruction")
+            return
+        }
+        #expect(request.configuration.provider == .openAI)
+        #expect(request.configuration.openAIAuthMode == .oauth)
+        #expect(request.configuration.modelName == "gpt-5.6-luna")
+        #expect(harness.engine.haloReviewState?.selectedRevision?.action == .typedRefinement)
+        #expect(harness.engine.haloReviewState?.selectedRevision?.text == "A friendlier final version")
     }
 
     @Test func cancellingVoiceCaptureRejectsAProviderResultThatArrivesLate() async throws {
@@ -1091,6 +1148,10 @@ struct HaloReviewRefinementEngineTests {
         let outcomes = EngineOutcomeRecorder()
         let resolvedVoiceCapture = voiceCapture
             ?? EngineVoiceInstructionCaptureService(behaviors: [])
+        let capabilityDefaults = try #require(
+            UserDefaults(suiteName: "HaloReviewRefinementEngineTests.\(UUID().uuidString)")
+        )
+        let capabilityStore = HaloCapabilityStore(userDefaults: capabilityDefaults)
         let engine = VoiceInkEngine(
             modelContext: container.mainContext,
             whisperModelManager: whisper,
@@ -1100,7 +1161,8 @@ struct HaloReviewRefinementEngineTests {
             pasteReviewDestinationService: destinationService ?? EngineDestinationService(),
             haloRefinementService: refinement,
             haloVoiceInstructionCaptureService: resolvedVoiceCapture,
-            haloOutcomeRecorder: outcomes
+            haloOutcomeRecorder: outcomes,
+            haloCapabilityStore: capabilityStore
         )
         engine.recorderUIManager = presenter
         return Harness(
@@ -1242,6 +1304,22 @@ struct HaloReviewRefinementEngineTests {
             try? await Task.sleep(for: .milliseconds(5))
         }
         Issue.record("Voice refinement did not finish")
+    }
+
+    private func waitForInstructionDraft(
+        in engine: VoiceInkEngine,
+        capture: EngineVoiceInstructionCaptureService,
+        expectedCaptureCount: Int
+    ) async {
+        for _ in 0..<200 {
+            if capture.requestIDs.count >= expectedCaptureCount,
+                engine.haloReviewState?.voiceRefinementPhase.instructionDraft != nil
+            {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Voice instruction confirmation did not appear")
     }
 
     private func waitForVoiceCaptureToFinish(

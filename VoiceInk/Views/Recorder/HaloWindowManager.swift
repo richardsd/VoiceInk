@@ -424,6 +424,24 @@ final class HaloWindowManager {
             onToggleVoiceRefinement: { [weak engine] in
                 _ = engine?.toggleHaloVoiceRefinementCapture()
             },
+            onBeginTypedInstruction: { [weak engine] in
+                _ = engine?.beginHaloTypedInstruction()
+            },
+            onEditInstruction: { [weak engine] in
+                _ = engine?.editHaloInstructionDraft()
+            },
+            onUpdateInstruction: { [weak engine] requestID, text in
+                _ = engine?.updateHaloInstructionDraft(
+                    requestID: requestID,
+                    text: text
+                )
+            },
+            onSubmitInstruction: { [weak engine] in
+                _ = engine?.submitHaloInstructionDraft()
+            },
+            onCancelInstruction: { [weak engine] in
+                _ = engine?.cancelHaloVoiceRefinementIfActive()
+            },
             onReviewInteractiveRegionsChange: { [weak newPanel] regions in
                 newPanel?.updateReviewInteractiveRegions(regions)
             }
@@ -471,10 +489,25 @@ final class HaloWindowManager {
             .sink { [weak self] reviewState in
                 guard let self else { return }
                 self.presentation.updateReviewState(reviewState)
-                self.panel?.setManualEditing(reviewState?.isEditingManually == true)
+                let isEditingInstruction: Bool
+                if case .editingInstruction = reviewState?.voiceRefinementPhase {
+                    isEditingInstruction = true
+                } else {
+                    isEditingInstruction = false
+                }
+                self.panel?.setManualEditing(
+                    reviewState?.isEditingManually == true || isEditingInstruction
+                )
                 if reviewState != nil {
                     self.panel?.beginReviewInteraction()
                 }
+            }
+            .store(in: &cancellables)
+
+        engine.$haloCapabilitySnapshot
+            .removeDuplicates()
+            .sink { [weak self] snapshot in
+                self?.presentation.updateCapabilities(snapshot)
             }
             .store(in: &cancellables)
 

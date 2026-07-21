@@ -112,6 +112,17 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         engine?.haloReviewState?.isEditingManually == true
     }
 
+    var isHaloInstructionEditActive: Bool {
+        if case .editingInstruction = engine?.haloReviewState?.voiceRefinementPhase {
+            return true
+        }
+        return false
+    }
+
+    var isHaloTextEntryActive: Bool {
+        isHaloManualEditActive || isHaloInstructionEditActive
+    }
+
     /// Call after VoiceInkEngine is created to break the circular init dependency.
     func configure(engine: VoiceInkEngine, recorder: Recorder) {
         self.engine = engine
@@ -449,6 +460,11 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
     @discardableResult
     func saveHaloManualEdit() -> Bool {
         engine?.saveHaloManualEdit() ?? false
+    }
+
+    @discardableResult
+    func submitHaloInstructionDraft() -> Bool {
+        engine?.submitHaloInstructionDraft() ?? false
     }
 
     @discardableResult

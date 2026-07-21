@@ -92,6 +92,7 @@ private struct HaloReviewPresentationSnapshot: Equatable, Sendable {
     let isRefining: Bool
     let voiceRefinementPhase: HaloVoiceRefinementPhase
     let canStartVoiceRefinement: Bool
+    let canStartTypedRefinement: Bool
     let isEditingManually: Bool
     let manualEditText: String?
     let canUseOriginal: Bool
@@ -156,6 +157,7 @@ final class HaloPresentationModel: ObservableObject {
         peakPower: 0
     )
     @Published private(set) var voiceInstructionPartialTranscript = ""
+    @Published private(set) var capabilitySnapshot = HaloCapabilityStore.recommendedDefaults
 
     @Published private var reviewSnapshot: HaloReviewPresentationSnapshot?
 
@@ -238,9 +240,44 @@ final class HaloPresentationModel: ObservableObject {
         return false
     }
 
+    var isAwaitingInstructionConfirmation: Bool {
+        if case .awaitingConfirmation = voiceRefinementPhase { return true }
+        return false
+    }
+
+    var isEditingInstruction: Bool {
+        if case .editingInstruction = voiceRefinementPhase { return true }
+        return false
+    }
+
+    var instructionDraftText: String {
+        voiceRefinementPhase.instructionDraft?.text ?? ""
+    }
+
+    var instructionDraftRequestID: UUID? {
+        voiceRefinementPhase.instructionDraft?.requestID
+    }
+
+    var instructionDraftSource: HaloInstructionSource? {
+        voiceRefinementPhase.instructionDraft?.source
+    }
+
+    var canSubmitInstructionDraft: Bool {
+        let normalized = instructionDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !normalized.isEmpty
+            && normalized.count <= HaloFreeformRefinementDirective.maximumCharacterCount
+    }
+
     var canStartVoiceRefinement: Bool {
         isVoiceRefinementReady
+            && (capabilitySnapshot.spokenRefinementEnabled
+                || capabilitySnapshot.voiceCommandsEnabled)
             && (reviewSnapshot?.canStartVoiceRefinement ?? false)
+    }
+
+    var canStartTypedRefinement: Bool {
+        capabilitySnapshot.typedRefinementEnabled
+            && (reviewSnapshot?.canStartTypedRefinement ?? false)
     }
 
     var isReviewOperationActive: Bool {
@@ -253,6 +290,10 @@ final class HaloPresentationModel: ObservableObject {
 
     var isEditingManually: Bool {
         reviewSnapshot?.isEditingManually ?? false
+    }
+
+    var isTextEntryActive: Bool {
+        isEditingManually || isEditingInstruction
     }
 
     var manualEditText: String {
@@ -371,6 +412,9 @@ final class HaloPresentationModel: ObservableObject {
                 && state.session.transcriptionConfiguration != nil
                 && state.session.enhancementConfiguration != nil
                 && state.session.refinementInputSnapshot != nil,
+            canStartTypedRefinement: state.canRefine
+                && state.session.enhancementConfiguration != nil
+                && state.session.refinementInputSnapshot != nil,
             isEditingManually: state.isEditingManually,
             manualEditText: state.manualEdit?.text,
             canUseOriginal: !state.isExpired
@@ -441,6 +485,10 @@ final class HaloPresentationModel: ObservableObject {
         isVoiceRefinementReady = isReady
         voiceInstructionAudioMeter = audioMeter
         voiceInstructionPartialTranscript = partialTranscript
+    }
+
+    func updateCapabilities(_ snapshot: HaloCapabilitySnapshot) {
+        capabilitySnapshot = snapshot
     }
 
     func updateReviewStatus(
@@ -550,7 +598,8 @@ final class HaloPresentationModel: ObservableObject {
         case .emptyRefinement, .unchangedRefinement, .refinementCancelled,
             .emptyManualEdit, .unchangedManualEdit, .voiceRefinementCancelled:
             return (notice?.message, .neutral)
-        case .refinementFailed, .revisionLimitReached, .voiceRefinementFailed:
+        case .refinementFailed, .revisionLimitReached, .voiceRefinementFailed,
+            .instructionValidation:
             return (notice?.message, .warning)
         case .copied, .copyFailed, nil:
             if hasReachedRevisionLimit {
