@@ -3,6 +3,19 @@ import CoreAudio
 import Foundation
 import os
 
+protocol AudioCaptureLeaseCoordinating: Sendable {
+    func acquire(for owner: AudioCaptureLeaseOwner) async -> AudioCaptureLeaseAcquisition
+
+    @discardableResult
+    func release(_ lease: AudioCaptureLease) async -> Bool
+}
+
+extension AudioCaptureLeaseCoordinator: AudioCaptureLeaseCoordinating {
+    /// The application-wide coordinator used by production capture paths.
+    /// Tests and isolated workflows can inject their own coordinator instead.
+    static let applicationShared = AudioCaptureLeaseCoordinator()
+}
+
 @MainActor
 class Recorder: NSObject, ObservableObject {
     var recorder: CoreAudioRecorder?
@@ -21,6 +34,9 @@ class Recorder: NSObject, ObservableObject {
     private let smoothedValuesLock = NSLock()
     private var smoothedAverage: Float = 0
     private var smoothedPeak: Float = 0
+    private let audioCaptureLeaseCoordinator: any AudioCaptureLeaseCoordinating
+    private let audioCaptureLeaseOwner: AudioCaptureLeaseOwner?
+    private var activeAudioCaptureLease: AudioCaptureLease?
 
     /// Audio chunk callback for streaming. Can be updated while recording;
     /// changes are forwarded to the live CoreAudioRecorder.
@@ -28,16 +44,31 @@ class Recorder: NSObject, ObservableObject {
         didSet { recorder?.onAudioChunk = onAudioChunk }
     }
 
-    enum RecorderError: Error {
+    enum RecorderError: Error, Equatable {
         case couldNotStartRecording
         case noUsableMicrophone(builtInBlockedByClosedLid: Bool)
+        case audioCaptureUnavailable
     }
 
-    override init() {
+    override convenience init() {
+        self.init(
+            audioCaptureLeaseCoordinator: AudioCaptureLeaseCoordinator.applicationShared
+        )
+    }
+
+    init(
+        audioCaptureLeaseCoordinator: any AudioCaptureLeaseCoordinating,
+        audioCaptureLeaseOwner: AudioCaptureLeaseOwner? = .normalRecording,
+        prepareOnInitialization: Bool = true
+    ) {
+        self.audioCaptureLeaseCoordinator = audioCaptureLeaseCoordinator
+        self.audioCaptureLeaseOwner = audioCaptureLeaseOwner
         super.init()
         setupAudioDeviceChangedObserver()
         setupRecordingDeviceChangeObserver()
-        schedulePrepareForCurrentDevice(reason: "init")
+        if prepareOnInitialization {
+            schedulePrepareForCurrentDevice(reason: "init")
+        }
     }
 
     private func setupAudioDeviceChangedObserver() {
@@ -60,6 +91,11 @@ class Recorder: NSObject, ObservableObject {
             throw RecorderError.noUsableMicrophone(
                 builtInBlockedByClosedLid: resolution.builtInBlockedByClosedLid
             )
+        }
+
+        guard await acquireAudioCaptureLeaseIfNeeded() else {
+            onAudioChunk = nil
+            throw RecorderError.audioCaptureUnavailable
         }
 
         deviceManager.beginRecordingSetup(deviceID: deviceID)
@@ -105,6 +141,13 @@ class Recorder: NSObject, ObservableObject {
     }
 
     func stopRecording() async {
+        // Reserve this exact lease for release by this stop operation. Clearing
+        // the property before suspension prevents overlapping stop calls from
+        // releasing it more than once; the coordinator remains occupied until
+        // the hardware queue has drained and cleanup below has completed.
+        let audioCaptureLease = activeAudioCaptureLease
+        activeAudioCaptureLease = nil
+
         audioMuteTask?.cancel()
         audioMuteTask = nil
         mediaPauseTask?.cancel()
@@ -128,6 +171,28 @@ class Recorder: NSObject, ObservableObject {
             await playbackController.resumeMedia()
         }
         deviceManager.recordingDidStop()
+
+        if let audioCaptureLease {
+            _ = await audioCaptureLeaseCoordinator.release(audioCaptureLease)
+        }
+    }
+
+    private func acquireAudioCaptureLeaseIfNeeded() async -> Bool {
+        guard let audioCaptureLeaseOwner else {
+            return true
+        }
+        guard activeAudioCaptureLease == nil else {
+            return false
+        }
+
+        let acquisition = await audioCaptureLeaseCoordinator.acquire(
+            for: audioCaptureLeaseOwner
+        )
+        guard let lease = acquisition.lease else {
+            return false
+        }
+        activeAudioCaptureLease = lease
+        return true
     }
 
     private func muteSystemAudio() {
@@ -238,6 +303,13 @@ class Recorder: NSObject, ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         recorder?.teardown()
+
+        if let activeAudioCaptureLease {
+            let coordinator = audioCaptureLeaseCoordinator
+            Task {
+                _ = await coordinator.release(activeAudioCaptureLease)
+            }
+        }
     }
 }
 

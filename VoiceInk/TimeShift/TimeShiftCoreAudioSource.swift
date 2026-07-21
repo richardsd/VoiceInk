@@ -118,6 +118,23 @@ final class TimeShiftCoreAudioSource: @unchecked Sendable {
         }
     }
 
+    func clearBufferedAudio() async {
+        await withCheckedContinuation { continuation in
+            hardwareQueue.async { [ring] in
+                ring.clear()
+                continuation.resume()
+            }
+        }
+    }
+
+    /// Synchronous termination seam. Application shutdown cannot rely on an
+    /// unstructured async task being scheduled before the process exits.
+    func shutdownImmediately() {
+        performHardwareSync {
+            stopAndClearSynchronous()
+        }
+    }
+
     private func startSynchronous(deviceID: AudioDeviceID) throws {
         guard !isCapturingStorage else {
             throw TimeShiftCoreAudioSourceError.alreadyCapturing

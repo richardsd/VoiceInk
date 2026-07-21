@@ -123,8 +123,21 @@ final class RecorderHaloVoiceInstructionAudioRecorder: HaloVoiceInstructionAudio
 
 @MainActor
 final class DefaultHaloVoiceInstructionAudioRecorderFactory: HaloVoiceInstructionAudioRecorderCreating {
+    private let audioCaptureLeaseCoordinator: any AudioCaptureLeaseCoordinating
+
+    init(
+        audioCaptureLeaseCoordinator: any AudioCaptureLeaseCoordinating = AudioCaptureLeaseCoordinator.applicationShared
+    ) {
+        self.audioCaptureLeaseCoordinator = audioCaptureLeaseCoordinator
+    }
+
     func makeAudioRecorder() -> any HaloVoiceInstructionAudioRecording {
-        RecorderHaloVoiceInstructionAudioRecorder(recorder: Recorder())
+        RecorderHaloVoiceInstructionAudioRecorder(
+            recorder: Recorder(
+                audioCaptureLeaseCoordinator: audioCaptureLeaseCoordinator,
+                audioCaptureLeaseOwner: nil
+            )
+        )
     }
 }
 
@@ -401,6 +414,7 @@ final class HaloVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServi
         let recordingStartGate = RecordingStartGate()
         let transcriptionGate = TranscriptionGate()
         let onEvent: (HaloVoiceInstructionCaptureEvent) -> Void
+        let audioCaptureLease: AudioCaptureLease
 
         var phase: OperationPhase = .preparing
         var preparationDeadline: (any HaloVoiceInstructionDeadline)?
@@ -411,6 +425,7 @@ final class HaloVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServi
         var recordingStartTask: Task<Void, Never>?
         var transcriptionTask: Task<Void, Never>?
         var didStopRecorder = false
+        var didReleaseAudioCaptureLease = false
         var wasCancelled = false
         var didTranscriptionTimeOut = false
         var lastPartialTranscript: String?
@@ -420,12 +435,14 @@ final class HaloVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServi
             audioURL: URL,
             recorder: any HaloVoiceInstructionAudioRecording,
             session: any TranscriptionSession,
+            audioCaptureLease: AudioCaptureLease,
             onEvent: @escaping (HaloVoiceInstructionCaptureEvent) -> Void
         ) {
             self.requestID = requestID
             self.audioURL = audioURL
             self.recorder = recorder
             self.session = session
+            self.audioCaptureLease = audioCaptureLease
             self.onEvent = onEvent
         }
     }
@@ -434,11 +451,13 @@ final class HaloVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServi
     private let sessionFactory: any HaloVoiceInstructionTranscriptionSessionCreating
     private let temporaryFiles: any HaloVoiceInstructionTemporaryFileManaging
     private let deadlineScheduler: any HaloVoiceInstructionDeadlineScheduling
+    private let audioCaptureLeaseCoordinator: any AudioCaptureLeaseCoordinating
     private let maximumCaptureDuration: TimeInterval
     private let preparationTimeout: TimeInterval
     private let recordingStartTimeout: TimeInterval
     private let transcriptionTimeout: TimeInterval
     private var activeOperation: Operation?
+    private var pendingLeaseRequestID: UUID?
 
     var activeRequestID: UUID? {
         activeOperation?.requestID
@@ -449,6 +468,7 @@ final class HaloVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServi
         sessionFactory: any HaloVoiceInstructionTranscriptionSessionCreating,
         temporaryFiles: any HaloVoiceInstructionTemporaryFileManaging,
         deadlineScheduler: any HaloVoiceInstructionDeadlineScheduling,
+        audioCaptureLeaseCoordinator: any AudioCaptureLeaseCoordinating = AudioCaptureLeaseCoordinator.applicationShared,
         maximumCaptureDuration: TimeInterval = HaloVoiceInstructionCaptureService.defaultMaximumCaptureDuration,
         preparationTimeout: TimeInterval = HaloVoiceInstructionCaptureService.defaultPreparationTimeout,
         recordingStartTimeout: TimeInterval = HaloVoiceInstructionCaptureService.defaultRecordingStartTimeout,
@@ -458,6 +478,7 @@ final class HaloVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServi
         self.sessionFactory = sessionFactory
         self.temporaryFiles = temporaryFiles
         self.deadlineScheduler = deadlineScheduler
+        self.audioCaptureLeaseCoordinator = audioCaptureLeaseCoordinator
         self.maximumCaptureDuration = maximumCaptureDuration
         self.preparationTimeout = preparationTimeout
         self.recordingStartTimeout = recordingStartTimeout
@@ -477,9 +498,15 @@ final class HaloVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServi
     }
 
     convenience init(serviceRegistry: TranscriptionServiceRegistry) {
+        let audioCaptureLeaseCoordinator = AudioCaptureLeaseCoordinator.applicationShared
         self.init(
-            audioRecorderFactory: DefaultHaloVoiceInstructionAudioRecorderFactory(),
-            sessionFactory: serviceRegistry
+            audioRecorderFactory: DefaultHaloVoiceInstructionAudioRecorderFactory(
+                audioCaptureLeaseCoordinator: audioCaptureLeaseCoordinator
+            ),
+            sessionFactory: serviceRegistry,
+            temporaryFiles: DefaultHaloVoiceInstructionTemporaryFileManager(),
+            deadlineScheduler: SystemHaloVoiceInstructionDeadlineScheduler(),
+            audioCaptureLeaseCoordinator: audioCaptureLeaseCoordinator
         )
     }
 
@@ -513,6 +540,10 @@ final class HaloVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServi
 
     @discardableResult
     func cancel(requestID: UUID) -> Bool {
+        if pendingLeaseRequestID == requestID {
+            pendingLeaseRequestID = nil
+            return true
+        }
         guard let operation = matchingOperation(requestID) else {
             return false
         }
@@ -538,14 +569,33 @@ final class HaloVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServi
         configuration: TranscriptionRuntimeConfiguration,
         onEvent: @escaping (HaloVoiceInstructionCaptureEvent) -> Void
     ) async -> HaloVoiceInstructionCaptureResult {
-        guard activeOperation == nil else {
+        guard activeOperation == nil, pendingLeaseRequestID == nil else {
             return result(requestID, .failed(.alreadyActive))
+        }
+
+        pendingLeaseRequestID = requestID
+        let acquisition = await audioCaptureLeaseCoordinator.acquire(for: .haloVoice)
+        guard pendingLeaseRequestID == requestID else {
+            if let lease = acquisition.lease {
+                _ = await audioCaptureLeaseCoordinator.release(lease)
+            }
+            return result(requestID, .cancelled)
+        }
+        pendingLeaseRequestID = nil
+
+        guard let audioCaptureLease = acquisition.lease else {
+            return result(requestID, .failed(.captureUnavailable))
+        }
+        guard !Task.isCancelled else {
+            _ = await audioCaptureLeaseCoordinator.release(audioCaptureLease)
+            return result(requestID, .cancelled)
         }
 
         let audioURL: URL
         do {
             audioURL = try temporaryFiles.createAudioURL()
         } catch {
+            _ = await audioCaptureLeaseCoordinator.release(audioCaptureLease)
             return result(requestID, .failed(.temporaryStorageUnavailable))
         }
 
@@ -573,6 +623,7 @@ final class HaloVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServi
             audioURL: audioURL,
             recorder: recorder,
             session: session,
+            audioCaptureLease: audioCaptureLease,
             onEvent: onEvent
         )
         activeOperation = operation
@@ -875,6 +926,10 @@ final class HaloVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServi
         }
         temporaryFiles.removeAudio(at: operation.audioURL)
 
+        if waitForRecorderStop {
+            await releaseAudioCaptureLease(for: operation)
+        }
+
         if activeOperation === operation {
             activeOperation = nil
         }
@@ -894,9 +949,19 @@ final class HaloVoiceInstructionCaptureService: HaloVoiceInstructionCaptureServi
         guard !operation.didStopRecorder else { return }
         operation.didStopRecorder = true
         let recorder = operation.recorder
+        let coordinator = audioCaptureLeaseCoordinator
+        let lease = operation.audioCaptureLease
+        operation.didReleaseAudioCaptureLease = true
         Task { @MainActor in
             await recorder.stopRecording()
+            _ = await coordinator.release(lease)
         }
+    }
+
+    private func releaseAudioCaptureLease(for operation: Operation) async {
+        guard !operation.didReleaseAudioCaptureLease else { return }
+        operation.didReleaseAudioCaptureLease = true
+        _ = await audioCaptureLeaseCoordinator.release(operation.audioCaptureLease)
     }
 
     private func matchingOperation(_ requestID: UUID) -> Operation? {

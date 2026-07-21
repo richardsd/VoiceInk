@@ -11,6 +11,8 @@ private final class FakeHaloVoiceAudioRecorder: HaloVoiceInstructionAudioRecordi
     private(set) var startedURLs: [URL] = []
     private(set) var stopCount = 0
     private var ignoredStartContinuation: CheckedContinuation<Void, Never>?
+    var audioCaptureLeaseCoordinator: AudioCaptureLeaseCoordinator?
+    private(set) var activeLeaseOwnerAtStop: AudioCaptureLeaseOwner?
 
     func startRecording(toOutputFile url: URL) async throws {
         startedURLs.append(url)
@@ -25,6 +27,9 @@ private final class FakeHaloVoiceAudioRecorder: HaloVoiceInstructionAudioRecordi
     }
 
     func stopRecording() async {
+        if let audioCaptureLeaseCoordinator {
+            activeLeaseOwnerAtStop = await audioCaptureLeaseCoordinator.activeOwner
+        }
         stopCount += 1
     }
 
@@ -224,6 +229,74 @@ private final class ManualHaloVoiceDeadlineScheduler: HaloVoiceInstructionDeadli
 
 private enum FakeHaloVoiceError: Error {
     case failed
+}
+
+/// Keeps the capture-service unit tests independent from actor scheduling in
+/// the launched app test host. Dedicated tests below still exercise the real
+/// application-wide actor, including contention, ordering, and preemption.
+private final class ImmediateHaloVoiceLeaseCoordinator: AudioCaptureLeaseCoordinating, @unchecked Sendable {
+    private let lock = NSLock()
+    private var activeLease: AudioCaptureLease?
+
+    func acquire(for owner: AudioCaptureLeaseOwner) async -> AudioCaptureLeaseAcquisition {
+        acquireSynchronously(for: owner)
+    }
+
+    func release(_ lease: AudioCaptureLease) async -> Bool {
+        releaseSynchronously(lease)
+    }
+
+    private func acquireSynchronously(for owner: AudioCaptureLeaseOwner) -> AudioCaptureLeaseAcquisition {
+        lock.lock()
+        defer { lock.unlock() }
+        guard activeLease == nil else {
+            return .denied(.occupied(by: activeLease!.owner))
+        }
+        let lease = AudioCaptureLease(owner: owner)
+        activeLease = lease
+        return .acquired(lease)
+    }
+
+    private func releaseSynchronously(_ lease: AudioCaptureLease) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard activeLease == lease else { return false }
+        activeLease = nil
+        return true
+    }
+}
+
+private actor SuspendedHaloVoiceLeaseCoordinator: AudioCaptureLeaseCoordinating {
+    private var acquisitionContinuation: CheckedContinuation<AudioCaptureLeaseAcquisition, Never>?
+    private var acquisitionStartedContinuation: CheckedContinuation<Void, Never>?
+    private(set) var releasedLeases: [AudioCaptureLease] = []
+
+    func acquire(for owner: AudioCaptureLeaseOwner) async -> AudioCaptureLeaseAcquisition {
+        acquisitionStartedContinuation?.resume()
+        acquisitionStartedContinuation = nil
+        return await withCheckedContinuation { continuation in
+            acquisitionContinuation = continuation
+        }
+    }
+
+    func release(_ lease: AudioCaptureLease) -> Bool {
+        releasedLeases.append(lease)
+        return true
+    }
+
+    func waitUntilAcquireStarts() async {
+        if acquisitionContinuation != nil {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            acquisitionStartedContinuation = continuation
+        }
+    }
+
+    func resumeAcquisition(with lease: AudioCaptureLease) {
+        acquisitionContinuation?.resume(returning: .acquired(lease))
+        acquisitionContinuation = nil
+    }
 }
 
 @MainActor
@@ -671,6 +744,77 @@ struct HaloVoiceInstructionCaptureServiceTests {
         #expect(harness.files.removedURLs.isEmpty)
     }
 
+    @Test func haloVoiceCannotPreemptTimeShiftAndCreatesNoCaptureArtifacts() async throws {
+        let coordinator = AudioCaptureLeaseCoordinator()
+        let timeShiftLease = try #require(
+            await coordinator.acquire(for: .timeShift).lease
+        )
+        let harness = makeHarness(audioCaptureLeaseCoordinator: coordinator)
+
+        let result = await harness.service.capture(
+            requestID: UUID(),
+            configuration: harness.configuration,
+            onEvent: { _ in }
+        )
+
+        #expect(result.outcome == .failed(.captureUnavailable))
+        #expect(harness.files.createCount == 0)
+        #expect(harness.recorderFactory.makeCount == 0)
+        #expect(harness.sessionFactory.configurations.isEmpty)
+        #expect(await coordinator.activeOwner == .timeShift)
+        #expect(await coordinator.release(timeShiftLease))
+    }
+
+    @Test func cancellationWhileLeaseAcquisitionIsSuspendedReleasesLateLeaseWithoutArtifacts() async {
+        let coordinator = SuspendedHaloVoiceLeaseCoordinator()
+        let harness = makeHarness(audioCaptureLeaseCoordinator: coordinator)
+        let requestID = UUID()
+        let lateLease = AudioCaptureLease(owner: .haloVoice)
+
+        let capture = Task { @MainActor in
+            await harness.service.capture(
+                requestID: requestID,
+                configuration: harness.configuration,
+                onEvent: { _ in }
+            )
+        }
+        await coordinator.waitUntilAcquireStarts()
+
+        #expect(harness.service.cancel(requestID: requestID))
+        await coordinator.resumeAcquisition(with: lateLease)
+        let result = await capture.value
+
+        #expect(result.outcome == .cancelled)
+        #expect(await coordinator.releasedLeases == [lateLease])
+        #expect(harness.files.createCount == 0)
+        #expect(harness.recorderFactory.makeCount == 0)
+        #expect(harness.sessionFactory.configurations.isEmpty)
+    }
+
+    @Test func haloVoiceLeaseRemainsHeldThroughRecorderStopThenReleases() async {
+        let coordinator = AudioCaptureLeaseCoordinator()
+        let harness = makeHarness(audioCaptureLeaseCoordinator: coordinator)
+        harness.recorder.audioCaptureLeaseCoordinator = coordinator
+        let requestID = UUID()
+
+        let capture = Task { @MainActor in
+            await harness.service.capture(
+                requestID: requestID,
+                configuration: harness.configuration,
+                onEvent: { _ in }
+            )
+        }
+        await waitUntil { harness.recorder.startedURLs.count == 1 }
+
+        #expect(await coordinator.activeOwner == .haloVoice)
+        #expect(harness.service.requestStop(requestID: requestID))
+        _ = await capture.value
+
+        #expect(harness.recorder.activeLeaseOwnerAtStop == .haloVoice)
+        #expect(await coordinator.activeOwner == nil)
+        assertCleanedUp(harness)
+    }
+
     @Test func defaultTemporaryFilesAreUniqueWAVsAndRemovalDeletesAudio() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("VoiceInk-HaloVoiceFileTests-\(UUID().uuidString)")
@@ -738,7 +882,12 @@ struct HaloVoiceInstructionCaptureServiceTests {
         let deadlines: ManualHaloVoiceDeadlineScheduler
     }
 
-    private func makeHarness(realtime: Bool = false) -> Harness {
+    private func makeHarness(
+        realtime: Bool = false,
+        audioCaptureLeaseCoordinator: (any AudioCaptureLeaseCoordinating)? = nil
+    ) -> Harness {
+        let audioCaptureLeaseCoordinator = audioCaptureLeaseCoordinator
+            ?? ImmediateHaloVoiceLeaseCoordinator()
         let recorder = FakeHaloVoiceAudioRecorder()
         let recorderFactory = FakeHaloVoiceAudioRecorderFactory(recorder: recorder)
         let session = FakeHaloVoiceTranscriptionSession()
@@ -765,7 +914,8 @@ struct HaloVoiceInstructionCaptureServiceTests {
             audioRecorderFactory: recorderFactory,
             sessionFactory: sessionFactory,
             temporaryFiles: files,
-            deadlineScheduler: deadlines
+            deadlineScheduler: deadlines,
+            audioCaptureLeaseCoordinator: audioCaptureLeaseCoordinator
         )
         return Harness(
             service: service,
@@ -791,11 +941,23 @@ struct HaloVoiceInstructionCaptureServiceTests {
     private func waitUntil(
         _ condition: @escaping @MainActor () -> Bool
     ) async {
-        for _ in 0..<200 {
+        // Let the newly-created capture task and its short preparation tasks
+        // win several cooperative main-actor turns before the app test host's
+        // delayed local-model prewarm can begin.
+        for _ in 0..<1_000 {
             if condition() {
                 return
             }
             await Task.yield()
+        }
+
+        // Retain a bounded wall-clock fallback for unusually loaded hosts.
+        let deadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < deadline {
+            if condition() {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000)
         }
         Issue.record("Timed out waiting for async Halo voice capture state")
     }
