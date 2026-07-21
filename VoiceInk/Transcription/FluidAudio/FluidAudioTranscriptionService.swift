@@ -2,7 +2,7 @@ import FluidAudio
 import Foundation
 import os.log
 
-class FluidAudioTranscriptionService: TranscriptionService {
+class FluidAudioTranscriptionService: TranscriptionService, LocalPCM16TranscriptionServicing {
     private var asrManager: AsrManager?
     private var unifiedAsrManager: UnifiedAsrManager?
     private var nemotronAsrManager: StreamingNemotronMultilingualAsrManager?
@@ -194,6 +194,110 @@ class FluidAudioTranscriptionService: TranscriptionService {
         )
 
         return TextNormalizer.shared.normalizeSentence(result.text)
+    }
+
+    func transcribe(
+        pcm16Snapshot: PCM16Snapshot,
+        model: any TranscriptionModel,
+        context: TranscriptionRequestContext
+    ) async throws -> String {
+        let adapter = LocalPCM16TranscriptionAdapter(provider: .fluidAudio) { [weak self] samples, model, context in
+            guard let self else {
+                throw VoiceInkEngineError.transcriptionFailed
+            }
+            return try await self.transcribe(
+                normalizedSamples: samples,
+                model: model,
+                context: context
+            )
+        }
+        return try await adapter.transcribe(
+            snapshot: pcm16Snapshot,
+            model: model,
+            context: context
+        )
+    }
+
+    private func transcribe(
+        normalizedSamples: [Float],
+        model: any TranscriptionModel,
+        context: TranscriptionRequestContext
+    ) async throws -> String {
+        guard model.provider == .fluidAudio else {
+            throw VoiceInkEngineError.modelLoadFailed
+        }
+
+        if FluidAudioModelManager.isParakeetUnifiedModel(named: model.name) {
+            return try await transcribeUnified(samples: normalizedSamples)
+        }
+
+        if FluidAudioModelManager.isNemotronModel(named: model.name) {
+            return try await transcribeNemotron(
+                samples: normalizedSamples,
+                model: model,
+                context: context
+            )
+        }
+
+        let targetVersion = version(for: model)
+        try await ensureModelsLoaded(for: targetVersion)
+
+        guard let asrManager else {
+            throw ASRError.notInitialized
+        }
+
+        let languageHint = Self.languageHint(
+            from: context.language,
+            model: model
+        )
+        var decoderState = TdtDecoderState.make(decoderLayers: await asrManager.decoderLayerCount)
+        let result = try await asrManager.transcribe(
+            normalizedSamples,
+            decoderState: &decoderState,
+            language: languageHint
+        )
+        return TextNormalizer.shared.normalizeSentence(result.text)
+    }
+
+    private func transcribeUnified(samples: [Float]) async throws -> String {
+        try await ensureUnifiedModelsLoaded()
+        guard let unifiedAsrManager else {
+            throw ASRError.notInitialized
+        }
+
+        let text = try await unifiedAsrManager.transcribe(samples)
+        return TextNormalizer.shared.normalizeSentence(text)
+    }
+
+    private func transcribeNemotron(
+        samples: [Float],
+        model: any TranscriptionModel,
+        context: TranscriptionRequestContext
+    ) async throws -> String {
+        try await ensureNemotronModelsLoaded(named: model.name)
+        guard let nemotronAsrManager else {
+            throw ASRError.notInitialized
+        }
+
+        let compatibleLanguage = TranscriptionLanguageSupport.validLanguageOrFallback(
+            context.language,
+            for: model
+        )
+        let languageHint = FluidAudioModelManager.nemotronLanguageHint(from: compatibleLanguage)
+        await nemotronAsrManager.setLanguage(languageHint)
+        await nemotronAsrManager.reset()
+
+        var processingSamples = samples
+        defer { LocalPCM16TranscriptionAdapter.zeroize(&processingSamples) }
+        let trailingSilenceSamples = 16_000
+        let maxSingleChunkSamples = 240_000
+        if processingSamples.count + trailingSilenceSamples <= maxSingleChunkSamples {
+            processingSamples += [Float](repeating: 0, count: trailingSilenceSamples)
+        }
+
+        _ = try await nemotronAsrManager.process(samples: processingSamples)
+        let text = try await nemotronAsrManager.finish()
+        return TextNormalizer.shared.normalizeSentence(text)
     }
 
     private func loadAudioSamples(from audioURL: URL) throws -> [Float] {

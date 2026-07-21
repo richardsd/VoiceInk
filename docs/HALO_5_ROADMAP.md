@@ -33,7 +33,7 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 | H5-07 | **Done** | H5-02 | Another Take through the frozen route and immutable revision pipeline |
 | H5-08 | **Done** | H5-01 | PCM snapshot, secure rolling buffer, CoreAudio memory sink, and WAV encoder |
 | H5-09 | **Done** | H5-08 | Audio leases, Time-Shift lifecycle, memory clearing, and aggregate metrics |
-| H5-10 | **Planned** | H5-09 | In-memory transcription boundary, provider adapters, and capability checks |
+| H5-10 | **Done** | H5-09 | In-memory transcription boundary, provider adapters, and capability checks |
 | H5-11 | **Planned** | H5-10 | Forced-review Time-Shift pipeline, menu controls, shortcuts, and armed pulse |
 | H5-12 | **Planned** | H5-07 | Concurrent Precise/Natural variant engine and stale-result handling |
 | H5-13 | **Planned** | H5-12 | Variant Deck UI, winner materialization, and opt-in cost disclosure |
@@ -112,10 +112,10 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 
 ### H5-10 — In-memory transcription
 
-- [ ] File and in-memory audio share an internal transcription-source boundary.
-- [ ] Supported local/cloud adapters consume memory directly; capability checks reject unsupported models visibly.
-- [ ] Time-Shift never falls back to a file, provider, connection, authentication method, or model.
-- [ ] No network request, destination/context lookup, or History creation occurs while merely armed.
+- [x] File and in-memory audio share an internal transcription-source boundary.
+- [x] Supported local/cloud adapters consume memory directly; capability checks reject unsupported models visibly.
+- [x] Time-Shift never falls back to a file, provider, connection, authentication method, or model.
+- [x] No network request, destination/context lookup, or History creation occurs while merely armed.
 
 ### H5-11 — Time-Shift product workflow
 
@@ -161,7 +161,8 @@ Stories use focused `H5-XX …` commits in dependency order. H5-05, H5-07, and H
 - 2026-07-21: `738cc2bf` completed H5-06; caret-tracker, capability, and layout suites passed serially in `/tmp/VoiceInk-H5-refine-final`; tests cover AX notifications, watchdog fallback, focus freezing, jitter, quality, operation pauses, and non-cooperative lookup recovery.
 - 2026-07-21: `04398bd1` completed H5-07; refinement-service, reducer, engine, and presentation suites passed serially in `/tmp/VoiceInk-H5-refine-final`; Another Take uses the frozen route, shares the cancellable exclusive slot, and materializes exactly one revision.
 - 2026-07-21: `45dde15f` completed H5-08; PCM and CoreAudio-source suites passed 21 focused tests serially in `/tmp/VoiceInk-H5-refine-final`; capture stays off the main actor, retained stale callbacks are generation-rejected, reusable audio storage and intermediate copies are zeroed, and the source exposes no file or normal-recorder side-effect API.
-- 2026-07-21: H5-09 lifecycle, controller, presentation, normal-recorder lease, and Halo voice-lease suites passed 40 focused tests serially in `/tmp/VoiceInk-H5-refine-final`; normal recording preempts Time-Shift only after memory clearing, Halo voice capture never preempts it, late lease acquisition is cancellation-safe, lifecycle invalidation zeroes retained snapshots, and metrics expose only action, duration, and sanitized outcome.
+- 2026-07-21: `e6145528` completed H5-09; lifecycle, controller, presentation, normal-recorder lease, and Halo voice-lease suites passed 40 focused tests serially in `/tmp/VoiceInk-H5-refine-final`; normal recording preempts Time-Shift only after memory clearing, Halo voice capture never preempts it, late lease acquisition is cancellation-safe, lifecycle invalidation zeroes retained snapshots, and metrics expose only action, duration, and sanitized outcome.
+- 2026-07-21: H5-10 shared file/memory routing, strict model resolution, cloud WAV adapters, direct-PCM Whisper/FluidAudio adapters, error sanitization, and zeroization passed 25 focused tests in `/tmp/VoiceInk-H5-refine-final`; unsupported routes remain explicit and no adapter retries through another source, provider, authentication path, or model.
 
 ## Deferred beyond Halo 5.0
 

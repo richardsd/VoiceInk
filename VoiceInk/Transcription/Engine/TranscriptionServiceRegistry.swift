@@ -27,6 +27,24 @@ class TranscriptionServiceRegistry {
         cachedTranscribeCppTranscriptionService = service
         return service
     }
+    private(set) lazy var inMemoryTranscriptionService: any InMemoryTranscriptionServicing =
+        RoutedInMemoryTranscriptionService(
+            cloudService: BatchCloudInMemoryTranscriptionService(),
+            localService: LocalInMemoryTranscriptionService(
+                whisperService: localTranscriptionService,
+                fluidAudioService: fluidAudioTranscriptionService
+            )
+        )
+    private lazy var audioSourceRouter = TranscriptionAudioSourceRouter(
+        fileTranscriber: { [unowned self] audioURL, model, context in
+            try await self.transcribeFile(
+                audioURL: audioURL,
+                model: model,
+                context: context
+            )
+        },
+        inMemoryService: inMemoryTranscriptionService
+    )
 
     init(modelProvider: any WhisperModelProvider, modelsDirectory: URL, modelContext: ModelContext) {
         self.modelProvider = modelProvider
@@ -51,6 +69,39 @@ class TranscriptionServiceRegistry {
 
     func transcribe(
         audioURL: URL, model: any TranscriptionModel, context: TranscriptionRequestContext = .currentDefaults
+    ) async throws -> String {
+        try await transcribe(
+            source: .file(audioURL),
+            model: model,
+            context: context
+        ).text
+    }
+
+    /// Shared source boundary for normal recordings and memory-only Time-Shift
+    /// capture. The router selects exactly one path and never retries through a
+    /// different source, model, provider, or authentication route.
+    func transcribe(
+        source: TranscriptionAudioSource,
+        model: any TranscriptionModel,
+        context: TranscriptionRequestContext = .currentDefaults,
+        requestID: UUID = UUID(),
+        customVocabulary: [String] = []
+    ) async throws -> InMemoryTranscriptionResult {
+        try await audioSourceRouter.transcribe(
+            TranscriptionAudioSourceRequest(
+                id: requestID,
+                source: source,
+                model: model,
+                context: context.scoped(to: model),
+                customVocabulary: customVocabulary
+            )
+        )
+    }
+
+    private func transcribeFile(
+        audioURL: URL,
+        model: any TranscriptionModel,
+        context: TranscriptionRequestContext
     ) async throws -> String {
         let service = service(for: model.provider)
         logger.debug(

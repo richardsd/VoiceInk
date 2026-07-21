@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 import os
 
-class WhisperTranscriptionService: TranscriptionService {
+class WhisperTranscriptionService: TranscriptionService, LocalPCM16TranscriptionServicing {
 
     private var whisperContext: WhisperContext?
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "WhisperTranscriptionService")
@@ -17,6 +17,42 @@ class WhisperTranscriptionService: TranscriptionService {
     func transcribe(audioURL: URL, model: any TranscriptionModel, context: TranscriptionRequestContext) async throws
         -> String
     {
+        var samples = try readAudioSamples(audioURL)
+        defer { LocalPCM16TranscriptionAdapter.zeroize(&samples) }
+        return try await transcribe(
+            normalizedSamples: samples,
+            model: model,
+            context: context
+        )
+    }
+
+    func transcribe(
+        pcm16Snapshot: PCM16Snapshot,
+        model: any TranscriptionModel,
+        context: TranscriptionRequestContext
+    ) async throws -> String {
+        let adapter = LocalPCM16TranscriptionAdapter(provider: .whisper) { [weak self] samples, model, context in
+            guard let self else {
+                throw VoiceInkEngineError.transcriptionFailed
+            }
+            return try await self.transcribe(
+                normalizedSamples: samples,
+                model: model,
+                context: context
+            )
+        }
+        return try await adapter.transcribe(
+            snapshot: pcm16Snapshot,
+            model: model,
+            context: context
+        )
+    }
+
+    private func transcribe(
+        normalizedSamples: [Float],
+        model: any TranscriptionModel,
+        context: TranscriptionRequestContext
+    ) async throws -> String {
         guard model.provider == .whisper else {
             throw VoiceInkEngineError.modelLoadFailed
         }
@@ -54,15 +90,12 @@ class WhisperTranscriptionService: TranscriptionService {
             throw VoiceInkEngineError.modelLoadFailed
         }
 
-        // Read audio data
-        let data = try readAudioSamples(audioURL)
-
         // Set prompt
         await whisperContext.setLanguage(context.language)
         await whisperContext.setPrompt(context.prompt ?? "")
 
         // Transcribe
-        let success = await whisperContext.fullTranscribe(samples: data)
+        let success = await whisperContext.fullTranscribe(samples: normalizedSamples)
 
         guard success else {
             logger.error("❌ Core transcription engine failed (whisper_full).")
