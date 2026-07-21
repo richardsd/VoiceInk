@@ -192,6 +192,31 @@ final class CoreAudioRecorder: @unchecked Sendable {
         }
     }
 
+    /// Starts capture without opening an output file.
+    ///
+    /// Audio is converted to VoiceInk's canonical 16 kHz mono signed Int16
+    /// format and delivered only through `onAudioChunk`. This is the hardware
+    /// seam used by Time-Shift's memory-only rolling buffer.
+    func startMemoryCapture(deviceID: AudioDeviceID) throws {
+        stopRecording()
+
+        try prepare(deviceID: deviceID)
+
+        do {
+            closeOutputFile()
+            recordingURL = nil
+            resetAudioProcessingState()
+            try startAudioUnit()
+        } catch {
+            isRecording = false
+            recordingActive.store(false, ordering: .releasing)
+            closeOutputFile()
+            recordingURL = nil
+            teardownPreparedAudioUnit()
+            throw error
+        }
+    }
+
     /// Stops the current recording
     func stopRecording() {
         guard isRecording || audioFile != nil else {
@@ -217,6 +242,7 @@ final class CoreAudioRecorder: @unchecked Sendable {
         }
 
         drainAudioProcessingQueue()
+        zeroReusableAudioStorage()
         logDroppedInputBufferCounters(context: "stop")
 
         closeOutputFile()
@@ -728,6 +754,7 @@ final class CoreAudioRecorder: @unchecked Sendable {
 
     private func freeBuffers() {
         drainAudioProcessingQueue()
+        zeroReusableAudioStorage()
 
         if let buffer = conversionBuffer {
             buffer.deallocate()
@@ -744,6 +771,21 @@ final class CoreAudioRecorder: @unchecked Sendable {
         inputBufferSlots.removeAll()
         inputBufferCapacitySamples = 0
         resetAudioProcessingState()
+    }
+
+    private func zeroReusableAudioStorage() {
+        if let renderBuffer, renderBufferSize > 0 {
+            renderBuffer.initialize(repeating: 0, count: Int(renderBufferSize))
+        }
+        if let conversionBuffer, conversionBufferSize > 0 {
+            conversionBuffer.initialize(repeating: 0, count: Int(conversionBufferSize))
+        }
+        for slot in inputBufferSlots {
+            slot.samples.initialize(repeating: 0, count: Int(slot.capacitySamples))
+            slot.frameCount = 0
+            slot.channelCount = 0
+            slot.sampleRate = 0
+        }
     }
 
     private func resetMeters() {
@@ -991,8 +1033,6 @@ final class CoreAudioRecorder: @unchecked Sendable {
         inputChannels: UInt32,
         inputSampleRate: Double
     ) {
-        guard let file = audioFile else { return }
-
         let outputSampleRate = outputFormat.mSampleRate
 
         // Calculate output frame count after sample rate conversion
@@ -1046,19 +1086,20 @@ final class CoreAudioRecorder: @unchecked Sendable {
             }
         }
 
-        // Write to file
-        var outputBufferList = AudioBufferList(
-            mNumberBuffers: 1,
-            mBuffers: AudioBuffer(
-                mNumberChannels: 1,
-                mDataByteSize: outputFrameCount * 2,
-                mData: outputBuffer
+        if let file = audioFile {
+            var outputBufferList = AudioBufferList(
+                mNumberBuffers: 1,
+                mBuffers: AudioBuffer(
+                    mNumberChannels: 1,
+                    mDataByteSize: outputFrameCount * 2,
+                    mData: outputBuffer
+                )
             )
-        )
 
-        let writeStatus = ExtAudioFileWrite(file, outputFrameCount, &outputBufferList)
-        if writeStatus != noErr {
-            logger.error("🎙️ ExtAudioFileWrite failed with status: \(writeStatus, privacy: .public)")
+            let writeStatus = ExtAudioFileWrite(file, outputFrameCount, &outputBufferList)
+            if writeStatus != noErr {
+                logger.error("🎙️ ExtAudioFileWrite failed with status: \(writeStatus, privacy: .public)")
+            }
         }
 
         // Send the same PCM data to the streaming callback if set.

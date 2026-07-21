@@ -31,7 +31,7 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 | H5-05 | **Done** | H5-01 | Guided application return with manual recovery fallback |
 | H5-06 | **Done** | H5-05 | Identity-safe continuous caret tracking and position setting |
 | H5-07 | **Done** | H5-02 | Another Take through the frozen route and immutable revision pipeline |
-| H5-08 | **Planned** | H5-01 | PCM snapshot, secure rolling buffer, CoreAudio memory sink, and WAV encoder |
+| H5-08 | **Done** | H5-01 | PCM snapshot, secure rolling buffer, CoreAudio memory sink, and WAV encoder |
 | H5-09 | **Planned** | H5-08 | Audio leases, Time-Shift lifecycle, memory clearing, and aggregate metrics |
 | H5-10 | **Planned** | H5-09 | In-memory transcription boundary, provider adapters, and capability checks |
 | H5-11 | **Planned** | H5-10 | Forced-review Time-Shift pipeline, menu controls, shortcuts, and armed pulse |
@@ -99,9 +99,9 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 
 ### H5-08 — Memory-only audio foundation
 
-- [ ] A thread-safe, fixed-capacity fifteen-second PCM ring buffer supports wraparound, snapshotting, duration, and explicit zeroing.
-- [ ] CoreAudio can feed memory without opening a file, muting the system, pausing media, or playing recorder sounds.
-- [ ] PCM snapshots can produce floats or an in-memory WAV without a filesystem URL.
+- [x] A thread-safe, fixed-capacity fifteen-second PCM ring buffer supports wraparound, snapshotting, duration, and explicit zeroing.
+- [x] CoreAudio can feed memory without opening a file, muting the system, pausing media, or playing recorder sounds.
+- [x] PCM snapshots can produce scoped floats or an in-memory WAV without a filesystem URL.
 
 ### H5-09 — Time-Shift lifecycle and ownership
 
@@ -159,7 +159,8 @@ Stories use focused `H5-XX …` commits in dependency order. H5-05, H5-07, and H
 - 2026-07-21: `66559c73` completed H5-04; exact-command parser, review engine, confirmation UI, presentation, and keyboard suites passed serially in `/tmp/VoiceInk-H5-refine-final`; exact commands use no model call and near matches remain inert.
 - 2026-07-21: `71ab51c8` completed H5-05; recovery, destination-matcher, review-engine, and compact-layout suites passed serially in `/tmp/VoiceInk-H5-refine-final`; recovery validates PID, bundle, and field identity while keeping paste as a separate action.
 - 2026-07-21: `738cc2bf` completed H5-06; caret-tracker, capability, and layout suites passed serially in `/tmp/VoiceInk-H5-refine-final`; tests cover AX notifications, watchdog fallback, focus freezing, jitter, quality, operation pauses, and non-cooperative lookup recovery.
-- 2026-07-21: H5-07 refinement-service, reducer, engine, and presentation suites passed serially in `/tmp/VoiceInk-H5-refine-final`; Another Take uses the frozen route, shares the cancellable exclusive slot, and materializes exactly one revision.
+- 2026-07-21: `04398bd1` completed H5-07; refinement-service, reducer, engine, and presentation suites passed serially in `/tmp/VoiceInk-H5-refine-final`; Another Take uses the frozen route, shares the cancellable exclusive slot, and materializes exactly one revision.
+- 2026-07-21: H5-08 PCM and CoreAudio-source suites passed 21 focused tests serially in `/tmp/VoiceInk-H5-refine-final`; capture stays off the main actor, retained stale callbacks are generation-rejected, reusable audio storage and intermediate copies are zeroed, and the source exposes no file or normal-recorder side-effect API.
 
 ## Deferred beyond Halo 5.0
 
