@@ -128,6 +128,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private var pendingPasteReviewExpirationTask: Task<Void, Never>?
     private var haloRefinementTask: Task<Void, Never>?
     private var activeHaloRefinementRequestID: UUID?
+    private var haloVariantTasks: [UUID: Task<Void, Never>] = [:]
     private var haloVoiceRefinementTask: Task<Void, Never>?
     private var activeHaloVoiceRefinementRequestID: UUID?
     private var pendingHaloVoiceStopRequestID: UUID?
@@ -1379,6 +1380,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             !reviewState.isRefining,
             !reviewState.isVoiceRefinementActive,
             !reviewState.isEditingManually,
+            !reviewState.isVariantComparisonActive,
             let approvedRevision = reviewState.selectedRevision
         else {
             return
@@ -1419,6 +1421,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 !currentState.isRefining,
                 !currentState.isVoiceRefinementActive,
                 !currentState.isEditingManually,
+                !currentState.isVariantComparisonActive,
                 currentState.selectedRevision?.id == approvedRevisionID
             else {
                 return
@@ -1504,6 +1507,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             haloReviewState?.isRefining != true,
             haloReviewState?.isVoiceRefinementActive != true,
             haloReviewState?.isEditingManually != true,
+            haloReviewState?.isVariantComparisonActive != true,
             let recoveryPresenter = recorderUIManager as? any PasteReviewRecoveryPresenting
         else {
             return false
@@ -1614,6 +1618,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             !state.isRefining,
             !state.isVoiceRefinementActive,
             !state.isEditingManually,
+            !state.isVariantComparisonActive,
             state.lens != lens
         else {
             return false
@@ -1644,7 +1649,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             !state.isExpired,
             !state.isRefining,
             !state.isVoiceRefinementActive,
-            !state.isEditingManually
+            !state.isEditingManually,
+            !state.isVariantComparisonActive
         else {
             return false
         }
@@ -1672,6 +1678,140 @@ class VoiceInkEngine: NSObject, ObservableObject {
     func beginHaloAnotherTake(at date: Date = Date()) -> Bool {
         guard haloCapabilitySnapshot.anotherTakeEnabled else { return false }
         return beginHaloRefinementOperation(kind: .anotherTake, at: date)
+    }
+
+    @discardableResult
+    func beginHaloVariantComparison(at date: Date = Date()) -> Bool {
+        guard recordingState == .reviewing,
+            haloCapabilitySnapshot.parallelComparisonEnabled,
+            let review = pendingPasteReview,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
+            let service = haloRefinementService,
+            var state = haloReviewState,
+            state.session.id == review.id,
+            !state.isExpired,
+            let configuration = state.session.enhancementConfiguration,
+            let refinementInputSnapshot = state.session.refinementInputSnapshot,
+            let selectedRevision = state.selectedRevision
+        else {
+            return false
+        }
+
+        guard date < state.expiresAt else {
+            _ = HaloReviewReducer.reduce(state: &state, action: .timeout(at: date))
+            haloReviewState = state
+            pasteReviewSecondsRemaining = 0
+            return false
+        }
+
+        let routeToken = HaloVariantFrozenRouteToken()
+        guard let launch = state.beginVariantComparison(
+            routeToken: routeToken,
+            at: date
+        ) else {
+            haloReviewState = state
+            return false
+        }
+
+        haloReviewState = state
+        pasteReviewSecondsRemaining = nil
+        schedulePasteReviewInactivity(for: review.id)
+
+        for variantRequest in launch.requests {
+            let refinementRequest = HaloRefinementRequest(
+                variantRequest: variantRequest,
+                rawTranscript: state.session.rawText,
+                selectedRevisionText: selectedRevision.text,
+                configuration: configuration,
+                contextSnapshot: state.session.frozenContext,
+                inputSnapshot: refinementInputSnapshot
+            )
+            haloVariantTasks[variantRequest.id] = Task { @MainActor [weak self] in
+                do {
+                    let result = try await service.refine(refinementRequest)
+                    self?.completeHaloVariant(
+                        result,
+                        request: variantRequest,
+                        reviewID: review.id,
+                        at: Date()
+                    )
+                } catch {
+                    self?.failHaloVariant(
+                        request: variantRequest,
+                        reviewID: review.id,
+                        error: error,
+                        at: Date()
+                    )
+                }
+            }
+        }
+        return true
+    }
+
+    @discardableResult
+    func cancelHaloVariantComparisonIfActive(at date: Date = Date()) -> Bool {
+        guard recordingState == .reviewing,
+            let review = pendingPasteReview,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
+            var state = haloReviewState,
+            state.session.id == review.id,
+            state.isVariantComparisonActive,
+            let pendingRequestIDs = state.cancelVariantComparison(at: date)
+        else {
+            return false
+        }
+
+        for requestID in pendingRequestIDs {
+            haloVariantTasks.removeValue(forKey: requestID)?.cancel()
+        }
+        stopActiveHaloVariantTasks()
+        haloReviewState = state
+        schedulePasteReviewInactivity(for: review.id)
+        return true
+    }
+
+    @discardableResult
+    func chooseHaloVariant(
+        _ profile: HaloVariantProfile,
+        comparisonID: UUID,
+        at date: Date = Date()
+    ) -> Bool {
+        guard recordingState == .reviewing,
+            let review = pendingPasteReview,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
+            var state = haloReviewState,
+            state.session.id == review.id,
+            state.variantComparison.comparisonID == comparisonID,
+            state.variantComparison.pendingRequests.isEmpty,
+            case .candidate(let candidate) = state.variantComparison.slotState(for: profile)
+        else {
+            return false
+        }
+
+        let payload = pasteDeliveryService.prepare(
+            text: candidate.replacementText,
+            output: state.session.output
+        )
+        let revision = HaloReviewRevision(
+            parentID: candidate.baseRevisionID,
+            action: .variant(profile),
+            text: candidate.replacementText,
+            metadata: state.session.metadata,
+            payload: payload
+        )
+        guard state.chooseVariant(
+            profile: profile,
+            comparisonID: comparisonID,
+            revision: revision,
+            at: date
+        ) else {
+            return false
+        }
+
+        stopActiveHaloVariantTasks()
+        haloReviewState = state
+        schedulePasteReviewInactivity(for: review.id)
+        return true
     }
 
     private func beginHaloRefinementOperation(
@@ -2679,6 +2819,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             !state.isRefining,
             !state.isVoiceRefinementActive,
             !state.isEditingManually,
+            !state.isVariantComparisonActive,
             let selectedRevision = state.selectedRevision,
             selectedRevision.text != state.session.rawText
         else {
@@ -2936,12 +3077,116 @@ class VoiceInkEngine: NSObject, ObservableObject {
         activeHaloRefinementRequestID = nil
     }
 
+    private func completeHaloVariant(
+        _ result: HaloRefinementResult,
+        request: HaloVariantRequest,
+        reviewID: UUID,
+        at date: Date
+    ) {
+        guard let review = pendingPasteReview,
+            review.id == reviewID,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: reviewID),
+            var state = haloReviewState,
+            state.session.id == reviewID
+        else {
+            haloVariantTasks.removeValue(forKey: request.id)
+            return
+        }
+
+        haloVariantTasks.removeValue(forKey: request.id)
+        if result.requestID != request.id || result.baseRevisionID != request.baseRevisionID {
+            _ = state.receiveVariantFailure(
+                comparisonID: request.comparisonID,
+                requestID: request.id,
+                baseRevisionID: request.baseRevisionID,
+                routeToken: request.routeToken,
+                failure: .malformedResponse,
+                at: date
+            )
+        } else {
+            _ = state.receiveVariantResponse(
+                HaloVariantResponse(
+                    comparisonID: request.comparisonID,
+                    requestID: request.id,
+                    baseRevisionID: request.baseRevisionID,
+                    routeToken: request.routeToken,
+                    replacementText: result.replacementText
+                ),
+                at: date
+            )
+        }
+        haloReviewState = state
+        updateHaloVariantInactivity(for: reviewID, state: state)
+    }
+
+    private func failHaloVariant(
+        request: HaloVariantRequest,
+        reviewID: UUID,
+        error: Error,
+        at date: Date
+    ) {
+        guard let review = pendingPasteReview,
+            review.id == reviewID,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: reviewID),
+            var state = haloReviewState,
+            state.session.id == reviewID
+        else {
+            haloVariantTasks.removeValue(forKey: request.id)
+            return
+        }
+
+        haloVariantTasks.removeValue(forKey: request.id)
+        _ = state.receiveVariantFailure(
+            comparisonID: request.comparisonID,
+            requestID: request.id,
+            baseRevisionID: request.baseRevisionID,
+            routeToken: request.routeToken,
+            failure: haloVariantFailure(for: error),
+            at: date
+        )
+        haloReviewState = state
+        updateHaloVariantInactivity(for: reviewID, state: state)
+    }
+
+    private func updateHaloVariantInactivity(
+        for reviewID: UUID,
+        state: HaloReviewState
+    ) {
+        if state.isVariantComparisonRunning {
+            pasteReviewSecondsRemaining = nil
+        } else {
+            schedulePasteReviewInactivity(for: reviewID)
+        }
+    }
+
+    private func haloVariantFailure(for error: Error) -> HaloVariantFailure {
+        switch (error as? HaloRefinementError) ?? HaloRefinementError.sanitized(error) {
+        case .unavailable: return .unavailable
+        case .authenticationExpired: return .authenticationExpired
+        case .rateLimited: return .rateLimited
+        case .timedOut: return .timedOut
+        case .networkUnavailable: return .networkUnavailable
+        case .serverUnavailable: return .serverUnavailable
+        case .malformedResponse: return .malformedResponse
+        case .cancelled: return .cancelled
+        case .failed: return .failed
+        }
+    }
+
+    private func stopActiveHaloVariantTasks() {
+        for task in haloVariantTasks.values {
+            task.cancel()
+        }
+        haloVariantTasks.removeAll(keepingCapacity: false)
+    }
+
     func copyPendingPasteReview() {
         guard let review = pendingPasteReview,
             pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
             haloReviewState?.isRefining != true,
             haloReviewState?.isVoiceRefinementActive != true,
             haloReviewState?.isEditingManually != true,
+            haloReviewState?.isVariantComparisonActive != true,
             !isPasteReviewRefocusing
         else {
             return
@@ -2990,6 +3235,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     private func clearPendingPasteReviewPresentation() {
         stopActiveHaloRefinementTask()
+        stopActiveHaloVariantTasks()
         stopActiveHaloVoiceRefinementTask()
         haloVoiceCommandConfirmation = nil
         isPasteReviewRefocusing = false
@@ -3034,6 +3280,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         pendingPasteReviewExpirationTask?.cancel()
         pasteReviewSecondsRemaining = haloReviewState.map {
             $0.isRefining || $0.voiceRefinementPhase.isProcessing
+                || $0.isVariantComparisonRunning
         } == true
             ? nil
             : haloReviewState?.secondsRemaining()
@@ -3044,7 +3291,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 self.pasteReviewResolutionGate.permitsNonDeliveryAction(for: reviewID)
             {
                 guard var state = self.haloReviewState else { return }
-                if state.isRefining || state.voiceRefinementPhase.isProcessing {
+                if state.isRefining || state.voiceRefinementPhase.isProcessing
+                    || state.isVariantComparisonRunning
+                {
                     do {
                         try await Task.sleep(nanoseconds: 1_000_000_000)
                     } catch {
@@ -3414,6 +3663,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
             haloReviewState?.refinementRequest?.kind == .anotherTake
         {
             _ = cancelHaloRefinementIfActive()
+        }
+        if previous.parallelComparisonEnabled,
+            !updated.parallelComparisonEnabled,
+            haloReviewState?.isVariantComparisonActive == true
+        {
+            _ = cancelHaloVariantComparisonIfActive()
         }
 
         guard let phase = haloReviewState?.voiceRefinementPhase,

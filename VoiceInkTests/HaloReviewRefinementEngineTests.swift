@@ -1334,6 +1334,107 @@ struct HaloReviewRefinementEngineTests {
         #expect(!harness.engine.beginHaloAnotherTake())
     }
 
+    @Test func preciseNaturalComparisonStaysProvisionalAndUsesOneFrozenRoute() async throws {
+        let refinement = EngineRefinementService(
+            behaviors: [.success("Precise candidate"), .success("Natural candidate")]
+        )
+        let harness = try makeHarness(refinement: refinement)
+        harness.capabilities.parallelComparisonEnabled = true
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+        let parentID = try #require(harness.engine.haloReviewState?.selectedRevision?.id)
+
+        #expect(harness.engine.beginHaloVariantComparison())
+        await waitForVariantComparison(in: harness.engine)
+
+        #expect(refinement.requests.count == 2)
+        #expect(
+            Set(refinement.requests.compactMap { request -> HaloVariantProfile? in
+                guard case .variant(let profile) = request.instruction else { return nil }
+                return profile
+            }) == Set(HaloVariantProfile.allCases)
+        )
+        #expect(refinement.requests.allSatisfy { request in
+            request.baseRevisionID == parentID
+                && request.configuration.provider == .openAI
+                && request.configuration.openAIAuthMode == .oauth
+                && request.configuration.modelName == "gpt-5.6-luna"
+                && request.contextSnapshot?.clipboardText == "Frozen clipboard"
+                && request.inputSnapshot.customVocabulary.contains("VoiceInk")
+        })
+
+        let comparison = try #require(harness.engine.haloReviewState?.variantComparison)
+        let comparisonID = try #require(comparison.comparisonID)
+        let precise = try #require(comparison.provisionalCandidates.first {
+            $0.profile == .precise
+        })
+        #expect(comparison.status == .ready)
+        #expect(harness.engine.haloReviewState?.revisions.count == 1)
+
+        #expect(harness.engine.chooseHaloVariant(.precise, comparisonID: comparisonID))
+        let selected = try #require(harness.engine.haloReviewState?.selectedRevision)
+        #expect(selected.parentID == parentID)
+        #expect(selected.action == .variant(.precise))
+        #expect(selected.text == precise.replacementText)
+        #expect(selected.payload.pastedText == "licensed:\(precise.replacementText) ")
+        #expect(harness.engine.haloReviewState?.revisions.count == 2)
+        #expect(harness.engine.haloReviewState?.lens == .changes)
+        #expect(harness.engine.haloReviewState?.variantComparison.status == .materialized)
+        #expect(harness.engine.haloReviewState?.variantComparison.provisionalCandidates.isEmpty == true)
+    }
+
+    @Test func oneVariantFailureKeepsTheSurvivingCandidateSelectable() async throws {
+        let refinement = EngineRefinementService(
+            behaviors: [
+                .failure(HaloRefinementError.timedOut),
+                .success("One faithful alternative"),
+            ]
+        )
+        let harness = try makeHarness(refinement: refinement)
+        harness.capabilities.parallelComparisonEnabled = true
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+
+        #expect(harness.engine.beginHaloVariantComparison())
+        await waitForVariantComparison(in: harness.engine)
+
+        let comparison = try #require(harness.engine.haloReviewState?.variantComparison)
+        let survivor = try #require(comparison.provisionalCandidates.first)
+        let comparisonID = try #require(comparison.comparisonID)
+        #expect(comparison.status == .partialFailure)
+        #expect(comparison.failures.count == 1)
+        #expect(comparison.failures.first?.reason == .timedOut)
+        #expect(harness.engine.chooseHaloVariant(
+            survivor.profile,
+            comparisonID: comparisonID
+        ))
+        #expect(harness.engine.haloReviewState?.selectedRevision?.text == survivor.replacementText)
+    }
+
+    @Test func disablingComparisonCancelsBothRequestsAndPreservesReview() async throws {
+        let refinement = EngineRefinementService(behaviors: [.suspended, .suspended])
+        let harness = try makeHarness(refinement: refinement)
+        harness.capabilities.parallelComparisonEnabled = true
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+        let originalID = try #require(harness.engine.haloReviewState?.selectedRevision?.id)
+
+        #expect(harness.engine.beginHaloVariantComparison())
+        for _ in 0..<200 {
+            if refinement.requests.count == 2 { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        harness.capabilities.parallelComparisonEnabled = false
+        for _ in 0..<200 {
+            if refinement.cancellationCount == 2 { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+
+        #expect(refinement.cancellationCount == 2)
+        #expect(harness.engine.pendingPasteReview != nil)
+        #expect(harness.engine.haloReviewState?.isVariantComparisonActive == false)
+        #expect(harness.engine.haloReviewState?.selectedRevision?.id == originalID)
+        #expect(harness.engine.haloReviewState?.revisions.count == 1)
+        #expect(!harness.engine.beginHaloVariantComparison())
+    }
+
     @Test func useOriginalAndManualEditPrepareExactImmutablePayloads() async throws {
         let harness = try makeHarness(refinement: EngineRefinementService(behaviors: []))
         let transcriptionID = UUID()
@@ -1542,6 +1643,16 @@ struct HaloReviewRefinementEngineTests {
             try? await Task.sleep(for: .milliseconds(5))
         }
         Issue.record("Refinement did not finish")
+    }
+
+    private func waitForVariantComparison(in engine: VoiceInkEngine) async {
+        for _ in 0..<200 {
+            if engine.haloReviewState?.variantComparison.pendingRequests.isEmpty == true {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Variant comparison did not finish")
     }
 
     private func waitForVoiceCapture(

@@ -61,6 +61,7 @@ enum HaloRefinementInstruction: Equatable, Sendable {
     case preset(HaloRefinementAction)
     case freeform(HaloInstructionSource, HaloFreeformRefinementDirective)
     case anotherTake
+    case variant(HaloVariantProfile)
 
     var presetAction: HaloRefinementAction? {
         guard case .preset(let action) = self else { return nil }
@@ -201,6 +202,24 @@ struct HaloRefinementRequest {
         self.inputSnapshot = inputSnapshot
     }
 
+    init(
+        variantRequest: HaloVariantRequest,
+        rawTranscript: String,
+        selectedRevisionText: String,
+        configuration: EnhancementRuntimeConfiguration,
+        contextSnapshot: RecordingContextSnapshot?,
+        inputSnapshot: HaloRefinementInputSnapshot
+    ) {
+        requestID = variantRequest.id
+        baseRevisionID = variantRequest.baseRevisionID
+        instruction = .variant(variantRequest.profile)
+        self.rawTranscript = rawTranscript
+        self.selectedRevisionText = selectedRevisionText
+        self.configuration = configuration
+        self.contextSnapshot = contextSnapshot
+        self.inputSnapshot = inputSnapshot
+    }
+
     /// Source-compatible access for the five existing preset actions. Voice
     /// requests intentionally have no preset action.
     var action: HaloRefinementAction? { instruction.presetAction }
@@ -320,6 +339,9 @@ enum HaloRefinementPromptBuilder {
             requestedRefinement = """
                 Produce a materially different complete replacement while preserving every fact, commitment, name, number, and original Mode requirement. Vary the phrasing and sentence structure without adding commentary or alternatives.
                 """
+            freeformDirectiveBlock = ""
+        case .variant(let profile):
+            requestedRefinement = profile.promptDescriptor.instruction
             freeformDirectiveBlock = ""
         }
 

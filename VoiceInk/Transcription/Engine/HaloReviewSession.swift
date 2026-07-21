@@ -67,6 +67,7 @@ enum HaloReviewRevisionAction: Equatable, Sendable {
     case voiceRefinement
     case typedRefinement
     case anotherTake
+    case variant(HaloVariantProfile)
     case original
     case manualEdit
 }
@@ -325,6 +326,8 @@ enum HaloReviewNotice: Equatable, Sendable {
     case voiceRefinementCancelled
     case voiceRefinementFailed(HaloVoiceRefinementFailure)
     case instructionValidation(String)
+    case variantComparisonCancelled
+    case variantComparisonFailed
 
     var message: String {
         switch self {
@@ -352,6 +355,10 @@ enum HaloReviewNotice: Equatable, Sendable {
             return failure.message
         case .instructionValidation(let message):
             return message
+        case .variantComparisonCancelled:
+            return String(localized: "Alternative comparison cancelled")
+        case .variantComparisonFailed:
+            return String(localized: "No transcript alternatives could be created. Your current version is unchanged.")
         }
     }
 }
@@ -367,6 +374,7 @@ struct HaloReviewState {
     private(set) var refinementRequest: HaloReviewRefinementRequest?
     private(set) var voiceRefinementPhase: HaloVoiceRefinementPhase
     private(set) var manualEdit: HaloReviewManualEdit?
+    private(set) var variantComparison: HaloVariantComparisonState
     private(set) var notice: HaloReviewNotice?
     private(set) var expiresAt: Date
     private(set) var isExpired = false
@@ -383,6 +391,7 @@ struct HaloReviewState {
         refinementRequest = nil
         voiceRefinementPhase = .idle
         manualEdit = nil
+        variantComparison = HaloVariantComparisonState()
         notice = nil
         expiresAt = now.addingTimeInterval(Self.inactivityLifetime)
     }
@@ -406,14 +415,27 @@ struct HaloReviewState {
 
     var canRefine: Bool {
         !isExpired && refinementRequest == nil && !voiceRefinementPhase.isActive && manualEdit == nil
+            && !isVariantComparisonActive
             && revisions.count < Self.maximumRevisionCount
     }
 
     var isRefining: Bool { refinementRequest != nil }
     var isVoiceRefinementActive: Bool { voiceRefinementPhase.isActive }
     var isEditingManually: Bool { manualEdit != nil }
+    var isVariantComparisonRunning: Bool {
+        !variantComparison.pendingRequests.isEmpty
+    }
+    var isVariantComparisonActive: Bool {
+        switch variantComparison.status {
+        case .comparing, .partialFailure, .ready, .totalFailure:
+            return true
+        case .idle, .cancelled, .materialized:
+            return false
+        }
+    }
     var isReviewOperationActive: Bool {
         isRefining || isVoiceRefinementActive || isEditingManually
+            || isVariantComparisonActive
     }
 
     var canResolveReview: Bool {
@@ -421,14 +443,16 @@ struct HaloReviewState {
     }
 
     func secondsRemaining(at date: Date = Date()) -> Int {
-        if isRefining || voiceRefinementPhase.isProcessing {
+        if isRefining || voiceRefinementPhase.isProcessing || isVariantComparisonRunning {
             return max(1, Int(ceil(expiresAt.timeIntervalSince(date))))
         }
         return max(0, Int(ceil(expiresAt.timeIntervalSince(date))))
     }
 
     mutating func touch(at date: Date = Date()) {
-        guard !isExpired, !isRefining, !voiceRefinementPhase.isProcessing else { return }
+        guard !isExpired, !isRefining, !voiceRefinementPhase.isProcessing,
+            !isVariantComparisonRunning
+        else { return }
         expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
     }
 
@@ -438,7 +462,7 @@ struct HaloReviewState {
     }
 
     mutating func selectLens(_ lens: HaloReviewLens, at date: Date = Date()) {
-        guard !isExpired else { return }
+        guard !isExpired, !isVariantComparisonActive else { return }
         self.lens = lens
         touch(at: date)
     }
@@ -446,6 +470,7 @@ struct HaloReviewState {
     @discardableResult
     mutating func selectRevision(id: UUID, at date: Date = Date()) -> Bool {
         guard !isExpired, !isRefining, !isVoiceRefinementActive, !isEditingManually,
+            !isVariantComparisonActive,
             revisions.contains(where: { $0.id == id })
         else {
             return false
@@ -471,6 +496,7 @@ struct HaloReviewState {
         at date: Date = Date()
     ) -> HaloReviewRefinementRequest? {
         guard !isExpired, refinementRequest == nil, !voiceRefinementPhase.isActive, manualEdit == nil,
+            !isVariantComparisonActive,
             let selectedRevision
         else {
             return nil
@@ -500,7 +526,7 @@ struct HaloReviewState {
         at date: Date = Date()
     ) -> HaloReviewRefinementRequest? {
         guard !isExpired, refinementRequest == nil, !voiceRefinementPhase.isActive,
-            manualEdit == nil, let selectedRevision
+            manualEdit == nil, !isVariantComparisonActive, let selectedRevision
         else {
             return nil
         }
@@ -519,6 +545,121 @@ struct HaloReviewState {
         refinementRequest = request
         notice = nil
         return request
+    }
+
+    @discardableResult
+    mutating func beginVariantComparison(
+        routeToken: HaloVariantFrozenRouteToken,
+        comparisonID: UUID = UUID(),
+        at date: Date = Date()
+    ) -> HaloVariantComparisonLaunch? {
+        guard canRefine, let selectedRevision else {
+            if revisions.count >= Self.maximumRevisionCount {
+                notice = .revisionLimitReached
+                touch(at: date)
+            }
+            return nil
+        }
+
+        let result = variantComparison.begin(
+            baseRevisionID: selectedRevision.id,
+            baseText: selectedRevision.text,
+            routeToken: routeToken,
+            remainingRevisionSlots: Self.maximumRevisionCount - revisions.count,
+            comparisonID: comparisonID
+        )
+        guard case .started(let launch) = result else { return nil }
+
+        notice = nil
+        expiresAt = max(expiresAt, date.addingTimeInterval(1))
+        return launch
+    }
+
+    @discardableResult
+    mutating func receiveVariantResponse(
+        _ response: HaloVariantResponse,
+        at date: Date = Date()
+    ) -> HaloVariantEventResult {
+        let result = variantComparison.receive(response)
+        if result != .stale {
+            finishVariantEventIfSettled(at: date)
+        }
+        return result
+    }
+
+    @discardableResult
+    mutating func receiveVariantFailure(
+        comparisonID: UUID,
+        requestID: UUID,
+        baseRevisionID: UUID,
+        routeToken: HaloVariantFrozenRouteToken,
+        failure: HaloVariantFailure,
+        at date: Date = Date()
+    ) -> HaloVariantEventResult {
+        let result = variantComparison.receiveFailure(
+            comparisonID: comparisonID,
+            requestID: requestID,
+            baseRevisionID: baseRevisionID,
+            routeToken: routeToken,
+            failure: failure
+        )
+        if result != .stale {
+            finishVariantEventIfSettled(at: date)
+        }
+        return result
+    }
+
+    @discardableResult
+    mutating func cancelVariantComparison(at date: Date = Date()) -> [UUID]? {
+        guard let comparisonID = variantComparison.comparisonID else { return nil }
+        guard case .cancelled(let requestIDs) = variantComparison.cancel(
+            comparisonID: comparisonID
+        ) else {
+            return nil
+        }
+        notice = .variantComparisonCancelled
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+        return requestIDs
+    }
+
+    @discardableResult
+    mutating func chooseVariant(
+        profile: HaloVariantProfile,
+        comparisonID: UUID,
+        revision: HaloReviewRevision,
+        at date: Date = Date()
+    ) -> Bool {
+        guard revisions.count < Self.maximumRevisionCount,
+            case .candidate(let candidate) = variantComparison.slotState(for: profile),
+            candidate.baseRevisionID == revision.parentID,
+            candidate.replacementText == revision.text,
+            revision.action == .variant(profile)
+        else {
+            return false
+        }
+        guard case .materialized(let materialization) = variantComparison.selectWinner(
+            profile: profile,
+            comparisonID: comparisonID
+        ), materialization.baseRevisionID == revision.parentID,
+            materialization.replacementText == revision.text
+        else {
+            return false
+        }
+
+        revisions.append(revision)
+        selectedRevisionID = revision.id
+        lens = .changes
+        notice = nil
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+        return true
+    }
+
+    private mutating func finishVariantEventIfSettled(at date: Date) {
+        guard variantComparison.pendingRequests.isEmpty else { return }
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+        if variantComparison.status == .totalFailure {
+            notice = .variantComparisonFailed
+        }
     }
 
     enum CompletionResult: Equatable {
@@ -596,7 +737,7 @@ struct HaloReviewState {
         at date: Date = Date()
     ) -> HaloVoiceRefinementRequest? {
         guard !isExpired, refinementRequest == nil, !voiceRefinementPhase.isActive,
-            manualEdit == nil, let selectedRevision
+            manualEdit == nil, !isVariantComparisonActive, let selectedRevision
         else {
             return nil
         }
@@ -702,7 +843,7 @@ struct HaloReviewState {
         at date: Date = Date()
     ) -> HaloInstructionDraft? {
         guard !isExpired, refinementRequest == nil, !voiceRefinementPhase.isActive,
-            manualEdit == nil, let selectedRevision
+            manualEdit == nil, !isVariantComparisonActive, let selectedRevision
         else {
             return nil
         }
@@ -852,7 +993,9 @@ struct HaloReviewState {
         revision: HaloReviewRevision,
         at date: Date = Date()
     ) -> Bool {
-        guard !isExpired, !isRefining, !isVoiceRefinementActive, !isEditingManually else {
+        guard !isExpired, !isRefining, !isVoiceRefinementActive, !isEditingManually,
+            !isVariantComparisonActive
+        else {
             return false
         }
 
@@ -883,6 +1026,7 @@ struct HaloReviewState {
     @discardableResult
     mutating func beginManualEdit(at date: Date = Date()) -> Bool {
         guard !isExpired, !isRefining, !isVoiceRefinementActive, manualEdit == nil,
+            !isVariantComparisonActive,
             revisions.count < Self.maximumRevisionCount,
             let selectedRevision
         else {
@@ -960,6 +1104,7 @@ struct HaloReviewState {
     @discardableResult
     mutating func expireIfNeeded(at date: Date = Date()) -> Bool {
         guard !isExpired, !isRefining, !voiceRefinementPhase.isProcessing,
+            !isVariantComparisonRunning,
             date >= expiresAt
         else {
             return false

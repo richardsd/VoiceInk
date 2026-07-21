@@ -460,6 +460,9 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         if engine?.cancelHaloRefinementIfActive() == true {
             return true
         }
+        if engine?.cancelHaloVariantComparisonIfActive() == true {
+            return true
+        }
         return engine?.cancelHaloManualEditIfActive() ?? false
     }
 
