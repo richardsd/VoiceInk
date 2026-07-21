@@ -15,6 +15,42 @@ protocol OAuthTokenStore {
     func deleteOAuthTokens() throws
 }
 
+/// Chooses the persistent application store without exposing a user's real
+/// ChatGPT session to an app-hosted XCTest process.
+enum OAuthTokenStoreFactory {
+    static func applicationDefault(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> any OAuthTokenStore {
+        guard environment["XCTestConfigurationFilePath"] == nil else {
+            return EphemeralOAuthTokenStore()
+        }
+        return OAuthKeychainManager.shared
+    }
+}
+
+private final class EphemeralOAuthTokenStore: OAuthTokenStore {
+    private let lock = NSLock()
+    private var tokens: OAuthTokens?
+
+    func saveOAuthTokens(_ tokens: OAuthTokens) throws {
+        lock.lock()
+        self.tokens = tokens
+        lock.unlock()
+    }
+
+    func retrieveOAuthTokens() throws -> OAuthTokens? {
+        lock.lock()
+        defer { lock.unlock() }
+        return tokens
+    }
+
+    func deleteOAuthTokens() throws {
+        lock.lock()
+        tokens = nil
+        lock.unlock()
+    }
+}
+
 class OAuthKeychainManager: OAuthTokenStore {
     static let shared = OAuthKeychainManager()
     
@@ -86,7 +122,11 @@ class OAuthKeychainManager: OAuthTokenStore {
             kSecAttrAccount as String: key,
             kSecAttrService as String: "com.prakashjoshipax.voiceink.oauth",
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            // Session discovery runs during application startup. Never let a
+            // Keychain authorization prompt block launch (or an XCTest host)
+            // before VoiceInk can present its own reconnect state.
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
         ]
         
         var result: AnyObject?

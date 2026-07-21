@@ -36,9 +36,9 @@ struct TimeShiftStatusPresentation: Equatable, Sendable {
         guard capabilityEnabled else {
             return Self(
                 kind: .disabled,
-                menuLabel: "Time-Shift: Off",
-                statusLabel: "Time-Shift disabled",
-                detailLabel: "Enable it in Settings > Halo",
+                menuLabel: String(localized: "Time-Shift: Off"),
+                statusLabel: String(localized: "Time-Shift disabled"),
+                detailLabel: String(localized: "Enable it in Settings > Halo"),
                 systemImage: "waveform.slash",
                 tone: .muted,
                 showsPulse: false
@@ -50,9 +50,9 @@ struct TimeShiftStatusPresentation: Equatable, Sendable {
             if reason == .disabled {
                 return Self(
                     kind: .disabled,
-                    menuLabel: "Time-Shift: Off",
-                    statusLabel: "Time-Shift disabled",
-                    detailLabel: "Enable it in Settings > Halo",
+                    menuLabel: String(localized: "Time-Shift: Off"),
+                    statusLabel: String(localized: "Time-Shift disabled"),
+                    detailLabel: String(localized: "Enable it in Settings > Halo"),
                     systemImage: "waveform.slash",
                     tone: .muted,
                     showsPulse: false
@@ -61,8 +61,8 @@ struct TimeShiftStatusPresentation: Equatable, Sendable {
 
             return Self(
                 kind: .unavailable,
-                menuLabel: "Time-Shift: Unavailable",
-                statusLabel: "Time-Shift unavailable",
+                menuLabel: String(localized: "Time-Shift: Unavailable"),
+                statusLabel: String(localized: "Time-Shift unavailable"),
                 detailLabel: unavailableDetail(for: reason),
                 systemImage: "exclamationmark.waveform",
                 tone: .warning,
@@ -72,9 +72,9 @@ struct TimeShiftStatusPresentation: Equatable, Sendable {
         case .unarmed:
             return Self(
                 kind: .ready,
-                menuLabel: "Time-Shift: Ready",
-                statusLabel: "Time-Shift ready",
-                detailLabel: "Arm to remember the last 15 seconds",
+                menuLabel: String(localized: "Time-Shift: Ready"),
+                statusLabel: String(localized: "Time-Shift ready"),
+                detailLabel: String(localized: "Arm to remember the last 15 seconds"),
                 systemImage: "waveform",
                 tone: .muted,
                 showsPulse: false
@@ -83,9 +83,9 @@ struct TimeShiftStatusPresentation: Equatable, Sendable {
         case .arming:
             return Self(
                 kind: .arming,
-                menuLabel: "Time-Shift: Arming",
-                statusLabel: "Arming Time-Shift",
-                detailLabel: "Starting the private memory buffer",
+                menuLabel: String(localized: "Time-Shift: Arming"),
+                statusLabel: String(localized: "Arming Time-Shift"),
+                detailLabel: String(localized: "Starting the private memory buffer"),
                 systemImage: "record.circle",
                 tone: .accent,
                 showsPulse: true
@@ -94,9 +94,9 @@ struct TimeShiftStatusPresentation: Equatable, Sendable {
         case .armed:
             return Self(
                 kind: .armed,
-                menuLabel: "Time-Shift: Armed",
-                statusLabel: "Time-Shift armed",
-                detailLabel: "Listening locally - 15 seconds in memory",
+                menuLabel: String(localized: "Time-Shift: Armed"),
+                statusLabel: String(localized: "Time-Shift armed"),
+                detailLabel: String(localized: "Listening locally - 15 seconds in memory"),
                 systemImage: "record.circle",
                 tone: .accent,
                 showsPulse: true
@@ -105,9 +105,9 @@ struct TimeShiftStatusPresentation: Equatable, Sendable {
         case .capturing:
             return Self(
                 kind: .capturing,
-                menuLabel: "Time-Shift: Capturing",
-                statusLabel: "Capturing last 15 seconds",
-                detailLabel: "Preparing Halo review",
+                menuLabel: String(localized: "Time-Shift: Capturing"),
+                statusLabel: String(localized: "Capturing last 15 seconds"),
+                detailLabel: String(localized: "Preparing Halo review"),
                 systemImage: "waveform.badge.magnifyingglass",
                 tone: .accent,
                 showsPulse: true
@@ -116,9 +116,9 @@ struct TimeShiftStatusPresentation: Equatable, Sendable {
         case .processing:
             return Self(
                 kind: .processing,
-                menuLabel: "Time-Shift: Processing",
-                statusLabel: "Preparing Halo review",
-                detailLabel: "The microphone is no longer in use",
+                menuLabel: String(localized: "Time-Shift: Processing"),
+                statusLabel: String(localized: "Preparing Halo review"),
+                detailLabel: String(localized: "The microphone is no longer in use"),
                 systemImage: "waveform.badge.magnifyingglass",
                 tone: .accent,
                 showsPulse: true
@@ -129,19 +129,19 @@ struct TimeShiftStatusPresentation: Equatable, Sendable {
     private static func unavailableDetail(for reason: TimeShiftUnavailableReason) -> String {
         switch reason {
         case .disabled:
-            return "Enable it in Settings > Halo"
+            return String(localized: "Enable it in Settings > Halo")
         case .permissionDenied:
-            return "Microphone access is unavailable"
+            return String(localized: "Microphone access is unavailable")
         case .audioDeviceChanged:
-            return "Audio device changed - arm again"
+            return String(localized: "Audio device changed - arm again")
         case .microphoneInUse:
-            return "The microphone is being used by another VoiceInk capture"
+            return String(localized: "The microphone is being used by another VoiceInk capture")
         case .audioCaptureFailed:
-            return "The memory-only audio capture could not start"
+            return String(localized: "The memory-only audio capture could not start")
         case .unsupportedModel:
-            return "The selected transcription model cannot use memory-only audio"
+            return String(localized: "The selected transcription model cannot use memory-only audio")
         case .systemSleeping, .screenLocked, .terminating:
-            return "Arm again when VoiceInk is available"
+            return String(localized: "Arm again when VoiceInk is available")
         }
     }
 }
@@ -162,6 +162,15 @@ enum TimeShiftPulseMetrics {
             width: size.width,
             height: size.height
         )
+    }
+}
+
+enum TimeShiftPulseTransitionPolicy {
+    static func duration(
+        _ preferredDuration: TimeInterval,
+        reduceMotion: Bool
+    ) -> TimeInterval {
+        reduceMotion ? 0 : max(0, preferredDuration)
     }
 }
 
@@ -343,13 +352,18 @@ final class TimeShiftPulseAppKitSurface: TimeShiftPulseSurface {
     private let panel: TimeShiftPulsePanel
     private let hostingController: NSHostingController<TimeShiftPulseView>
     private let screenProvider: @MainActor () -> NSScreen?
+    private let reduceMotionProvider: @MainActor () -> Bool
 
     init(
         screenProvider: @escaping @MainActor () -> NSScreen? = {
             NSApp.keyWindow?.screen ?? NSScreen.main ?? NSScreen.screens.first
+        },
+        reduceMotionProvider: @escaping @MainActor () -> Bool = {
+            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         }
     ) {
         self.screenProvider = screenProvider
+        self.reduceMotionProvider = reduceMotionProvider
         let initialPresentation = TimeShiftStatusPresentation.project(
             capabilityEnabled: true,
             captureState: .unarmed
@@ -377,24 +391,45 @@ final class TimeShiftPulseAppKitSurface: TimeShiftPulseSurface {
             panel.orderFrontRegardless()
         }
 
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.14
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel.animator().alphaValue = 1
-        }
+        setAlphaValue(
+            1,
+            duration: 0.14,
+            timingFunction: CAMediaTimingFunction(name: .easeOut)
+        )
     }
 
     func beginDismissal() {
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = TimeShiftPulseMetrics.dismissalDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().alphaValue = 0
-        }
+        setAlphaValue(
+            0,
+            duration: TimeShiftPulseMetrics.dismissalDuration,
+            timingFunction: CAMediaTimingFunction(name: .easeIn)
+        )
     }
 
     func close() {
         panel.orderOut(nil)
         panel.close()
+    }
+
+    private func setAlphaValue(
+        _ alphaValue: CGFloat,
+        duration: TimeInterval,
+        timingFunction: CAMediaTimingFunction
+    ) {
+        let resolvedDuration = TimeShiftPulseTransitionPolicy.duration(
+            duration,
+            reduceMotion: reduceMotionProvider()
+        )
+        guard resolvedDuration > 0 else {
+            panel.alphaValue = alphaValue
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = resolvedDuration
+            context.timingFunction = timingFunction
+            panel.animator().alphaValue = alphaValue
+        }
     }
 }
 

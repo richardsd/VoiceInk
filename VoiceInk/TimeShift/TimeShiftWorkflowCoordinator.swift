@@ -245,6 +245,19 @@ final class TimeShiftWorkflowCoordinator: ObservableObject {
         refreshStatus()
     }
 
+    /// Cancels every Time-Shift phase when the recorder presentation changes.
+    ///
+    /// This is intentionally stronger than `cancelProcessing()`: a style
+    /// change can arrive while `capture()` is still awaiting the in-memory
+    /// snapshot, before a processing task exists. Disarming transitions that
+    /// capture out of `.capturing`, clears both the rolling buffer and any
+    /// borrowed snapshot, and releases the microphone lease. The suspended
+    /// capture then rejects and zeroes its late snapshot instead of entering
+    /// the product pipeline.
+    func cancelForRecorderStyleChange() async {
+        await disarm()
+    }
+
     /// Captures once, re-resolves the exact supported route, then invokes the
     /// injected post-capture processor. The capture controller releases the
     /// microphone before the processor can inspect any product context.

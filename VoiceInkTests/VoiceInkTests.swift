@@ -262,7 +262,7 @@ struct VoiceInkTests {
 
     @MainActor
     @Test func callbackServerCleansUpAfterTimeoutAndCancellation() async {
-        let timeoutServer = CodexCallbackServer(timeoutSeconds: 0.02)
+        let timeoutServer = CodexCallbackServer(timeoutSeconds: 0.02, port: 0)
         do {
             _ = try await timeoutServer.start(expectedState: "timeout-state")
             #expect(Bool(false), "Expected callback timeout")
@@ -273,7 +273,7 @@ struct VoiceInkTests {
         }
         #expect(timeoutServer.isListening == false)
 
-        let cancellationServer = CodexCallbackServer(timeoutSeconds: 10)
+        let cancellationServer = CodexCallbackServer(timeoutSeconds: 10, port: 0)
         let task = Task { @MainActor in
             try await cancellationServer.start(expectedState: "cancel-state")
         }
@@ -293,37 +293,42 @@ struct VoiceInkTests {
 
     @MainActor
     @Test func callbackServerRejectsInvalidRequestsThenCompletesOnce() async throws {
-        let server = CodexCallbackServer(timeoutSeconds: 2)
+        let server = CodexCallbackServer(timeoutSeconds: 2, port: 0)
         let callbackTask = Task { @MainActor in
             try await server.start(expectedState: "expected-state")
         }
         try await Task.sleep(for: .milliseconds(20))
         #expect(server.isListening)
+        let listeningPort = try #require(server.listeningPort)
 
         let wrongMethodResponse = try await sendCallbackRequest(
             method: "POST",
-            path: "/auth/callback?code=wrong&state=expected-state"
+            path: "/auth/callback?code=wrong&state=expected-state",
+            port: listeningPort
         )
         #expect(wrongMethodResponse.statusCode == 405)
         #expect(server.isListening)
 
         let wrongPathResponse = try await sendCallbackRequest(
             method: "GET",
-            path: "/wrong?code=wrong&state=expected-state"
+            path: "/wrong?code=wrong&state=expected-state",
+            port: listeningPort
         )
         #expect(wrongPathResponse.statusCode == 404)
         #expect(server.isListening)
 
         let wrongStateResponse = try await sendCallbackRequest(
             method: "GET",
-            path: "/auth/callback?code=wrong&state=unexpected"
+            path: "/auth/callback?code=wrong&state=unexpected",
+            port: listeningPort
         )
         #expect(wrongStateResponse.statusCode == 400)
         #expect(server.isListening)
 
         let successResponse = try await sendCallbackRequest(
             method: "GET",
-            path: "/auth/callback?code=valid-code&state=expected-state"
+            path: "/auth/callback?code=valid-code&state=expected-state",
+            port: listeningPort
         )
         #expect(successResponse.statusCode == 200)
         #expect(try await callbackTask.value == "valid-code")
@@ -684,9 +689,13 @@ private func codexParserError(for data: Data) -> CodexOAuthClientError? {
     }
 }
 
-private func sendCallbackRequest(method: String, path: String) async throws -> HTTPURLResponse {
+private func sendCallbackRequest(
+    method: String,
+    path: String,
+    port: UInt16
+) async throws -> HTTPURLResponse {
     var request = URLRequest(
-        url: URL(string: "http://127.0.0.1:\(CodexConstants.redirectPort)\(path)")!
+        url: URL(string: "http://127.0.0.1:\(port)\(path)")!
     )
     request.httpMethod = method
     request.timeoutInterval = 1

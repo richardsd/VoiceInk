@@ -93,9 +93,11 @@ struct CodexCallbackRequestParser {
 @MainActor
 class CodexCallbackServer: ObservableObject {
     @Published var isListening = false
+    private(set) var listeningPort: UInt16?
 
     private static let maximumRequestSize = 65_536
     private let timeoutSeconds: TimeInterval
+    private let requestedPort: UInt16
     private var listeningSocket: Int32 = -1
     private var acceptSource: DispatchSourceRead?
     private var clientSources: [Int32: DispatchSourceRead] = [:]
@@ -104,8 +106,12 @@ class CodexCallbackServer: ObservableObject {
     private var continuation: CheckedContinuation<String, Error>?
     private var timeoutTask: Task<Void, Never>?
 
-    init(timeoutSeconds: TimeInterval = CodexConstants.callbackTimeoutSeconds) {
+    init(
+        timeoutSeconds: TimeInterval = CodexConstants.callbackTimeoutSeconds,
+        port: UInt16 = UInt16(CodexConstants.redirectPort)
+    ) {
         self.timeoutSeconds = timeoutSeconds
+        requestedPort = port
     }
     
     func start(
@@ -165,14 +171,11 @@ class CodexCallbackServer: ObservableObject {
         }
 
         isListening = false
+        listeningPort = nil
         expectedState = nil
     }
 
     private func setupListener() throws {
-        guard let port = UInt16(exactly: CodexConstants.redirectPort) else {
-            throw CallbackServerError.portInUse
-        }
-
         let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard socket >= 0 else {
             logger.error("Failed to create callback listener socket")
@@ -194,7 +197,7 @@ class CodexCallbackServer: ObservableObject {
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = in_port_t(port.bigEndian)
+        address.sin_port = in_port_t(requestedPort.bigEndian)
         address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
 
         let bindResult = withUnsafePointer(to: &address) { addressPointer in
@@ -217,6 +220,19 @@ class CodexCallbackServer: ObservableObject {
             }
             throw CallbackServerError.portInUse
         }
+
+        var boundAddress = sockaddr_in()
+        var boundAddressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let addressResult = withUnsafeMutablePointer(to: &boundAddress) { addressPointer in
+            addressPointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                Darwin.getsockname(socket, socketAddress, &boundAddressLength)
+            }
+        }
+        guard addressResult == 0 else {
+            Darwin.close(socket)
+            throw CallbackServerError.portInUse
+        }
+        listeningPort = UInt16(bigEndian: boundAddress.sin_port)
 
         let currentFlags = Darwin.fcntl(socket, F_GETFL, 0)
         _ = Darwin.fcntl(socket, F_SETFL, currentFlags | O_NONBLOCK)

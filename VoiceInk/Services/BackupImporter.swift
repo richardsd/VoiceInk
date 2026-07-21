@@ -107,25 +107,10 @@ enum BackupImporter {
         if let dictionaryShortcut = general.quickAddToDictionaryShortcut {
             ShortcutStore.setShortcut(dictionaryShortcut.shortcut, for: .quickAddToDictionary)
         }
-        if let toggleTimeShiftShortcut = general.toggleTimeShiftShortcut {
-            ShortcutStore.setShortcut(toggleTimeShiftShortcut.shortcut, for: .toggleTimeShift)
-        }
-        if let captureTimeShiftShortcut = general.captureTimeShiftShortcut {
-            ShortcutStore.setShortcut(captureTimeShiftShortcut.shortcut, for: .captureTimeShift)
-        }
-
-        if let halo = general.haloPreferences {
-            haloCapabilityStore.apply(
-                spokenRefinementEnabled: halo.spokenRefinementEnabled,
-                typedRefinementEnabled: halo.typedRefinementEnabled,
-                voiceCommandsEnabled: halo.voiceCommandsEnabled,
-                anotherTakeEnabled: halo.anotherTakeEnabled,
-                parallelComparisonEnabled: halo.parallelComparisonEnabled,
-                guidedRecoveryEnabled: halo.guidedRecoveryEnabled,
-                positionBehaviorRawValue: halo.positionBehaviorRawValue,
-                timeShiftEnabled: halo.timeShiftEnabled
-            )
-        }
+        restoreHaloConfiguration(
+            from: general,
+            haloCapabilityStore: haloCapabilityStore
+        )
 
         if let shortcutRawValue = general.primaryRecordingShortcutRawValue,
             let shortcut = RecordingShortcutManager.ShortcutSelection(rawValue: shortcutRawValue)
@@ -266,6 +251,38 @@ enum BackupImporter {
         }
 
         print("Successfully imported general settings.")
+    }
+
+    /// Restores the Halo-specific v3 payload through the same observable store
+    /// and shortcut storage used by the live settings UI. Keeping this slice
+    /// independently testable protects immediate capability reconciliation
+    /// without constructing the unrelated application managers.
+    @MainActor
+    static func restoreHaloConfiguration(
+        from general: GeneralBackup,
+        haloCapabilityStore: HaloCapabilityStore,
+        shortcutWriter: (Shortcut, ShortcutAction) -> Void = { shortcut, action in
+            ShortcutStore.setShortcut(shortcut, for: action)
+        }
+    ) {
+        if let toggleTimeShiftShortcut = general.toggleTimeShiftShortcut {
+            shortcutWriter(toggleTimeShiftShortcut.shortcut, .toggleTimeShift)
+        }
+        if let captureTimeShiftShortcut = general.captureTimeShiftShortcut {
+            shortcutWriter(captureTimeShiftShortcut.shortcut, .captureTimeShift)
+        }
+
+        guard let halo = general.haloPreferences else { return }
+        haloCapabilityStore.apply(
+            spokenRefinementEnabled: halo.spokenRefinementEnabled,
+            typedRefinementEnabled: halo.typedRefinementEnabled,
+            voiceCommandsEnabled: halo.voiceCommandsEnabled,
+            anotherTakeEnabled: halo.anotherTakeEnabled,
+            parallelComparisonEnabled: halo.parallelComparisonEnabled,
+            guidedRecoveryEnabled: halo.guidedRecoveryEnabled,
+            positionBehaviorRawValue: halo.positionBehaviorRawValue,
+            timeShiftEnabled: halo.timeShiftEnabled
+        )
     }
 
     @MainActor

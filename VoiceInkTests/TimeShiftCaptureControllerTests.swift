@@ -133,10 +133,14 @@ struct TimeShiftCaptureControllerTests {
     }
 
     @Test func terminationNotificationSynchronouslyStopsAndZeroes() async {
-        let harness = makeHarness(observeSystemLifecycle: true)
+        let notificationCenter = NotificationCenter()
+        let harness = makeHarness(
+            applicationNotificationCenter: notificationCenter,
+            observeSystemLifecycle: true
+        )
         await harness.controller.arm()
 
-        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
+        notificationCenter.post(name: NSApplication.willTerminateNotification, object: nil)
 
         #expect(harness.controller.state == .unavailable(.terminating))
         #expect(harness.source.events.contains("shutdown"))
@@ -164,6 +168,7 @@ struct TimeShiftCaptureControllerTests {
         enabled: Bool = true,
         source: TimeShiftAudioSourceSpy = TimeShiftAudioSourceSpy(),
         capabilities: TimeShiftCapabilityBox? = nil,
+        applicationNotificationCenter: NotificationCenter = .default,
         observeSystemLifecycle: Bool = false
     ) -> Harness {
         let capabilities = capabilities ?? TimeShiftCapabilityBox(enabled: enabled)
@@ -177,6 +182,7 @@ struct TimeShiftCaptureControllerTests {
             permissionProvider: { true },
             deviceIDProvider: { 41 },
             modelSupportProvider: { true },
+            applicationNotificationCenter: applicationNotificationCenter,
             observeSystemLifecycle: observeSystemLifecycle
         )
         return Harness(

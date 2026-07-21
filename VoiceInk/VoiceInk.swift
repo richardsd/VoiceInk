@@ -20,7 +20,7 @@ struct VoiceInkApp: App {
     @StateObject private var menuBarManager: MenuBarManager
     @StateObject private var mainWindowNavigation = MainWindowNavigation.shared
     @StateObject private var haloCapabilityStore: HaloCapabilityStore
-    @StateObject private var aiService = AIService()
+    @StateObject private var aiService: AIService
     @StateObject private var enhancementService: AIEnhancementService
     @StateObject private var licenseViewModel = LicenseViewModel.shared
     @StateObject private var activeWindowService = ActiveWindowService.shared
@@ -93,7 +93,9 @@ struct VoiceInkApp: App {
         DictionaryService.removeExactDuplicateContent(context: resolvedContainer.mainContext, source: "launch")
 
         // Initialize services with proper sharing of instances
-        let aiService = AIService()
+        let aiService = AIService(
+            oauthTokenStore: OAuthTokenStoreFactory.applicationDefault()
+        )
         _aiService = StateObject(wrappedValue: aiService)
         let haloCapabilityStore = HaloCapabilityStore()
         _haloCapabilityStore = StateObject(wrappedValue: haloCapabilityStore)

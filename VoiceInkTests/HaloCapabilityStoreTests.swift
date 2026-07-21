@@ -4,6 +4,44 @@ import Testing
 
 @MainActor
 struct HaloCapabilityStoreTests {
+    @Test func registeredDefaultsStayAlignedWithRecommendedCapabilities() {
+        let registered = AppDefaults.registeredDefaults
+        let recommended = HaloCapabilityStore.recommendedDefaults
+
+        #expect(
+            registered[HaloCapabilitySettingsKeys.spokenRefinementEnabled] as? Bool
+                == recommended.spokenRefinementEnabled
+        )
+        #expect(
+            registered[HaloCapabilitySettingsKeys.typedRefinementEnabled] as? Bool
+                == recommended.typedRefinementEnabled
+        )
+        #expect(
+            registered[HaloCapabilitySettingsKeys.voiceCommandsEnabled] as? Bool
+                == recommended.voiceCommandsEnabled
+        )
+        #expect(
+            registered[HaloCapabilitySettingsKeys.anotherTakeEnabled] as? Bool
+                == recommended.anotherTakeEnabled
+        )
+        #expect(
+            registered[HaloCapabilitySettingsKeys.parallelComparisonEnabled] as? Bool
+                == recommended.parallelComparisonEnabled
+        )
+        #expect(
+            registered[HaloCapabilitySettingsKeys.guidedRecoveryEnabled] as? Bool
+                == recommended.guidedRecoveryEnabled
+        )
+        #expect(
+            registered[HaloCapabilitySettingsKeys.positionBehavior] as? String
+                == recommended.positionBehavior.rawValue
+        )
+        #expect(
+            registered[HaloCapabilitySettingsKeys.timeShiftEnabled] as? Bool
+                == recommended.timeShiftEnabled
+        )
+    }
+
     @Test func missingValuesUseRecommendedDefaults() throws {
         let defaults = try makeDefaults()
         let store = HaloCapabilityStore(userDefaults: defaults)
@@ -51,10 +89,57 @@ struct HaloCapabilityStoreTests {
         #expect(!store.timeShiftEnabled)
     }
 
+    @Test func importedDisableImmediatelyRequestsTimeShiftCleanup() throws {
+        let defaults = try makeDefaults()
+        let store = HaloCapabilityStore(userDefaults: defaults)
+        let recorder = TimeShiftDisableNotificationRecorder()
+        let observer = NotificationCenter.default.addObserver(
+            forName: .haloTimeShiftDisableRequested,
+            object: store,
+            queue: nil
+        ) { _ in
+            recorder.record()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        store.timeShiftEnabled = true
+        store.apply(
+            spokenRefinementEnabled: nil,
+            typedRefinementEnabled: nil,
+            voiceCommandsEnabled: nil,
+            anotherTakeEnabled: nil,
+            parallelComparisonEnabled: nil,
+            guidedRecoveryEnabled: nil,
+            positionBehaviorRawValue: nil,
+            timeShiftEnabled: false
+        )
+
+        #expect(!store.timeShiftEnabled)
+        #expect(!defaults.bool(forKey: HaloCapabilitySettingsKeys.timeShiftEnabled))
+        #expect(recorder.count == 1)
+    }
+
     private func makeDefaults() throws -> UserDefaults {
         let suite = "HaloCapabilityStoreTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         return defaults
+    }
+}
+
+private final class TimeShiftDisableNotificationRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedCount = 0
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedCount
+    }
+
+    func record() {
+        lock.lock()
+        recordedCount += 1
+        lock.unlock()
     }
 }

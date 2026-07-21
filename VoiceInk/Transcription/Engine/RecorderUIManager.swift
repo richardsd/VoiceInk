@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 import os
@@ -101,6 +102,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
     private weak var reviewShortcutController: (any RecorderReviewShortcutControlling)?
     private var haloPasteConfirmationTask: Task<Void, Never>?
     private var haloNoSpeechTask: Task<Void, Never>?
+    private var panelRebuildTask: Task<Void, Never>?
 
     private weak var engine: VoiceInkEngine?
     private var recorder: Recorder?
@@ -233,6 +235,9 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
     private func rebuildVisiblePanel(previousStyle: RecorderPanelStyle) {
         guard isRecorderPanelVisible else { return }
 
+        panelRebuildTask?.cancel()
+        panelRebuildTask = nil
+
         switch previousStyle {
         case .notch:
             notchWindowManager?.destroyWindow()
@@ -245,9 +250,15 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
             haloWindowManager = nil
         }
 
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            showRecorderPanel()
+        panelRebuildTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(50))
+            } catch {
+                return
+            }
+            guard let self, self.isRecorderPanelVisible else { return }
+            self.panelRebuildTask = nil
+            self.showRecorderPanel()
         }
     }
 
@@ -261,8 +272,9 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
             status == .capturing || status == .processing
         {
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                await self.cancelRecording()
+                guard let self, let engine = self.engine else { return }
+                await engine.cancelTimeShiftForRecorderStyleChange()
+                await self.dismissRecorderPanel()
                 self.effectiveRecorderPanelStyle = RecorderPanelRouting.effectiveStyle(
                     selectedStyle: self.recorderPanelStyle,
                     outputMode: ModeRuntimeResolver.outputConfiguration().outputMode
@@ -371,6 +383,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
             return
         }
 
+        panelRebuildTask?.cancel()
+        panelRebuildTask = nil
         hideRecorderPanel()
         haloPasteConfirmationTask?.cancel()
         haloPasteConfirmationTask = nil
@@ -386,6 +400,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         guard let engine = engine else { return }
         logger.notice("Resetting recording state on launch")
         await engine.resetRecordingSession()
+        panelRebuildTask?.cancel()
+        panelRebuildTask = nil
         haloPasteConfirmationTask?.cancel()
         haloPasteConfirmationTask = nil
         haloNoSpeechTask?.cancel()
@@ -628,6 +644,35 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
             name: .dismissRecorderPanel,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApplicationWillTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
+    }
+
+    /// Tears down presentation-only resources synchronously at application
+    /// termination. The engine owns review/audio privacy cleanup; this closes
+    /// panels, event monitors, AX caret observers, and delayed UI tasks.
+    func shutdown() {
+        panelRebuildTask?.cancel()
+        panelRebuildTask = nil
+        haloPasteConfirmationTask?.cancel()
+        haloPasteConfirmationTask = nil
+        haloNoSpeechTask?.cancel()
+        haloNoSpeechTask = nil
+        finishPasteReviewKeyboardHandling()
+
+        if isRecorderPanelVisible {
+            isRecorderPanelVisible = false
+        }
+        notchWindowManager?.destroyWindow()
+        miniWindowManager?.destroyWindow()
+        haloWindowManager?.destroyWindow()
+        notchWindowManager = nil
+        miniWindowManager = nil
+        haloWindowManager = nil
     }
 
     @objc public func handleToggleRecorderPanelNotification() {
@@ -647,6 +692,15 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
                 await dismissRecorderPanel()
             }
         }
+    }
+
+    @objc private func handleApplicationWillTerminate() {
+        shutdown()
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 }
 

@@ -84,6 +84,7 @@ final class TimeShiftCaptureController: ObservableObject {
     private let deviceIDProvider: DeviceIDProvider
     private let modelSupportProvider: ModelSupportProvider
     private let capabilityNotificationObject: AnyObject?
+    private let applicationNotificationCenter: NotificationCenter
 
     private var activeLease: AudioCaptureLease?
     private var activeSnapshot: PCM16Snapshot?
@@ -109,6 +110,7 @@ final class TimeShiftCaptureController: ObservableObject {
         },
         modelSupportProvider: @escaping ModelSupportProvider = { true },
         capabilityNotificationObject: AnyObject? = nil,
+        applicationNotificationCenter: NotificationCenter = .default,
         observeSystemLifecycle: Bool = true
     ) {
         self.audioSource = audioSource
@@ -119,6 +121,7 @@ final class TimeShiftCaptureController: ObservableObject {
         self.deviceIDProvider = deviceIDProvider
         self.modelSupportProvider = modelSupportProvider
         self.capabilityNotificationObject = capabilityNotificationObject
+        self.applicationNotificationCenter = applicationNotificationCenter
 
         let initialState: TimeShiftCaptureState
         if !capabilityEnabledProvider() {
@@ -460,23 +463,34 @@ final class TimeShiftCaptureController: ObservableObject {
     private func installLifecycleObservers() {
         observe(
             .haloTimeShiftDisableRequested,
+            center: applicationNotificationCenter,
             object: capabilityNotificationObject
         ) { [weak self] _ in
             Task { await self?.handleLifecycle(.disabled) }
         }
         observe(
             .haloCapabilitiesDidChange,
+            center: applicationNotificationCenter,
             object: capabilityNotificationObject
         ) { [weak self] _ in
             Task { await self?.reconcileCapability() }
         }
-        observe(Notification.Name("AudioDeviceChanged")) { [weak self] _ in
+        observe(
+            Notification.Name("AudioDeviceChanged"),
+            center: applicationNotificationCenter
+        ) { [weak self] _ in
             Task { await self?.handleLifecycle(.deviceChange) }
         }
-        observe(NSApplication.willTerminateNotification) { [weak self] _ in
+        observe(
+            NSApplication.willTerminateNotification,
+            center: applicationNotificationCenter
+        ) { [weak self] _ in
             self?.handleTerminationImmediately()
         }
-        observe(NSApplication.didBecomeActiveNotification) { [weak self] _ in
+        observe(
+            NSApplication.didBecomeActiveNotification,
+            center: applicationNotificationCenter
+        ) { [weak self] _ in
             guard let self else { return }
             Task {
                 if self.permissionProvider() {

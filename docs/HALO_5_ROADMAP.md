@@ -37,7 +37,7 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 | H5-11 | **Done** | H5-10 | Forced-review Time-Shift pipeline, menu controls, shortcuts, and armed pulse |
 | H5-12 | **Done** | H5-07 | Concurrent Precise/Natural variant engine and stale-result handling |
 | H5-13 | **Done** | H5-12 | Variant Deck UI, winner materialization, and opt-in cost disclosure |
-| H5-14 | **Planned** | H5-04, H5-06, H5-11, H5-13 | Localization, accessibility, compatibility audit, full verification, and acceptance |
+| H5-14 | **Ready for manual acceptance** | H5-04, H5-06, H5-11, H5-13 | Localization, accessibility, compatibility audit, full verification, and acceptance |
 
 ## Story acceptance criteria
 
@@ -138,10 +138,10 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 
 ### H5-14 — Hardening and acceptance
 
-- [ ] Capability toggles, backup import, review expiry, reset, style changes, and termination cancel/clear only the appropriate transient state.
-- [ ] Mini, Notch, Respond, Custom Command, delivery policies, Quick Apply, OAuth/API routing, History, clipboard restoration, and auto-send retain existing behavior.
-- [ ] VoiceOver, Reduce Motion, Accessibility-denied, event-tap failure, multiple-display, and lifecycle behavior are verified.
-- [ ] Focused tests, the complete non-UI suite, and a Debug build pass using temporary Derived Data.
+- [x] Capability toggles, backup import, review expiry, reset, style changes, and termination cancel/clear only the appropriate transient state.
+- [x] Mini, Notch, Respond, Custom Command, delivery policies, Quick Apply, OAuth/API routing, History, clipboard restoration, and auto-send retain existing behavior.
+- [x] Automated accessibility, Reduce Motion, Accessibility-denied, event-tap failure, multiple-display, and lifecycle coverage passes.
+- [x] Focused tests, the complete non-UI suite, and a Debug build pass using temporary Derived Data.
 - [ ] Manual acceptance covers native, browser, Electron, code-editor, fullscreen, device, privacy, and provider matrices.
 
 ## Delivery order and commits
@@ -165,7 +165,8 @@ Stories use focused `H5-XX …` commits in dependency order. H5-05, H5-07, and H
 - 2026-07-21: `633c6b1c` completed H5-10; shared file/memory routing, strict model resolution, cloud WAV adapters, direct-PCM Whisper/FluidAudio adapters, error sanitization, and zeroization passed 25 focused tests in `/tmp/VoiceInk-H5-refine-final`; unsupported routes remain explicit and no adapter retries through another source, provider, authentication path, or model.
 - 2026-07-21: `432e957d` completed H5-11; Time-Shift workflow, lifecycle, presentation, destination safety, delivery, and recorder-routing suites passed 73 focused tests in `/tmp/VoiceInk-H5-refine-final`; arming performs no Mode, destination, context, History, or network work, Capture uses one exact memory-only route, and missing destinations remain Copy-only.
 - 2026-07-21: `fd5c1b55` completed H5-12; variant reducer and engine integration passed 44 focused tests in `/tmp/VoiceInk-H5-variants-pure`; comparison starts exactly two same-route requests, keeps candidates provisional, rejects stale identities without refreshing inactivity, and materializes only the selected winner.
-- 2026-07-21: H5-13 Variant Deck presentation, review integration, interaction, layout, and refinement-engine suites passed 74 focused tests in `/tmp/VoiceInk-H5-variants-pure`; the A/B deck scrolls each candidate from its first line, scopes cancellation and selection to the current comparison, announces settled outcomes, honors Reduce Motion, discloses two same-route requests, and materializes exactly one selected winner.
+- 2026-07-21: `8f6a67e9` completed H5-13; Variant Deck presentation, review integration, interaction, layout, and refinement-engine suites passed 74 focused tests in `/tmp/VoiceInk-H5-variants-pure`; the A/B deck scrolls each candidate from its first line, scopes cancellation and selection to the current comparison, announces settled outcomes, honors Reduce Motion, discloses two same-route requests, and materializes exactly one selected winner.
+- 2026-07-21: H5-14 automated acceptance passed 49 capability/backup/review tests, 12 Time-Shift workflow tests, 10 presentation tests, and the complete 420-test non-UI suite in `/tmp/VoiceInk-H5-final`; the Debug build and the `en`, `de`, and `zh-Hans` string-catalog compile also succeeded. Hardening isolates app-hosted OAuth credentials and callback ports, prevents lifecycle-test cross-talk, rejects late Variant selection after expiry, cancels Time-Shift safely across recorder-style changes, and tears down delayed Halo presentation work. The multi-application manual matrix remains open.
 
 ## Deferred beyond Halo 5.0
 

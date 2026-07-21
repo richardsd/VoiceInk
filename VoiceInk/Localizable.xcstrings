@@ -21463,6 +21463,1462 @@
         }
       }
     },
+    "%@ transcript alternative" : {
+
+    },
+    "%lld/%lld" : {
+
+    },
+    "Apply this version?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Version anwenden?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "应用此版本？"
+          }
+        }
+      }
+    },
+    "2 requests" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2 Anfragen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2 次请求"
+          }
+        }
+      }
+    },
+    "Alternative comparison cancelled" : {
+
+    },
+    "Alternatives always reuse the active Mode’s provider, connection, model, requirements, vocabulary, and frozen context." : {
+
+    },
+    "Alternatives could not be created" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alternativen konnten nicht erstellt werden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法创建替代版本"
+          }
+        }
+      }
+    },
+    "Alternatives unavailable" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alternativen nicht verfügbar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "替代版本不可用"
+          }
+        }
+      }
+    },
+    "Another Take" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neuer Versuch"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再来一个版本"
+          }
+        }
+      }
+    },
+    "Applying your change" : {
+
+    },
+    "Arm" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktivieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用"
+          }
+        }
+      }
+    },
+    "Arm Time-Shift" : {
+
+    },
+    "Arm Time-Shift before capturing the last 15 seconds." : {
+
+    },
+    "Arm again when VoiceInk is available" : {
+
+    },
+    "Arm or Disarm" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktivieren oder deaktivieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用或停用"
+          }
+        }
+      }
+    },
+    "Arm or Disarm Time-Shift" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift aktivieren oder deaktivieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用或停用 Time-Shift"
+          }
+        }
+      }
+    },
+    "Arm to remember the last 15 seconds" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktivieren, um die letzten 15 Sekunden zu speichern"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用后可保留最近 15 秒"
+          }
+        }
+      }
+    },
+    "Arming Time-Shift" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift wird aktiviert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在启用 Time-Shift"
+          }
+        }
+      }
+    },
+    "Audio device changed - arm again" : {
+
+    },
+    "Cancel comparison" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vergleich abbrechen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消比较"
+          }
+        }
+      }
+    },
+    "Cancel review" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Überprüfung abbrechen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消审阅"
+          }
+        }
+      }
+    },
+    "Cancel this review?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Überprüfung abbrechen?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消此审阅？"
+          }
+        }
+      }
+    },
+    "Cancelling comparison…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vergleich wird abgebrochen…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在取消比较…"
+          }
+        }
+      }
+    },
+    "Cancelling…" : {
+
+    },
+    "Capture Last 15 Seconds" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Letzte 15 Sekunden erfassen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "捕捉最近 15 秒"
+          }
+        }
+      }
+    },
+    "Capture what you just missed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erfasse, was du gerade verpasst hast"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "捕捉刚刚错过的内容"
+          }
+        }
+      }
+    },
+    "Capturing last 15 seconds" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Letzte 15 Sekunden werden erfasst"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在捕捉最近 15 秒"
+          }
+        }
+      }
+    },
+    "Choose an alternative" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alternative auswählen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个替代版本"
+          }
+        }
+      }
+    },
+    "Choose the version you prefer" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle deine bevorzugte Version"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择你更喜欢的版本"
+          }
+        }
+      }
+    },
+    "Clear Time-Shift memory on every exit path" : {
+
+    },
+    "Command not recognized" : {
+
+    },
+    "Compare Precise & Natural" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Präzise & Natürlich vergleichen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "比较“精确”与“自然”"
+          }
+        }
+      }
+    },
+    "Compare one alternative at a time, then choose a winner after both finish." : {
+
+    },
+    "Compare · %d requests" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vergleichen · %d Anfragen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "比较 · %d 次请求"
+          }
+        }
+      }
+    },
+    "Comparing alternatives…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alternativen werden verglichen…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在比较替代版本…"
+          }
+        }
+      }
+    },
+    "Confirm Apply" : {
+
+    },
+    "Confirm Cancel review" : {
+
+    },
+    "Confirm the recognized Halo command" : {
+
+    },
+    "Confirm the recognized refinement instruction" : {
+
+    },
+    "Confirm the recognized transcript change" : {
+
+    },
+    "Confirm voice command" : {
+
+    },
+    "Confirm your change" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Änderung bestätigen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "确认修改"
+          }
+        }
+      }
+    },
+    "Creates two alternatives concurrently using this review’s current provider, connection, and model." : {
+
+    },
+    "Creating this alternative…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Alternative wird erstellt…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在创建此替代版本…"
+          }
+        }
+      }
+    },
+    "Creating two alternatives…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zwei Alternativen werden erstellt…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在创建两个替代版本…"
+          }
+        }
+      }
+    },
+    "Creating two transcript alternatives" : {
+
+    },
+    "Deliver each approved result at most once" : {
+
+    },
+    "Disarm" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deaktivieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停用"
+          }
+        }
+      }
+    },
+    "Disarm Time-Shift" : {
+
+    },
+    "Edit your change" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Änderung bearbeiten"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑修改"
+          }
+        }
+      }
+    },
+    "Editing the transcript change instruction" : {
+
+    },
+    "Enable it in Settings > Halo" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unter Einstellungen > Halo aktivieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在“设置 > Halo”中启用"
+          }
+        }
+      }
+    },
+    "Enter a change before refining." : {
+
+    },
+    "Exact voice review commands" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exakte Sprachbefehle für die Überprüfung"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "精确语音审阅命令"
+          }
+        }
+      }
+    },
+    "Explore alternatives" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alternativen erkunden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "探索替代版本"
+          }
+        }
+      }
+    },
+    "Finish the current VoiceInk session before arming Time-Shift." : {
+
+    },
+    "Finish the current VoiceInk session before capturing Time-Shift." : {
+
+    },
+    "Follow Original Caret" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ursprünglichem Textcursor folgen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跟随原始插入点"
+          }
+        }
+      }
+    },
+    "Following the caret moves only Halo’s visual anchor. The captured paste destination never changes." : {
+
+    },
+    "Generating" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird erstellt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在生成"
+          }
+        }
+      }
+    },
+    "Guide me back to the original app" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zur ursprünglichen App zurückführen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "引导我返回原始应用"
+          }
+        }
+      }
+    },
+    "Halo appears for Paste Modes. Respond and Custom Command Modes continue using Mini." : {
+
+    },
+    "Halo is ready" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Halo ist bereit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Halo 已就绪"
+          }
+        }
+      }
+    },
+    "Halo position" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Halo-Position"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Halo 位置"
+          }
+        }
+      }
+    },
+    "I heard: “%@”" : {
+
+    },
+    "Instruction stays in memory only" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anweisung bleibt nur im Speicher"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "指令仅保留在内存中"
+          }
+        }
+      }
+    },
+    "Keep reviewing" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weiter überprüfen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继续审阅"
+          }
+        }
+      }
+    },
+    "Keep the instruction to %d characters." : {
+
+    },
+    "Keep the selected provider, connection, and model" : {
+
+    },
+    "Keeps the current transcript version unchanged." : {
+
+    },
+    "Listening locally - 15 seconds in memory" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokales Zuhören – 15 Sekunden im Speicher"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在本地监听 — 内存中保留 15 秒"
+          }
+        }
+      }
+    },
+    "Meet Halo" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Halo kennenlernen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "认识 Halo"
+          }
+        }
+      }
+    },
+    "Microphone access is unavailable" : {
+
+    },
+    "Natural" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Natürlich"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自然"
+          }
+        }
+      }
+    },
+    "No model request has been sent" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Es wurde noch keine Modellanfrage gesendet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未发送模型请求"
+          }
+        }
+      }
+    },
+    "No compatible text field was captured. Copy the result instead." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kein kompatibles Textfeld erfasst. Kopiere stattdessen das Ergebnis."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未捕捉到兼容的文本输入框。请改为复制结果。"
+          }
+        }
+      }
+    },
+    "No speech was detected in the Time-Shift buffer." : {
+
+    },
+    "No transcript alternatives could be created. Your current version is unchanged." : {
+
+    },
+    "One alternative is ready" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eine Alternative ist bereit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一个替代版本已就绪"
+          }
+        }
+      }
+    },
+    "One transcript alternative is ready" : {
+
+    },
+    "Original field is ready. Choose Apply to paste." : {
+
+    },
+    "Paste only after destination validation" : {
+
+    },
+    "Precise" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Präzise"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "精确"
+          }
+        }
+      }
+    },
+    "Preparing Halo review" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Halo-Überprüfung wird vorbereitet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在准备 Halo 审阅"
+          }
+        }
+      }
+    },
+    "Ready" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bereit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已就绪"
+          }
+        }
+      }
+    },
+    "Refine" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verfeinern"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "优化"
+          }
+        }
+      }
+    },
+    "Return to original field" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zum ursprünglichen Feld zurückkehren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返回原始输入框"
+          }
+        }
+      }
+    },
+    "Safety you can rely on" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sicherheit, auf die du dich verlassen kannst"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可靠的安全保障"
+          }
+        }
+      }
+    },
+    "Selected, %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ausgewählt, %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已选择，%@"
+          }
+        }
+      }
+    },
+    "Selects this result and discards the other provisional alternative." : {
+
+    },
+    "Show a visible indicator whenever Time-Shift is armed" : {
+
+    },
+    "Shows the %@ transcript alternative." : {
+
+    },
+    "Spoken change ready for confirmation" : {
+
+    },
+    "Spoken refinement is unavailable for this review." : {
+
+    },
+    "Spoken refinements" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gesprochene Verfeinerungen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "语音优化"
+          }
+        }
+      }
+    },
+    "Spoken refinements are always shown for confirmation before Halo sends a model request. Exact commands begin with “Halo”." : {
+
+    },
+    "Stable Anchor" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stabiler Anker"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "固定锚点"
+          }
+        }
+      }
+    },
+    "Starting the private memory buffer" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privater Speicherpuffer wird gestartet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在启动私密内存缓冲区"
+          }
+        }
+      }
+    },
+    "Status" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Status"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "状态"
+          }
+        }
+      }
+    },
+    "Stay connected to your field" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit deinem Feld verbunden bleiben"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "与原始输入框保持连接"
+          }
+        }
+      }
+    },
+    "Tell Halo what you want" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sag Halo, was du möchtest"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "告诉 Halo 你想要什么"
+          }
+        }
+      }
+    },
+    "The memory-only audio capture could not start" : {
+
+    },
+    "The microphone is being used by another VoiceInk capture" : {
+
+    },
+    "The microphone is no longer in use" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Mikrofon wird nicht mehr verwendet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麦克风已停止使用"
+          }
+        }
+      }
+    },
+    "The network is unavailable." : {
+
+    },
+    "The refinement connection expired." : {
+
+    },
+    "The refinement service is busy." : {
+
+    },
+    "The selected transcription model cannot use memory-only audio" : {
+
+    },
+    "The selected transcription model does not support memory-only Time-Shift audio." : {
+
+    },
+    "The selected transcription provider is temporarily unavailable." : {
+
+    },
+    "This Mode’s transcription model cannot process memory-only audio." : {
+
+    },
+    "This alternative could not be created." : {
+
+    },
+    "This alternative did not meaningfully change the text." : {
+
+    },
+    "This alternative is not available." : {
+
+    },
+    "This alternative returned an invalid response." : {
+
+    },
+    "This alternative returned no usable text." : {
+
+    },
+    "This alternative timed out." : {
+
+    },
+    "This alternative was cancelled." : {
+
+    },
+    "This instruction cannot be used." : {
+
+    },
+    "Time-Shift Capture" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift-Aufnahme"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift 捕捉"
+          }
+        }
+      }
+    },
+    "Time-Shift Capture is available for Paste Modes." : {
+
+    },
+    "Time-Shift armed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift ist aktiv"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift 已启用"
+          }
+        }
+      }
+    },
+    "Time-Shift capture was cancelled." : {
+
+    },
+    "Time-Shift could not authenticate the selected transcription model." : {
+
+    },
+    "Time-Shift could not prepare this capture." : {
+
+    },
+    "Time-Shift could not reach the selected transcription provider." : {
+
+    },
+    "Time-Shift disabled" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift ist deaktiviert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift 已停用"
+          }
+        }
+      }
+    },
+    "Time-Shift is one-shot and starts disarmed. While armed, it keeps at most 15 seconds in memory, writes no audio file, and uploads nothing until you choose Capture." : {
+
+    },
+    "Time-Shift is temporarily rate limited. Try again shortly." : {
+
+    },
+    "Time-Shift ready" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift ist bereit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift 已就绪"
+          }
+        }
+      }
+    },
+    "Time-Shift saved the transcript, but Halo review could not be opened." : {
+
+    },
+    "Time-Shift transcription timed out." : {
+
+    },
+    "Time-Shift unavailable" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift ist nicht verfügbar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift 不可用"
+          }
+        }
+      }
+    },
+    "Time-Shift: Armed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift: Aktiv"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift：已启用"
+          }
+        }
+      }
+    },
+    "Time-Shift: Arming" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift: Wird aktiviert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift：正在启用"
+          }
+        }
+      }
+    },
+    "Time-Shift: Capturing" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift: Wird erfasst"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift：正在捕捉"
+          }
+        }
+      }
+    },
+    "Time-Shift: Off" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift: Aus"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift：关闭"
+          }
+        }
+      }
+    },
+    "Time-Shift: Processing" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift: Wird verarbeitet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift：正在处理"
+          }
+        }
+      }
+    },
+    "Time-Shift: Ready" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift: Bereit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift：已就绪"
+          }
+        }
+      }
+    },
+    "Time-Shift: Unavailable" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift: Nicht verfügbar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time-Shift：不可用"
+          }
+        }
+      }
+    },
+    "Transcript alternatives could not be created. Your current version is unchanged." : {
+
+    },
+    "Transcription Failed: Audio source unavailable" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transkription fehlgeschlagen: Audioquelle nicht verfügbar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "转写失败：音频源不可用"
+          }
+        }
+      }
+    },
+    "Transcript alternatives, Precise and Natural" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transkriptalternativen, Präzise und Natürlich"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "转写替代版本：精确和自然"
+          }
+        }
+      }
+    },
+    "Two transcript alternatives are ready" : {
+
+    },
+    "Type a refinement instruction" : {
+
+    },
+    "Type change" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Änderung eingeben"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输入修改"
+          }
+        }
+      }
+    },
+    "Typed change applied. Changes are selected." : {
+
+    },
+    "Typed refinement cancelled" : {
+
+    },
+    "Typed refinements" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eingegebene Verfeinerungen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文本优化"
+          }
+        }
+      }
+    },
+    "Use %@" : {
+
+    },
+    "Use %@ variant" : {
+
+    },
+    "Use Halo" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Halo verwenden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Halo"
+          }
+        }
+      }
+    },
+    "Variant %@, %@" : {
+
+    },
+    "Voice command cancelled" : {
+
+    },
+    "Waiting for the remaining alternative…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Warten auf die verbleibende Alternative…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在等待另一个替代版本…"
+          }
+        }
+      }
+    },
+    "Your instruction stays in memory only" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine Anweisung bleibt nur im Speicher"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的指令仅保留在内存中"
+          }
+        }
+      }
+    },
     "Your word count and benchmark will appear here." : {
       "comment" : "Text displayed in the momentum section when the app is loading user stats.",
       "isCommentAutoGenerated" : true,

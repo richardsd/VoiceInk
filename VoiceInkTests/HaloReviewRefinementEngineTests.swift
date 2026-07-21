@@ -644,6 +644,55 @@ struct HaloReviewRefinementEngineTests {
         #expect(harness.outcomes.counts[.refinementFailure, default: 0] == 0)
     }
 
+    @Test func reviewTeardownClearsInstructionDraftAndFrozenContext() async throws {
+        let harness = try makeHarness(refinement: EngineRefinementService(behaviors: []))
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+        #expect(harness.engine.beginHaloTypedInstruction())
+        let requestID = try #require(
+            harness.engine.haloReviewState?.voiceRefinementPhase.instructionDraft?.requestID
+        )
+        #expect(harness.engine.updateHaloInstructionDraft(
+            requestID: requestID,
+            text: "Memory-only private instruction"
+        ))
+        #expect(
+            harness.engine.haloReviewState?.session.frozenContext?.clipboardText
+                == "Frozen clipboard"
+        )
+
+        await harness.engine.cancelPendingPasteReview()
+
+        #expect(harness.engine.pendingPasteReview == nil)
+        #expect(harness.engine.haloReviewState == nil)
+        #expect(harness.engine.haloVoiceCommandConfirmation == nil)
+        #expect(harness.paste.deliveryPayloads.isEmpty)
+    }
+
+    @Test func reviewTeardownCancelsBothVariantRequestsAndDropsCandidates() async throws {
+        let refinement = EngineRefinementService(behaviors: [.suspended, .suspended])
+        let harness = try makeHarness(refinement: refinement)
+        harness.capabilities.parallelComparisonEnabled = true
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+        #expect(harness.engine.beginHaloVariantComparison())
+
+        for _ in 0..<200 {
+            if refinement.requests.count == 2 { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(refinement.requests.count == 2)
+
+        await harness.engine.cancelPendingPasteReview()
+        for _ in 0..<200 {
+            if refinement.cancellationCount == 2 { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+
+        #expect(refinement.cancellationCount == 2)
+        #expect(harness.engine.pendingPasteReview == nil)
+        #expect(harness.engine.haloReviewState == nil)
+        #expect(harness.paste.deliveryPayloads.isEmpty)
+    }
+
     @Test func mismatchRefocusRevalidatesBeforeASeparateApply() async throws {
         let mismatch = PasteReviewDestinationValidation.mismatch(
             PasteReviewDestinationMismatch(
@@ -1382,6 +1431,80 @@ struct HaloReviewRefinementEngineTests {
         #expect(harness.engine.haloReviewState?.variantComparison.provisionalCandidates.isEmpty == true)
         #expect(!harness.engine.chooseHaloVariant(.precise, comparisonID: comparisonID))
         #expect(harness.engine.haloReviewState?.revisions.count == 2)
+    }
+
+    @Test func selectedVariantAppliesExactlyOnceAndFinalizesOnlyTheWinner() async throws {
+        let refinement = EngineRefinementService(
+            behaviors: [.success("Precise candidate"), .success("Natural candidate")]
+        )
+        let harness = try makeHarness(refinement: refinement)
+        harness.capabilities.parallelComparisonEnabled = true
+        let transcription = Transcription(
+            text: "Raw words",
+            duration: 1,
+            enhancedText: "Initial version",
+            transcriptionStatus: .completed
+        )
+        harness.container.mainContext.insert(transcription)
+        try harness.container.mainContext.save()
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionID: transcription.id),
+            notifyReady: false
+        ))
+        #expect(harness.engine.beginHaloVariantComparison())
+        await waitForVariantComparison(in: harness.engine)
+
+        let comparisonID = try #require(
+            harness.engine.haloReviewState?.variantComparison.comparisonID
+        )
+        let naturalCandidate = try #require(
+            harness.engine.haloReviewState?.variantComparison.provisionalCandidates.first {
+                $0.profile == .natural
+            }
+        )
+        #expect(harness.engine.chooseHaloVariant(
+            .natural,
+            comparisonID: comparisonID
+        ))
+        let winner = try #require(harness.engine.haloReviewState?.selectedRevision)
+        #expect(winner.text == naturalCandidate.replacementText)
+        #expect(winner.payload.autoSendKey == .enter)
+        #expect(transcription.finalizedText == nil)
+
+        await harness.engine.approvePendingPasteReview()
+        await harness.engine.approvePendingPasteReview()
+
+        #expect(harness.paste.deliveryPayloads == [winner.payload])
+        #expect(transcription.finalizedText == naturalCandidate.replacementText)
+        #expect(transcription.finalizedText != "Precise candidate")
+        #expect(harness.engine.pendingPasteReview == nil)
+        #expect(harness.outcomes.counts[.apply] == 1)
+    }
+
+    @Test func elapsedDeadlineRejectsVariantWinnerBeforeTimerPublishesExpiry() async throws {
+        let refinement = EngineRefinementService(
+            behaviors: [.success("Precise candidate"), .success("Natural candidate")]
+        )
+        let harness = try makeHarness(refinement: refinement)
+        harness.capabilities.parallelComparisonEnabled = true
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+        #expect(harness.engine.beginHaloVariantComparison())
+        await waitForVariantComparison(in: harness.engine)
+
+        let state = try #require(harness.engine.haloReviewState)
+        let comparisonID = try #require(state.variantComparison.comparisonID)
+        let afterDeadline = state.expiresAt.addingTimeInterval(0.001)
+
+        #expect(!harness.engine.chooseHaloVariant(
+            .precise,
+            comparisonID: comparisonID,
+            at: afterDeadline
+        ))
+        #expect(harness.engine.haloReviewState?.isExpired == true)
+        #expect(harness.engine.haloReviewState?.revisions.count == 1)
+        #expect(harness.engine.pasteReviewSecondsRemaining == 0)
+
+        await harness.engine.cancelPendingPasteReview()
     }
 
     @Test func oneVariantFailureKeepsTheSurvivingCandidateSelectable() async throws {

@@ -1835,9 +1835,20 @@ class VoiceInkEngine: NSObject, ObservableObject {
             var state = haloReviewState,
             state.session.id == review.id,
             state.variantComparison.comparisonID == comparisonID,
+            !state.isExpired,
             state.variantComparison.pendingRequests.isEmpty,
             case .candidate(let candidate) = state.variantComparison.slotState(for: profile)
         else {
+            return false
+        }
+
+        // A settled comparison resumes the inactivity clock. Reject a deck
+        // click that arrives after the deadline but before the one-second
+        // expiry publisher fires; otherwise the click could revive review.
+        guard date < state.expiresAt else {
+            _ = HaloReviewReducer.reduce(state: &state, action: .timeout(at: date))
+            haloReviewState = state
+            pasteReviewSecondsRemaining = 0
             return false
         }
 
@@ -3431,6 +3442,21 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     // MARK: - Cancellation
+
+    /// Recorder style is presentation state, but changing it must also tear
+    /// down an in-flight Time-Shift capture. During the snapshot phase the
+    /// normal engine state may still be `.idle`, so `cancelRecording()` alone
+    /// cannot reliably reach the Time-Shift workflow.
+    func cancelTimeShiftForRecorderStyleChange() async {
+        // Close the product-pipeline gate before the first suspension point so
+        // a canceled processor cannot stage a review while audio cleanup is
+        // awaiting its serial hardware queue.
+        if recordingState == .transcribing || recordingState == .enhancing {
+            requestRecordingCancellation()
+        }
+        await timeShiftWorkflow.cancelForRecorderStyleChange()
+        await cancelRecording()
+    }
 
     func cancelRecording() async {
         haloSessionDeliveryOverride = nil

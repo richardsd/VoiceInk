@@ -44,6 +44,7 @@ struct TimeShiftWorkflowCoordinatorTests {
         #expect(request.route.provider == .groq)
         #expect(request.route.modelName == "whisper-large-v3-turbo")
         #expect(request.metrics.sampleCount == 4)
+        #expect(request.metrics.duration == 4.0 / Double(PCM16Snapshot.sampleRate))
         #expect(harness.coordinator.status == .ready)
         #expect(snapshot.isZeroized)
     }
@@ -146,6 +147,62 @@ struct TimeShiftWorkflowCoordinatorTests {
         #expect(await harness.leaseCoordinator.activeOwner == nil)
     }
 
+    @Test func recorderStyleChangeDuringSnapshotCancelsBeforeProductPipeline() async {
+        let snapshot = PCM16Snapshot(pcmData: pcmData([13, 14, 15]))
+        let source = TimeShiftWorkflowAudioSourceSpy(
+            snapshot: snapshot,
+            suspendSnapshot: true
+        )
+        let harness = makeHarness(source: source)
+        await harness.coordinator.arm()
+
+        let captureTask = Task { @MainActor in
+            await harness.coordinator.capture()
+        }
+        await source.waitUntilSnapshotSuspended()
+        #expect(harness.coordinator.status == .capturing)
+
+        await harness.coordinator.cancelForRecorderStyleChange()
+
+        #expect(harness.coordinator.status == .ready)
+        #expect(snapshot.isZeroized)
+        #expect(source.events.contains("stopClear"))
+        #expect(source.events.contains("clear"))
+        #expect(await harness.leaseCoordinator.activeOwner == nil)
+        #expect(harness.processor.requestCount == 0)
+
+        source.resumeSnapshot()
+        let outcome = await captureTask.value
+        #expect(outcome == .notArmed)
+        #expect(harness.coordinator.status == .ready)
+        #expect(harness.processor.requestCount == 0)
+    }
+
+    @Test func recorderStyleChangeDuringProcessingRejectsLateCompletion() async {
+        let snapshot = PCM16Snapshot(pcmData: pcmData([16, 17]))
+        let processor = TimeShiftWorkflowProcessorSpy(suspendProcessing: true)
+        let harness = makeHarness(snapshot: snapshot, processor: processor)
+        await harness.coordinator.arm()
+
+        let captureTask = Task { @MainActor in
+            await harness.coordinator.capture()
+        }
+        await processor.waitUntilSuspended()
+        #expect(harness.coordinator.status == .processing)
+
+        await harness.coordinator.cancelForRecorderStyleChange()
+
+        #expect(harness.coordinator.status == .ready)
+        #expect(snapshot.isZeroized)
+        #expect(await harness.leaseCoordinator.activeOwner == nil)
+
+        processor.resume()
+        let outcome = await captureTask.value
+        #expect(outcome == .failed(.cancelled))
+        #expect(harness.coordinator.status == .ready)
+        #expect(harness.processor.requestCount == 1)
+    }
+
     @Test func normalRecordingPreemptionDisarmsThroughCoordinatorState() async throws {
         let harness = makeHarness()
         await harness.coordinator.arm()
@@ -190,7 +247,8 @@ struct TimeShiftWorkflowCoordinatorTests {
     private func makeHarness(
         snapshot: PCM16Snapshot? = nil,
         routeProvider: TimeShiftRouteProviderSpy? = nil,
-        processor: TimeShiftWorkflowProcessorSpy? = nil
+        processor: TimeShiftWorkflowProcessorSpy? = nil,
+        source: TimeShiftWorkflowAudioSourceSpy? = nil
     ) -> Harness {
         let model = Self.cloudModel(
             name: "whisper-large-v3-turbo",
@@ -201,7 +259,7 @@ struct TimeShiftWorkflowCoordinatorTests {
             availableModels: [model]
         )
         let processor = processor ?? TimeShiftWorkflowProcessorSpy()
-        let source = TimeShiftWorkflowAudioSourceSpy(
+        let source = source ?? TimeShiftWorkflowAudioSourceSpy(
             snapshot: snapshot ?? PCM16Snapshot(pcmData: Self.pcmData([1, 2]))
         )
         let leaseCoordinator = AudioCaptureLeaseCoordinator()
@@ -339,9 +397,16 @@ private final class TimeShiftWorkflowAudioSourceSpy: TimeShiftAudioSourcing, @un
 
     private let lock = NSLock()
     private var eventStorage: [String] = []
+    private let suspendSnapshot: Bool
+    private var snapshotContinuation: CheckedContinuation<Void, Never>?
+    private var didSuspendContinuation: CheckedContinuation<Void, Never>?
 
-    init(snapshot: PCM16Snapshot) {
+    init(
+        snapshot: PCM16Snapshot,
+        suspendSnapshot: Bool = false
+    ) {
         self.snapshot = snapshot
+        self.suspendSnapshot = suspendSnapshot
     }
 
     var events: [String] {
@@ -360,7 +425,26 @@ private final class TimeShiftWorkflowAudioSourceSpy: TimeShiftAudioSourcing, @un
 
     func stopAndSnapshot() async -> PCM16Snapshot {
         append("snapshot")
+        if suspendSnapshot {
+            await withCheckedContinuation { continuation in
+                snapshotContinuation = continuation
+                didSuspendContinuation?.resume()
+                didSuspendContinuation = nil
+            }
+        }
         return snapshot
+    }
+
+    func waitUntilSnapshotSuspended() async {
+        guard snapshotContinuation == nil else { return }
+        await withCheckedContinuation { continuation in
+            didSuspendContinuation = continuation
+        }
+    }
+
+    func resumeSnapshot() {
+        snapshotContinuation?.resume()
+        snapshotContinuation = nil
     }
 
     func stopAndClear() async {

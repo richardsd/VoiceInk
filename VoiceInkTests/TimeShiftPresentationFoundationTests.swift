@@ -104,6 +104,12 @@ struct TimeShiftPresentationFoundationTests {
         #expect(frame.size == CGSize(width: 210, height: 42))
     }
 
+    @Test func pulseTransitionDurationRespectsReduceMotion() {
+        #expect(TimeShiftPulseTransitionPolicy.duration(0.14, reduceMotion: false) == 0.14)
+        #expect(TimeShiftPulseTransitionPolicy.duration(0.14, reduceMotion: true) == 0)
+        #expect(TimeShiftPulseTransitionPolicy.duration(-1, reduceMotion: false) == 0)
+    }
+
     @Test @MainActor func hiddenStateSchedulesCleanupAfterBeginningDismissal() {
         let scheduler = ManualTimeShiftPulseScheduler()
         let surface = SpyTimeShiftPulseSurface()
