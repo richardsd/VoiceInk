@@ -287,6 +287,10 @@ final class HaloPresentationModel: ObservableObject {
         voiceCommandConfirmation != nil
     }
 
+    var isGuidedRecoveryEnabled: Bool {
+        capabilitySnapshot.guidedRecoveryEnabled
+    }
+
     var canStartTypedRefinement: Bool {
         capabilitySnapshot.typedRefinementEnabled
             && (reviewSnapshot?.canStartTypedRefinement ?? false)

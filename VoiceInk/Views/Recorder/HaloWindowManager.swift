@@ -32,7 +32,7 @@ enum HaloPanelMetrics {
     static let liveTranscript = CGSize(width: 360, height: 124)
     static let enhancing = CGSize(width: 320, height: 72)
     static let review = CGSize(width: 500, height: 380)
-    static let focusRecovery = CGSize(width: 380, height: 76)
+    static let focusRecovery = CGSize(width: 460, height: 82)
     static let confirmation = CGSize(width: 132, height: 44)
     static let visualEffectInsets = VisualEffectInsets(
         top: 8,

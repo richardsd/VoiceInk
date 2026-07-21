@@ -301,6 +301,23 @@ private final class EngineOutcomeRecorder: HaloOutcomeRecording {
 }
 
 @MainActor
+private final class EngineDestinationRecoveryService: HaloDestinationRecoveryServicing {
+    private(set) var destinations: [PasteReviewDestinationSnapshot] = []
+    var outcome: HaloDestinationRecoveryOutcome
+
+    init(outcome: HaloDestinationRecoveryOutcome = .activated) {
+        self.outcome = outcome
+    }
+
+    func activateDestinationApplication(
+        for destination: PasteReviewDestinationSnapshot
+    ) -> HaloDestinationRecoveryOutcome {
+        destinations.append(destination)
+        return outcome
+    }
+}
+
+@MainActor
 private final class EngineHaloPresenter: RecorderPanelPresenting, PasteReviewRecoveryPresenting {
     var isRecorderPanelVisible = true
     var isHaloPanelActive = true
@@ -672,6 +689,81 @@ struct HaloReviewRefinementEngineTests {
         #expect(harness.paste.deliveryPayloads.count == 1)
         #expect(harness.engine.pendingPasteReview == nil)
         #expect(harness.outcomes.counts[.apply] == 1)
+    }
+
+    @Test func guidedRecoveryActivatesOnlyCapturedAppAndStillRequiresSeparateApply() async throws {
+        let mismatch = PasteReviewDestinationValidation.mismatch(
+            PasteReviewDestinationMismatch(
+                expectedApplicationName: "Destination",
+                currentApplicationName: "Other",
+                reason: .processChanged
+            )
+        )
+        let destination = SequencedEngineDestinationService([
+            mismatch,
+            .stableElementMatch,
+            .stableElementMatch,
+        ])
+        let recovery = EngineDestinationRecoveryService()
+        let harness = try makeHarness(
+            refinement: EngineRefinementService(behaviors: []),
+            destinationService: destination,
+            destinationRecoveryService: recovery
+        )
+        let captured = destination.frontmostApplicationSnapshot()
+        #expect(harness.engine.stagePasteReview(
+            makeReview(destination: captured),
+            notifyReady: false
+        ))
+
+        await harness.engine.approvePendingPasteReview()
+        #expect(harness.engine.pasteReviewFeedback?.allowsRefocus == true)
+        #expect(harness.engine.beginPasteReviewFocusRecovery())
+        #expect(recovery.destinations == [captured])
+
+        for _ in 0..<100 {
+            if !harness.engine.isPasteReviewRefocusing { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(!harness.engine.isPasteReviewRefocusing)
+        #expect(harness.paste.deliveryPayloads.isEmpty)
+
+        await harness.engine.approvePendingPasteReview()
+        #expect(harness.paste.deliveryPayloads.count == 1)
+    }
+
+    @Test func disablingGuidedRecoveryPreservesManualContinueWithoutActivation() async throws {
+        let mismatch = PasteReviewDestinationValidation.mismatch(
+            PasteReviewDestinationMismatch(
+                expectedApplicationName: "Destination",
+                currentApplicationName: "Other",
+                reason: .processChanged
+            )
+        )
+        let destination = SequencedEngineDestinationService([
+            mismatch,
+            .stableElementMatch,
+        ])
+        let recovery = EngineDestinationRecoveryService()
+        let harness = try makeHarness(
+            refinement: EngineRefinementService(behaviors: []),
+            destinationService: destination,
+            destinationRecoveryService: recovery
+        )
+        harness.capabilities.guidedRecoveryEnabled = false
+        #expect(harness.engine.stagePasteReview(
+            makeReview(destination: destination.frontmostApplicationSnapshot()),
+            notifyReady: false
+        ))
+
+        await harness.engine.approvePendingPasteReview()
+        #expect(harness.engine.beginPasteReviewFocusRecovery())
+        #expect(recovery.destinations.isEmpty)
+        #expect(harness.engine.isPasteReviewRefocusing)
+
+        await harness.engine.approvePendingPasteReview()
+        #expect(!harness.engine.isPasteReviewRefocusing)
+        #expect(harness.paste.deliveryPayloads.isEmpty)
     }
 
     @Test func copyAndExpiryRecordIndependentOutcomes() async throws {
@@ -1251,6 +1343,7 @@ struct HaloReviewRefinementEngineTests {
     private func makeHarness(
         refinement: EngineRefinementService?,
         destinationService: (any PasteReviewDestinationServicing)? = nil,
+        destinationRecoveryService: (any HaloDestinationRecoveryServicing)? = nil,
         voiceCapture: EngineVoiceInstructionCaptureService? = nil
     ) throws -> Harness {
         let schema = Schema([
@@ -1287,6 +1380,7 @@ struct HaloReviewRefinementEngineTests {
             enhancementService: nil,
             pasteDeliveryService: paste,
             pasteReviewDestinationService: destinationService ?? EngineDestinationService(),
+            haloDestinationRecoveryService: destinationRecoveryService,
             haloRefinementService: refinement,
             haloVoiceInstructionCaptureService: resolvedVoiceCapture,
             haloOutcomeRecorder: outcomes,

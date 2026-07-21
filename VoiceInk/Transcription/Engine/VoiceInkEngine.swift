@@ -145,6 +145,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     let assistantChat: AssistantChatService?
     private let pasteDeliveryService: any PasteDeliveryServicing
     private let pasteReviewDestinationService: any PasteReviewDestinationServicing
+    private let haloDestinationRecoveryService: any HaloDestinationRecoveryServicing
     private let haloRefinementService: (any HaloRefinementServicing)?
     private let haloVoiceInstructionCaptureService: any HaloVoiceInstructionCaptureServicing
     private let haloOutcomeRecorder: any HaloOutcomeRecording
@@ -160,6 +161,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         enhancementService: AIEnhancementService? = nil,
         pasteDeliveryService: (any PasteDeliveryServicing)? = nil,
         pasteReviewDestinationService: (any PasteReviewDestinationServicing)? = nil,
+        haloDestinationRecoveryService: (any HaloDestinationRecoveryServicing)? = nil,
         haloRefinementService: (any HaloRefinementServicing)? = nil,
         haloVoiceInstructionCaptureService: (any HaloVoiceInstructionCaptureServicing)? = nil,
         haloOutcomeRecorder: (any HaloOutcomeRecording)? = nil,
@@ -191,6 +193,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
         let resolvedPasteDeliveryService = pasteDeliveryService ?? PasteDeliveryService()
         self.pasteDeliveryService = resolvedPasteDeliveryService
         self.pasteReviewDestinationService = pasteReviewDestinationService ?? PasteReviewDestinationService()
+        self.haloDestinationRecoveryService = haloDestinationRecoveryService
+            ?? HaloDestinationRecoveryService()
         self.haloRefinementService = haloRefinementService
             ?? enhancementService.map(HaloRefinementService.init(enhancementService:))
         self.haloVoiceInstructionCaptureService = haloVoiceInstructionCaptureService
@@ -1097,7 +1101,57 @@ class VoiceInkEngine: NSObject, ObservableObject {
         resetPasteReviewInactivity()
         recoveryPresenter.beginPasteReviewFocusRecovery()
         announcePasteReviewFocusRecovery()
+
+        if haloCapabilitySnapshot.guidedRecoveryEnabled,
+            let destination = review.destination,
+            haloDestinationRecoveryService.activateDestinationApplication(
+                for: destination
+            ) == .activated
+        {
+            scheduleGuidedDestinationReadinessCheck(
+                reviewID: review.id,
+                destination: destination
+            )
+        }
         return true
+    }
+
+    private func scheduleGuidedDestinationReadinessCheck(
+        reviewID: UUID,
+        destination: PasteReviewDestinationSnapshot
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(180))
+            guard self.isPasteReviewRefocusing,
+                self.pendingPasteReview?.id == reviewID,
+                self.pasteReviewResolutionGate.permitsNonDeliveryAction(for: reviewID)
+            else {
+                return
+            }
+
+            let validation = await self.pasteReviewDestinationService.validate(destination)
+            guard self.isPasteReviewRefocusing,
+                self.pendingPasteReview?.id == reviewID,
+                self.pasteReviewResolutionGate.permitsNonDeliveryAction(for: reviewID),
+                validation.permitsDelivery,
+                let recoveryPresenter = self.recorderUIManager
+                    as? any PasteReviewRecoveryPresenting
+            else {
+                // Application activation succeeded, but VoiceInk cannot prove
+                // the original field is focused. Keep the collapsed manual
+                // Continue/Copy/Cancel recovery surface available.
+                return
+            }
+
+            self.isPasteReviewRefocusing = false
+            self.pasteReviewFeedback = nil
+            self.resetPasteReviewInactivity()
+            recoveryPresenter.endPasteReviewFocusRecovery()
+            self.announceHaloVoiceRefinement(
+                String(localized: "Original field is ready. Choose Apply to paste.")
+            )
+        }
     }
 
     private func completePasteReviewFocusRecovery(review: PendingPasteReview) async {

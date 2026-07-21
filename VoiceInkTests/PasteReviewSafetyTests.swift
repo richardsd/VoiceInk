@@ -105,6 +105,31 @@ struct PasteReviewSafetyTests {
         #expect(mismatch.reason == .processChanged)
     }
 
+    @Test func reusedProcessIdentifierWithDifferentBundleBlocksDelivery() {
+        let expected = PasteReviewDestinationSnapshot(
+            processID: 41,
+            applicationName: "TextEdit",
+            bundleIdentifier: "com.apple.TextEdit",
+            focusedElementIdentity: nil
+        )
+        let current = PasteReviewDestinationSnapshot(
+            processID: 41,
+            applicationName: "Unexpected",
+            bundleIdentifier: "com.example.Unexpected",
+            focusedElementIdentity: nil
+        )
+
+        let validation = PasteReviewDestinationMatcher.validate(
+            expected: expected,
+            current: current
+        )
+        guard case .mismatch(let mismatch) = validation else {
+            Issue.record("A reused PID with another bundle must block delivery")
+            return
+        }
+        #expect(mismatch.reason == .applicationIdentityChanged)
+    }
+
     @Test func unavailableOriginalPIDPreservesAccessibilityDeniedCompatibility() {
         let validation = PasteReviewDestinationMatcher.validate(
             expected: destination(pid: nil, app: nil, element: nil),

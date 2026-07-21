@@ -393,6 +393,14 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                     isDisabled: false,
                     action: onCancel
                 )
+                HaloReviewActionButton(
+                    key: nil,
+                    title: String(localized: "Copy"),
+                    systemImage: "doc.on.doc",
+                    emphasized: false,
+                    isDisabled: false,
+                    action: onCopy
+                )
             }
         }
         .accessibilityLabel(
@@ -529,7 +537,9 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                         title: showsRetry
                             ? String(localized: "Retry")
                             : (showsRefocus
-                                ? String(localized: "Refocus")
+                                ? (presentation.isGuidedRecoveryEnabled
+                                    ? String(localized: "Return to original field")
+                                    : String(localized: "Refocus"))
                                 : String(localized: "Apply")),
                         systemImage: showsRefocus ? "scope" : nil,
                         emphasized: true,

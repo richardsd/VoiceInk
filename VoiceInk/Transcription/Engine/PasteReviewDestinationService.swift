@@ -5,6 +5,7 @@ typealias PasteReviewDestinationSnapshot = HaloFocusedDestinationSnapshot
 
 enum PasteReviewDestinationMismatchReason: Equatable, Sendable {
     case processChanged
+    case applicationIdentityChanged
     case stableElementChanged
     case transientElementChanged
     case elementIdentityUnavailable
@@ -75,6 +76,18 @@ enum PasteReviewDestinationMatcher {
             )
         }
 
+        if let expectedBundleIdentifier = normalizedBundleIdentifier(expected.bundleIdentifier) {
+            guard normalizedBundleIdentifier(current.bundleIdentifier) == expectedBundleIdentifier else {
+                return .mismatch(
+                    PasteReviewDestinationMismatch(
+                        expectedApplicationName: expected.applicationName,
+                        currentApplicationName: current.applicationName,
+                        reason: .applicationIdentityChanged
+                    )
+                )
+            }
+        }
+
         if let expectedStableElement = expected.focusedElementStableIdentity,
             let currentStableElement = current.focusedElementStableIdentity
         {
@@ -123,6 +136,15 @@ enum PasteReviewDestinationMatcher {
         }
 
         return .processMatch
+    }
+
+    private static func normalizedBundleIdentifier(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty
+        else {
+            return nil
+        }
+        return value.lowercased()
     }
 }
 

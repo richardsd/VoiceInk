@@ -28,7 +28,7 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 | H5-02 | **Done** | H5-01 | Unified instruction draft, reducer, privacy lifecycle, and free-form prompt boundary |
 | H5-03 | **Done** | H5-02 | Voice confirmation/correction, typed refinement, and Settings controls |
 | H5-04 | **Done** | H5-03 | Exact local `Halo …` commands and consequential-command confirmation |
-| H5-05 | **Planned** | H5-01 | Guided application return with manual recovery fallback |
+| H5-05 | **Done** | H5-01 | Guided application return with manual recovery fallback |
 | H5-06 | **Planned** | H5-05 | Identity-safe continuous caret tracking and position setting |
 | H5-07 | **Planned** | H5-02 | Another Take through the frozen route and immutable revision pipeline |
 | H5-08 | **Planned** | H5-01 | PCM snapshot, secure rolling buffer, CoreAudio memory sink, and WAV encoder |
@@ -79,10 +79,10 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 
 ### H5-05 — Guided destination return
 
-- [ ] A user-triggered action verifies PID and bundle identity before activating the original application.
-- [ ] Stable element identity is revalidated; uncertain fields require the user to click the field and Continue.
-- [ ] Recovery never pastes, auto-sends, or guesses a destination. Apply remains separate.
-- [ ] Disabling guided recovery preserves manual refocus, Continue, Copy, and Cancel.
+- [x] A user-triggered action verifies PID and bundle identity before activating the original application.
+- [x] Stable element identity is revalidated; uncertain fields require the user to click the field and Continue.
+- [x] Recovery never pastes, auto-sends, or guesses a destination. Apply remains separate.
+- [x] Disabling guided recovery preserves manual refocus, Continue, Copy, and Cancel.
 
 ### H5-06 — Continuous caret presence
 
@@ -156,7 +156,8 @@ Stories use focused `H5-XX …` commits in dependency order. H5-05, H5-07, and H
 - 2026-07-20: `ed573cb6` completed H5-01; focused capability/default/backup tests passed (6 tests), and the Debug build succeeded using `/tmp/VoiceInk-H5-01`.
 - 2026-07-21: `64b23a13` completed H5-02 with the unified memory-only instruction draft, reducer, bounds, prompt escaping, and frozen-route contract.
 - 2026-07-21: `d26cdb69` completed H5-03; focused instruction, reducer, refinement-service, keyboard, and presentation suites passed serially with code signing disabled in `/tmp/VoiceInk-H5-refine-final`; the same run compiled the full application and test targets.
-- 2026-07-21: H5-04 exact-command parser, review engine, confirmation UI, presentation, and keyboard suites passed serially in `/tmp/VoiceInk-H5-refine-final`; exact commands use no model call and near matches remain inert.
+- 2026-07-21: `66559c73` completed H5-04; exact-command parser, review engine, confirmation UI, presentation, and keyboard suites passed serially in `/tmp/VoiceInk-H5-refine-final`; exact commands use no model call and near matches remain inert.
+- 2026-07-21: H5-05 recovery, destination-matcher, review-engine, and compact-layout suites passed serially in `/tmp/VoiceInk-H5-refine-final`; recovery validates PID, bundle, and field identity while keeping paste as a separate action.
 
 ## Deferred beyond Halo 5.0
 
