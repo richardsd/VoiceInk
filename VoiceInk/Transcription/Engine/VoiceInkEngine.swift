@@ -107,6 +107,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         peakPower: 0
     )
     @Published private(set) var haloVoiceInstructionPartialTranscript = ""
+    @Published private(set) var haloVoiceCommandConfirmation: HaloVoiceCommandConfirmation?
     @Published private(set) var haloCapabilitySnapshot: HaloCapabilitySnapshot
     var currentSession: TranscriptionSession?
     private var currentSessionTranscriptionConfiguration: TranscriptionRuntimeConfiguration?
@@ -752,8 +753,6 @@ class VoiceInkEngine: NSObject, ObservableObject {
             clearActiveRecordingContext()
             if pendingPasteReview?.transcriptionID == transcriptionID {
                 isHaloVoiceRefinementReady = haloReviewState?.session.transcriptionConfiguration != nil
-                    && haloReviewState?.session.enhancementConfiguration != nil
-                    && haloReviewState?.session.refinementInputSnapshot != nil
             }
         }
         canceledPipelineTranscriptionIDs.remove(transcriptionID)
@@ -838,8 +837,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         haloReviewState = makeHaloReviewState(from: review)
         isHaloVoiceRefinementReady = activePipelineTranscriptionID == nil
             && review.transcriptionConfiguration != nil
-            && review.enhancementConfiguration != nil
-            && review.refinementInputSnapshot != nil
+        haloVoiceCommandConfirmation = nil
         resetHaloVoiceInstructionPresentation()
         pasteReviewFeedback = feedback
         haloOutcomeRecorder.record(.reviewShown)
@@ -958,6 +956,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     func approvePendingPasteReview() async {
+        if haloVoiceCommandConfirmation != nil {
+            _ = await confirmHaloVoiceCommandIfActive()
+            return
+        }
+
         guard let review = pendingPasteReview,
             pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
             let reviewState = haloReviewState,
@@ -1302,20 +1305,18 @@ class VoiceInkEngine: NSObject, ObservableObject {
     /// recording pipeline or creating another History item.
     @discardableResult
     func beginHaloVoiceRefinement(at date: Date = Date()) -> Bool {
+        let canCaptureCommands = haloCapabilitySnapshot.voiceCommandsEnabled
+        let canCaptureRefinement = haloCapabilitySnapshot.spokenRefinementEnabled
         guard recordingState == .reviewing,
             isHaloVoiceRefinementReady,
-            haloCapabilitySnapshot.spokenRefinementEnabled
-                || haloCapabilitySnapshot.voiceCommandsEnabled,
+            canCaptureRefinement || canCaptureCommands,
             !isPasteReviewRefocusing,
             let review = pendingPasteReview,
             pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
-            haloRefinementService != nil,
             var state = haloReviewState,
             state.session.id == review.id,
             !state.isExpired,
             let transcriptionConfiguration = state.session.transcriptionConfiguration,
-            state.session.enhancementConfiguration != nil,
-            state.session.refinementInputSnapshot != nil,
             state.selectedRevision != nil,
             activeHaloVoiceRefinementRequestID == nil
         else {
@@ -1335,7 +1336,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         let requestID = UUID()
         let effect = HaloReviewReducer.reduce(
             state: &state,
-            action: .beginVoiceRefinement(requestID: requestID, at: date)
+            action: canCaptureCommands
+                ? .beginVoiceCommandCapture(requestID: requestID, at: date)
+                : .beginVoiceRefinement(requestID: requestID, at: date)
         )
         guard case .voiceRefinementStarted = effect else {
             haloReviewState = state
@@ -1344,6 +1347,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
         activeHaloVoiceRefinementRequestID = requestID
         pendingHaloVoiceStopRequestID = nil
+        haloVoiceCommandConfirmation = nil
         haloReviewState = state
         pasteReviewFeedback = nil
         pasteReviewSecondsRemaining = nil
@@ -1385,6 +1389,43 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
             switch captureResult.outcome {
             case .instruction(let instructionText):
+                if self.haloCapabilitySnapshot.voiceCommandsEnabled,
+                    let command = HaloVoiceCommandParser.parse(instructionText)
+                {
+                    self.routeRecognizedHaloVoiceCommand(
+                        command,
+                        requestID: requestID,
+                        reviewID: review.id,
+                        at: Date()
+                    )
+                    return
+                }
+
+                guard self.haloCapabilitySnapshot.spokenRefinementEnabled else {
+                    self.finishHaloVoiceCaptureWithoutRefinement(
+                        requestID: requestID,
+                        reviewID: review.id,
+                        notice: String(localized: "Command not recognized"),
+                        at: Date()
+                    )
+                    return
+                }
+
+                guard self.haloRefinementService != nil,
+                    self.haloReviewState?.session.enhancementConfiguration != nil,
+                    self.haloReviewState?.session.refinementInputSnapshot != nil,
+                    (self.haloReviewState?.revisions.count ?? HaloReviewState.maximumRevisionCount)
+                        < HaloReviewState.maximumRevisionCount
+                else {
+                    self.finishHaloVoiceCaptureWithoutRefinement(
+                        requestID: requestID,
+                        reviewID: review.id,
+                        notice: String(localized: "Spoken refinement is unavailable for this review."),
+                        at: Date()
+                    )
+                    return
+                }
+
                 let directive: HaloFreeformRefinementDirective
                 do {
                     directive = try HaloFreeformRefinementDirective(
@@ -1838,6 +1879,129 @@ class VoiceInkEngine: NSObject, ObservableObject {
         announceHaloVoiceRefinement(
             String(localized: "Spoken change ready for confirmation")
         )
+        return true
+    }
+
+    private func finishHaloVoiceCaptureWithoutRefinement(
+        requestID: UUID,
+        reviewID: UUID,
+        notice: String,
+        at date: Date
+    ) {
+        guard activeHaloVoiceRefinementRequestID == requestID,
+            pendingPasteReview?.id == reviewID,
+            var state = haloReviewState,
+            state.session.id == reviewID
+        else {
+            return
+        }
+
+        if case .listening = state.voiceRefinementPhase {
+            _ = HaloReviewReducer.reduce(
+                state: &state,
+                action: .finishVoiceCapture(requestID: requestID, at: date)
+            )
+        }
+        let effect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .completeVoiceCommandCapture(requestID: requestID, at: date)
+        )
+        guard effect != .ignored else { return }
+
+        state.setNotice(.instructionValidation(notice), at: date)
+        clearHaloVoiceRefinementTaskHandle(ifMatching: requestID)
+        resetHaloVoiceInstructionPresentation()
+        haloReviewState = state
+        recorderUIManager?.refreshPasteReviewKeyboardHandling()
+        schedulePasteReviewInactivity(for: reviewID)
+        announceHaloVoiceRefinement(notice)
+    }
+
+    private func routeRecognizedHaloVoiceCommand(
+        _ command: HaloVoiceCommand,
+        requestID: UUID,
+        reviewID: UUID,
+        at date: Date
+    ) {
+        guard activeHaloVoiceRefinementRequestID == requestID,
+            pendingPasteReview?.id == reviewID,
+            var state = haloReviewState,
+            state.session.id == reviewID
+        else {
+            return
+        }
+
+        if case .listening = state.voiceRefinementPhase {
+            _ = HaloReviewReducer.reduce(
+                state: &state,
+                action: .finishVoiceCapture(requestID: requestID, at: date)
+            )
+        }
+        let effect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .completeVoiceCommandCapture(requestID: requestID, at: date)
+        )
+        guard effect != .ignored else { return }
+
+        clearHaloVoiceRefinementTaskHandle(ifMatching: requestID)
+        resetHaloVoiceInstructionPresentation()
+        haloReviewState = state
+        recorderUIManager?.refreshPasteReviewKeyboardHandling()
+        schedulePasteReviewInactivity(for: reviewID)
+
+        switch command {
+        case .apply, .cancel:
+            haloVoiceCommandConfirmation = HaloVoiceCommandConfirmation(
+                reviewID: reviewID,
+                command: command
+            )
+            announceHaloVoiceRefinement(
+                command == .apply
+                    ? String(localized: "Confirm Apply")
+                    : String(localized: "Confirm Cancel review")
+            )
+        case .copy:
+            copyPendingPasteReview()
+        case .showLens(let lens):
+            _ = selectHaloReviewLens(lens, at: date)
+        case .previousRevision:
+            _ = moveHaloReviewRevision(by: -1, at: date)
+        case .nextRevision:
+            _ = moveHaloReviewRevision(by: 1, at: date)
+        }
+    }
+
+    @discardableResult
+    func cancelHaloVoiceCommandConfirmationIfActive(at date: Date = Date()) -> Bool {
+        guard let confirmation = haloVoiceCommandConfirmation,
+            pendingPasteReview?.id == confirmation.reviewID
+        else {
+            return false
+        }
+        haloVoiceCommandConfirmation = nil
+        resetPasteReviewInactivity(at: date)
+        announceHaloVoiceRefinement(String(localized: "Voice command cancelled"))
+        return true
+    }
+
+    @discardableResult
+    func confirmHaloVoiceCommandIfActive() async -> Bool {
+        guard let confirmation = haloVoiceCommandConfirmation,
+            pendingPasteReview?.id == confirmation.reviewID,
+            pasteReviewResolutionGate.permitsNonDeliveryAction(for: confirmation.reviewID)
+        else {
+            return false
+        }
+
+        haloVoiceCommandConfirmation = nil
+        switch confirmation.command {
+        case .apply:
+            await approvePendingPasteReview()
+        case .cancel:
+            await cancelPendingPasteReview()
+        case .copy, .showLens, .previousRevision, .nextRevision:
+            return false
+        }
         return true
     }
 
@@ -2341,6 +2505,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private func clearPendingPasteReviewPresentation() {
         stopActiveHaloRefinementTask()
         stopActiveHaloVoiceRefinementTask()
+        haloVoiceCommandConfirmation = nil
         isPasteReviewRefocusing = false
         isHaloVoiceRefinementReady = false
         resetHaloVoiceInstructionPresentation()
@@ -2713,16 +2878,30 @@ class VoiceInkEngine: NSObject, ObservableObject {
         let updated = haloCapabilityStore.snapshot
         haloCapabilitySnapshot = updated
 
-        guard previous != updated,
-            let source = haloReviewState?.voiceRefinementPhase.activeRequest?.source
-        else {
+        guard previous != updated else {
             return
         }
+
+        if !updated.voiceCommandsEnabled {
+            haloVoiceCommandConfirmation = nil
+        }
+
+        guard let phase = haloReviewState?.voiceRefinementPhase,
+            let source = phase.activeRequest?.source
+        else { return }
 
         let sourceRemainsEnabled: Bool
         switch source {
         case .voice:
-            sourceRemainsEnabled = updated.spokenRefinementEnabled
+            switch phase {
+            case .listening, .transcribing:
+                sourceRemainsEnabled = updated.spokenRefinementEnabled
+                    || updated.voiceCommandsEnabled
+            case .awaitingConfirmation, .editingInstruction, .refining:
+                sourceRemainsEnabled = updated.spokenRefinementEnabled
+            case .idle, .failed:
+                sourceRemainsEnabled = true
+            }
         case .typed:
             sourceRemainsEnabled = updated.typedRefinementEnabled
         }

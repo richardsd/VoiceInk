@@ -27,7 +27,7 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 | H5-01 | **Done** | H5-00 | Capability store, defaults, backup v3, Settings tabs, and guided Halo overview |
 | H5-02 | **Done** | H5-01 | Unified instruction draft, reducer, privacy lifecycle, and free-form prompt boundary |
 | H5-03 | **Done** | H5-02 | Voice confirmation/correction, typed refinement, and Settings controls |
-| H5-04 | **Planned** | H5-03 | Exact local `Halo …` commands and consequential-command confirmation |
+| H5-04 | **Done** | H5-03 | Exact local `Halo …` commands and consequential-command confirmation |
 | H5-05 | **Planned** | H5-01 | Guided application return with manual recovery fallback |
 | H5-06 | **Planned** | H5-05 | Identity-safe continuous caret tracking and position setting |
 | H5-07 | **Planned** | H5-02 | Another Take through the frozen route and immutable revision pipeline |
@@ -72,10 +72,10 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 
 ### H5-04 — Exact local voice commands
 
-- [ ] Final recognized exact commands support Apply, Copy, Cancel, lens selection, and revision navigation without a model call.
-- [ ] Partial or near-match speech never executes; unmatched speech becomes a draft only when spoken refinement is enabled.
-- [ ] Apply and Cancel require visible confirmation and retain destination/exactly-once safety.
-- [ ] Disabling commands removes command execution without disabling spoken refinement.
+- [x] Final recognized exact commands support Apply, Copy, Cancel, lens selection, and revision navigation without a model call.
+- [x] Partial or near-match speech never executes; unmatched speech becomes a draft only when spoken refinement is enabled.
+- [x] Apply and Cancel require visible confirmation and retain destination/exactly-once safety.
+- [x] Disabling commands removes command execution without disabling spoken refinement.
 
 ### H5-05 — Guided destination return
 
@@ -155,7 +155,8 @@ Stories use focused `H5-XX …` commits in dependency order. H5-05, H5-07, and H
 - 2026-07-20: `f6e820a9` materialized H5-00 and established this status board.
 - 2026-07-20: `ed573cb6` completed H5-01; focused capability/default/backup tests passed (6 tests), and the Debug build succeeded using `/tmp/VoiceInk-H5-01`.
 - 2026-07-21: `64b23a13` completed H5-02 with the unified memory-only instruction draft, reducer, bounds, prompt escaping, and frozen-route contract.
-- 2026-07-21: H5-03 focused instruction, reducer, refinement-service, keyboard, and presentation suites passed serially with code signing disabled in `/tmp/VoiceInk-H5-refine-final`; the same run compiled the full application and test targets.
+- 2026-07-21: `d26cdb69` completed H5-03; focused instruction, reducer, refinement-service, keyboard, and presentation suites passed serially with code signing disabled in `/tmp/VoiceInk-H5-refine-final`; the same run compiled the full application and test targets.
+- 2026-07-21: H5-04 exact-command parser, review engine, confirmation UI, presentation, and keyboard suites passed serially in `/tmp/VoiceInk-H5-refine-final`; exact commands use no model call and near matches remain inert.
 
 ## Deferred beyond Halo 5.0
 

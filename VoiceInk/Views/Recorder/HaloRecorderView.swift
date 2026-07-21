@@ -70,6 +70,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     let onUpdateInstruction: (UUID, String) -> Void
     let onSubmitInstruction: () -> Void
     let onCancelInstruction: () -> Void
+    let onConfirmVoiceCommand: () -> Void
+    let onCancelVoiceCommand: () -> Void
     let onReviewInteractiveRegionsChange: ([HaloInteractionRegion]) -> Void
 
     private let coral = Color(red: 0.96, green: 0.34, blue: 0.29)
@@ -98,6 +100,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         onUpdateInstruction: @escaping (UUID, String) -> Void = { _, _ in },
         onSubmitInstruction: @escaping () -> Void = {},
         onCancelInstruction: @escaping () -> Void = {},
+        onConfirmVoiceCommand: @escaping () -> Void = {},
+        onCancelVoiceCommand: @escaping () -> Void = {},
         onReviewInteractiveRegionsChange: @escaping ([HaloInteractionRegion]) -> Void
     ) {
         self.stateProvider = stateProvider
@@ -122,6 +126,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         self.onUpdateInstruction = onUpdateInstruction
         self.onSubmitInstruction = onSubmitInstruction
         self.onCancelInstruction = onCancelInstruction
+        self.onConfirmVoiceCommand = onConfirmVoiceCommand
+        self.onCancelVoiceCommand = onCancelVoiceCommand
         self.onReviewInteractiveRegionsChange = onReviewInteractiveRegionsChange
     }
 
@@ -696,7 +702,9 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
 
     @ViewBuilder
     private var refinementControls: some View {
-        if presentation.isAwaitingInstructionConfirmation {
+        if presentation.isVoiceCommandConfirmationActive {
+            voiceCommandConfirmationCard
+        } else if presentation.isAwaitingInstructionConfirmation {
             instructionConfirmationCard
         } else {
             HStack(spacing: 6) {
@@ -736,6 +744,45 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             )
             }
             .frame(height: HaloRefinementOrbitPolicy.rowHeight)
+        }
+    }
+
+    @ViewBuilder
+    private var voiceCommandConfirmationCard: some View {
+        if let confirmation = presentation.voiceCommandConfirmation {
+            VStack(alignment: .leading, spacing: 7) {
+                Label(confirmation.title, systemImage: "waveform.badge.checkmark")
+                    .font(HaloTypography.warning)
+                    .foregroundStyle(Color.white.opacity(0.92))
+
+                HStack(spacing: 6) {
+                    HaloReviewActionButton(
+                        key: "↩",
+                        title: confirmation.confirmationLabel,
+                        systemImage: confirmation.command == .apply
+                            ? "arrow.turn.down.left"
+                            : "xmark",
+                        emphasized: true,
+                        isDisabled: false,
+                        action: onConfirmVoiceCommand
+                    )
+                    HaloReviewActionButton(
+                        key: "Esc",
+                        title: String(localized: "Keep reviewing"),
+                        systemImage: nil,
+                        emphasized: false,
+                        isDisabled: false,
+                        action: onCancelVoiceCommand
+                    )
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(8)
+            .background(Color.white.opacity(0.045))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .haloReviewInteractiveRegion()
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(Text("Confirm the recognized Halo command"))
         }
     }
 
@@ -979,6 +1026,9 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     }
 
     private var reviewHeaderTitle: String {
+        if presentation.isVoiceCommandConfirmationActive {
+            return String(localized: "Confirm voice command")
+        }
         switch presentation.voiceRefinementPhase {
         case .listening:
             return String(localized: "Listening for a change")
@@ -996,6 +1046,9 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     }
 
     private var reviewHeaderSystemImage: String {
+        if presentation.isVoiceCommandConfirmationActive {
+            return "waveform.badge.checkmark"
+        }
         switch presentation.voiceRefinementPhase {
         case .listening:
             return "waveform"
@@ -1076,6 +1129,9 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             }
             if presentation.isEditingManually {
                 return String(localized: "Editing the final transcript")
+            }
+            if presentation.isVoiceCommandConfirmationActive {
+                return String(localized: "Confirm the recognized Halo command")
             }
             switch presentation.voiceRefinementPhase {
             case .listening:

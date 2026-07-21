@@ -1053,6 +1053,7 @@ struct HaloReviewRefinementEngineTests {
             refinement: EngineRefinementService(behaviors: []),
             voiceCapture: voiceCapture
         )
+        harness.capabilities.voiceCommandsEnabled = false
         #expect(harness.engine.stagePasteReview(
             makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
             notifyReady: false
@@ -1069,6 +1070,132 @@ struct HaloReviewRefinementEngineTests {
         #expect(voiceCapture.requestIDs.isEmpty)
         #expect(harness.engine.haloReviewState?.notice == .revisionLimitReached)
         #expect(harness.outcomes.counts[.voiceRefinementStarted, default: 0] == 0)
+    }
+
+    @Test func exactLocalCopyCommandNeedsNoRefinementRouteOrModelCall() async throws {
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [.result(.instruction("Halo copy"))]
+        )
+        let harness = try makeHarness(
+            refinement: nil,
+            voiceCapture: voiceCapture
+        )
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
+            notifyReady: false
+        ))
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForVoiceRefinement(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 1
+        )
+
+        #expect(harness.paste.copyCount == 1)
+        #expect(harness.paste.deliveryPayloads.isEmpty)
+        #expect(harness.engine.pendingPasteReview != nil)
+        #expect(harness.engine.haloVoiceCommandConfirmation == nil)
+    }
+
+    @Test func applyAndCancelVoiceCommandsRequireVisibleConfirmation() async throws {
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [
+                .result(.instruction("Halo apply")),
+                .result(.instruction("Halo cancel")),
+            ]
+        )
+        let harness = try makeHarness(
+            refinement: nil,
+            voiceCapture: voiceCapture
+        )
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
+            notifyReady: false
+        ))
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForVoiceRefinement(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 1
+        )
+        #expect(harness.engine.haloVoiceCommandConfirmation?.command == .apply)
+        #expect(harness.paste.deliveryPayloads.isEmpty)
+        #expect(harness.engine.cancelHaloVoiceCommandConfirmationIfActive())
+        #expect(harness.engine.pendingPasteReview != nil)
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForVoiceRefinement(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 2
+        )
+        #expect(harness.engine.haloVoiceCommandConfirmation?.command == .cancel)
+        let didConfirmCancel = await harness.engine.confirmHaloVoiceCommandIfActive()
+        #expect(didConfirmCancel)
+        #expect(harness.engine.pendingPasteReview == nil)
+        #expect(harness.paste.deliveryPayloads.isEmpty)
+    }
+
+    @Test func unmatchedCommandWithoutSpokenRefinementMakesNoModelRequest() async throws {
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [.result(.instruction("Halo apply now"))]
+        )
+        let refinement = EngineRefinementService(behaviors: [.success("Unused")])
+        let harness = try makeHarness(
+            refinement: refinement,
+            voiceCapture: voiceCapture
+        )
+        harness.capabilities.spokenRefinementEnabled = false
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
+            notifyReady: false
+        ))
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForVoiceRefinement(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 1
+        )
+
+        #expect(refinement.requests.isEmpty)
+        #expect(
+            harness.engine.haloReviewState?.notice
+                == .instructionValidation(String(localized: "Command not recognized"))
+        )
+        #expect(harness.engine.pendingPasteReview != nil)
+    }
+
+    @Test func disablingCommandsTreatsExactPhraseAsConfirmableRefinement() async throws {
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [.result(.instruction("Halo copy"))]
+        )
+        let refinement = EngineRefinementService(behaviors: [])
+        let harness = try makeHarness(
+            refinement: refinement,
+            voiceCapture: voiceCapture
+        )
+        harness.capabilities.voiceCommandsEnabled = false
+        #expect(harness.engine.stagePasteReview(
+            makeReview(transcriptionConfiguration: makeVoiceTranscriptionConfiguration()),
+            notifyReady: false
+        ))
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForInstructionDraft(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 1
+        )
+
+        #expect(harness.paste.copyCount == 0)
+        #expect(refinement.requests.isEmpty)
+        #expect(
+            harness.engine.haloReviewState?.voiceRefinementPhase.instructionDraft?.text
+                == "Halo copy"
+        )
     }
 
     @Test func useOriginalAndManualEditPrepareExactImmutablePayloads() async throws {
@@ -1118,10 +1245,11 @@ struct HaloReviewRefinementEngineTests {
         let presenter: EngineHaloPresenter
         let outcomes: EngineOutcomeRecorder
         let voiceCapture: EngineVoiceInstructionCaptureService
+        let capabilities: HaloCapabilityStore
     }
 
     private func makeHarness(
-        refinement: EngineRefinementService,
+        refinement: EngineRefinementService?,
         destinationService: (any PasteReviewDestinationServicing)? = nil,
         voiceCapture: EngineVoiceInstructionCaptureService? = nil
     ) throws -> Harness {
@@ -1171,7 +1299,8 @@ struct HaloReviewRefinementEngineTests {
             paste: paste,
             presenter: presenter,
             outcomes: outcomes,
-            voiceCapture: resolvedVoiceCapture
+            voiceCapture: resolvedVoiceCapture,
+            capabilities: capabilityStore
         )
     }
 

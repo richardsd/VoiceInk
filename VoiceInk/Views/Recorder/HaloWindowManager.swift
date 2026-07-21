@@ -442,6 +442,14 @@ final class HaloWindowManager {
             onCancelInstruction: { [weak engine] in
                 _ = engine?.cancelHaloVoiceRefinementIfActive()
             },
+            onConfirmVoiceCommand: { [weak engine] in
+                Task { @MainActor in
+                    _ = await engine?.confirmHaloVoiceCommandIfActive()
+                }
+            },
+            onCancelVoiceCommand: { [weak engine] in
+                _ = engine?.cancelHaloVoiceCommandConfirmationIfActive()
+            },
             onReviewInteractiveRegionsChange: { [weak newPanel] regions in
                 newPanel?.updateReviewInteractiveRegions(regions)
             }
@@ -508,6 +516,13 @@ final class HaloWindowManager {
             .removeDuplicates()
             .sink { [weak self] snapshot in
                 self?.presentation.updateCapabilities(snapshot)
+            }
+            .store(in: &cancellables)
+
+        engine.$haloVoiceCommandConfirmation
+            .removeDuplicates()
+            .sink { [weak self] confirmation in
+                self?.presentation.updateVoiceCommandConfirmation(confirmation)
             }
             .store(in: &cancellables)
 

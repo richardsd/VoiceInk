@@ -157,6 +157,7 @@ final class HaloPresentationModel: ObservableObject {
         peakPower: 0
     )
     @Published private(set) var voiceInstructionPartialTranscript = ""
+    @Published private(set) var voiceCommandConfirmation: HaloVoiceCommandConfirmation?
     @Published private(set) var capabilitySnapshot = HaloCapabilityStore.recommendedDefaults
 
     @Published private var reviewSnapshot: HaloReviewPresentationSnapshot?
@@ -269,10 +270,21 @@ final class HaloPresentationModel: ObservableObject {
     }
 
     var canStartVoiceRefinement: Bool {
-        isVoiceRefinementReady
-            && (capabilitySnapshot.spokenRefinementEnabled
-                || capabilitySnapshot.voiceCommandsEnabled)
-            && (reviewSnapshot?.canStartVoiceRefinement ?? false)
+        guard isVoiceRefinementReady,
+            voiceCommandConfirmation == nil,
+            let reviewSnapshot,
+            reviewSnapshot.canStartVoiceRefinement
+        else {
+            return false
+        }
+        if capabilitySnapshot.voiceCommandsEnabled {
+            return true
+        }
+        return capabilitySnapshot.spokenRefinementEnabled && reviewSnapshot.canRefine
+    }
+
+    var isVoiceCommandConfirmationActive: Bool {
+        voiceCommandConfirmation != nil
     }
 
     var canStartTypedRefinement: Bool {
@@ -408,10 +420,9 @@ final class HaloPresentationModel: ObservableObject {
                 && state.session.refinementInputSnapshot != nil,
             isRefining: state.isRefining,
             voiceRefinementPhase: state.voiceRefinementPhase,
-            canStartVoiceRefinement: state.canRefine
-                && state.session.transcriptionConfiguration != nil
-                && state.session.enhancementConfiguration != nil
-                && state.session.refinementInputSnapshot != nil,
+            canStartVoiceRefinement: !state.isExpired
+                && !state.isReviewOperationActive
+                && state.session.transcriptionConfiguration != nil,
             canStartTypedRefinement: state.canRefine
                 && state.session.enhancementConfiguration != nil
                 && state.session.refinementInputSnapshot != nil,
@@ -471,6 +482,7 @@ final class HaloPresentationModel: ObservableObject {
         isVoiceRefinementReady = false
         voiceInstructionAudioMeter = AudioMeter(averagePower: 0, peakPower: 0)
         voiceInstructionPartialTranscript = ""
+        voiceCommandConfirmation = nil
     }
 
     func updateFocusRecovery(isRefocusing: Bool) {
@@ -485,6 +497,12 @@ final class HaloPresentationModel: ObservableObject {
         isVoiceRefinementReady = isReady
         voiceInstructionAudioMeter = audioMeter
         voiceInstructionPartialTranscript = partialTranscript
+    }
+
+    func updateVoiceCommandConfirmation(
+        _ confirmation: HaloVoiceCommandConfirmation?
+    ) {
+        voiceCommandConfirmation = confirmation
     }
 
     func updateCapabilities(_ snapshot: HaloCapabilitySnapshot) {
@@ -513,6 +531,7 @@ final class HaloPresentationModel: ObservableObject {
         isVoiceRefinementReady = false
         voiceInstructionAudioMeter = AudioMeter(averagePower: 0, peakPower: 0)
         voiceInstructionPartialTranscript = ""
+        voiceCommandConfirmation = nil
         deliveryOverride = nil
         reviewSnapshot = nil
     }

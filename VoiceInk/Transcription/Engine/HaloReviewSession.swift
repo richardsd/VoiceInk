@@ -532,6 +532,7 @@ struct HaloReviewState {
     @discardableResult
     mutating func beginVoiceRefinement(
         requestID: UUID = UUID(),
+        allowsRevisionLimit: Bool = false,
         at date: Date = Date()
     ) -> HaloVoiceRefinementRequest? {
         guard !isExpired, refinementRequest == nil, !voiceRefinementPhase.isActive,
@@ -539,7 +540,7 @@ struct HaloReviewState {
         else {
             return nil
         }
-        guard revisions.count < Self.maximumRevisionCount else {
+        guard allowsRevisionLimit || revisions.count < Self.maximumRevisionCount else {
             notice = .revisionLimitReached
             touch(at: date)
             return nil
@@ -555,6 +556,27 @@ struct HaloReviewState {
         voiceRefinementPhase = .listening(request)
         notice = nil
         return request
+    }
+
+    /// Completes a final-only local voice command without creating a revision
+    /// or retaining the recognized phrase in review state.
+    @discardableResult
+    mutating func completeVoiceCommandCapture(
+        requestID: UUID,
+        at date: Date = Date()
+    ) -> Bool {
+        let request: HaloVoiceRefinementRequest
+        switch voiceRefinementPhase {
+        case .listening(let active), .transcribing(let active):
+            request = active
+        case .idle, .awaitingConfirmation, .editingInstruction, .refining, .failed:
+            return false
+        }
+        guard request.id == requestID else { return false }
+        voiceRefinementPhase = .idle
+        notice = nil
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+        return true
     }
 
     @discardableResult
@@ -899,9 +921,11 @@ enum HaloReviewReducerAction: Equatable {
     case failRefinement(requestID: UUID, notice: HaloReviewNotice, at: Date)
     case cancelRefinement(at: Date)
     case beginVoiceRefinement(requestID: UUID, at: Date)
+    case beginVoiceCommandCapture(requestID: UUID, at: Date)
     case finishVoiceCapture(requestID: UUID, at: Date)
     case finishVoiceTranscription(requestID: UUID, at: Date)
     case stageVoiceInstruction(requestID: UUID, text: String, at: Date)
+    case completeVoiceCommandCapture(requestID: UUID, at: Date)
     case beginTypedInstruction(requestID: UUID, at: Date)
     case editInstructionDraft(at: Date)
     case updateInstructionDraft(requestID: UUID, text: String, at: Date)
@@ -990,6 +1014,16 @@ enum HaloReviewReducer {
             }
             return .voiceRefinementStarted(request)
 
+        case .beginVoiceCommandCapture(let requestID, let date):
+            guard let request = state.beginVoiceRefinement(
+                requestID: requestID,
+                allowsRevisionLimit: true,
+                at: date
+            ) else {
+                return .ignored
+            }
+            return .voiceRefinementStarted(request)
+
         case .finishVoiceCapture(let requestID, let date):
             guard state.finishVoiceCapture(requestID: requestID, at: date) else {
                 return .ignored
@@ -1006,6 +1040,15 @@ enum HaloReviewReducer {
             guard state.stageVoiceInstruction(
                 requestID: requestID,
                 text: text,
+                at: date
+            ) else {
+                return .ignored
+            }
+            return .voiceRefinementPhaseChanged(state.voiceRefinementPhase)
+
+        case .completeVoiceCommandCapture(let requestID, let date):
+            guard state.completeVoiceCommandCapture(
+                requestID: requestID,
                 at: date
             ) else {
                 return .ignored

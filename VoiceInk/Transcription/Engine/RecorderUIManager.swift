@@ -388,6 +388,11 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         await engine?.approvePendingPasteReview()
     }
 
+    @discardableResult
+    func confirmHaloVoiceCommandIfActive() async -> Bool {
+        await engine?.confirmHaloVoiceCommandIfActive() ?? false
+    }
+
     func cancelPendingPasteReview() async {
         await engine?.cancelPendingPasteReview()
     }
@@ -428,6 +433,9 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     @discardableResult
     func cancelHaloReviewTransientActionIfActive() -> Bool {
+        if engine?.cancelHaloVoiceCommandConfirmationIfActive() == true {
+            return true
+        }
         if engine?.cancelHaloVoiceRefinementIfActive() == true {
             return true
         }

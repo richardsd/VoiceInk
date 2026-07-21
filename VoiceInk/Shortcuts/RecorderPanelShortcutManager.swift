@@ -337,6 +337,9 @@ final class RecorderPanelShortcutManager: ObservableObject, RecorderReviewShortc
                         }
                     }
                 } else {
+                    if await recorderUIManager.confirmHaloVoiceCommandIfActive() {
+                        return
+                    }
                     await recorderUIManager.approvePendingPasteReview()
                 }
             case .recorderPanelEscape, .cancelRecorder:
