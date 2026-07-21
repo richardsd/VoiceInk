@@ -30,7 +30,7 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 | H5-04 | **Done** | H5-03 | Exact local `Halo …` commands and consequential-command confirmation |
 | H5-05 | **Done** | H5-01 | Guided application return with manual recovery fallback |
 | H5-06 | **Done** | H5-05 | Identity-safe continuous caret tracking and position setting |
-| H5-07 | **Planned** | H5-02 | Another Take through the frozen route and immutable revision pipeline |
+| H5-07 | **Done** | H5-02 | Another Take through the frozen route and immutable revision pipeline |
 | H5-08 | **Planned** | H5-01 | PCM snapshot, secure rolling buffer, CoreAudio memory sink, and WAV encoder |
 | H5-09 | **Planned** | H5-08 | Audio leases, Time-Shift lifecycle, memory clearing, and aggregate metrics |
 | H5-10 | **Planned** | H5-09 | In-memory transcription boundary, provider adapters, and capability checks |
@@ -93,9 +93,9 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 
 ### H5-07 — Another Take
 
-- [ ] Another Take performs one cancellable request through the frozen route from the selected revision.
-- [ ] Success appends one parent-linked revision and opens Changes; empty, unchanged, failed, or stale output creates none.
-- [ ] The six-revision cap, exact payload preparation, timeout lifecycle, and destination safety remain intact.
+- [x] Another Take performs one cancellable request through the frozen route from the selected revision.
+- [x] Success appends one parent-linked revision and opens Changes; empty, unchanged, failed, or stale output creates none.
+- [x] The six-revision cap, exact payload preparation, timeout lifecycle, and destination safety remain intact.
 
 ### H5-08 — Memory-only audio foundation
 
@@ -158,7 +158,8 @@ Stories use focused `H5-XX …` commits in dependency order. H5-05, H5-07, and H
 - 2026-07-21: `d26cdb69` completed H5-03; focused instruction, reducer, refinement-service, keyboard, and presentation suites passed serially with code signing disabled in `/tmp/VoiceInk-H5-refine-final`; the same run compiled the full application and test targets.
 - 2026-07-21: `66559c73` completed H5-04; exact-command parser, review engine, confirmation UI, presentation, and keyboard suites passed serially in `/tmp/VoiceInk-H5-refine-final`; exact commands use no model call and near matches remain inert.
 - 2026-07-21: `71ab51c8` completed H5-05; recovery, destination-matcher, review-engine, and compact-layout suites passed serially in `/tmp/VoiceInk-H5-refine-final`; recovery validates PID, bundle, and field identity while keeping paste as a separate action.
-- 2026-07-21: H5-06 caret-tracker, capability, and layout suites passed serially in `/tmp/VoiceInk-H5-refine-final`; tests cover AX notifications, watchdog fallback, focus freezing, jitter, quality, operation pauses, and non-cooperative lookup recovery.
+- 2026-07-21: `738cc2bf` completed H5-06; caret-tracker, capability, and layout suites passed serially in `/tmp/VoiceInk-H5-refine-final`; tests cover AX notifications, watchdog fallback, focus freezing, jitter, quality, operation pauses, and non-cooperative lookup recovery.
+- 2026-07-21: H5-07 refinement-service, reducer, engine, and presentation suites passed serially in `/tmp/VoiceInk-H5-refine-final`; Another Take uses the frozen route, shares the cancellable exclusive slot, and materializes exactly one revision.
 
 ## Deferred beyond Halo 5.0
 

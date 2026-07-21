@@ -1290,6 +1290,50 @@ struct HaloReviewRefinementEngineTests {
         )
     }
 
+    @Test func anotherTakeReusesFrozenRouteAndAppendsOneParentLinkedRevision() async throws {
+        let refinement = EngineRefinementService(
+            behaviors: [.success("A distinct but faithful version")]
+        )
+        let harness = try makeHarness(refinement: refinement)
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+        let parentID = try #require(harness.engine.haloReviewState?.selectedRevision?.id)
+
+        #expect(harness.engine.beginHaloAnotherTake())
+        await waitForRefinement(in: harness.engine)
+
+        let request = try #require(refinement.requests.first)
+        #expect(request.instruction == .anotherTake)
+        #expect(request.baseRevisionID == parentID)
+        #expect(request.configuration.provider == .openAI)
+        #expect(request.configuration.openAIAuthMode == .oauth)
+        #expect(request.configuration.modelName == "gpt-5.6-luna")
+        #expect(harness.engine.haloReviewState?.selectedRevision?.action == .anotherTake)
+        #expect(harness.engine.haloReviewState?.selectedRevision?.parentID == parentID)
+        #expect(harness.engine.haloReviewState?.lens == .changes)
+        #expect(harness.engine.haloReviewState?.revisions.count == 2)
+    }
+
+    @Test func disablingAnotherTakeCancelsOnlyItsInFlightRequest() async throws {
+        let refinement = EngineRefinementService(behaviors: [.suspended])
+        let harness = try makeHarness(refinement: refinement)
+        #expect(harness.engine.stagePasteReview(makeReview(), notifyReady: false))
+        let originalID = try #require(harness.engine.haloReviewState?.selectedRevision?.id)
+
+        #expect(harness.engine.beginHaloAnotherTake())
+        for _ in 0..<100 {
+            if !refinement.requests.isEmpty { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        harness.capabilities.anotherTakeEnabled = false
+        await waitForCancellation(in: refinement)
+
+        #expect(harness.engine.pendingPasteReview != nil)
+        #expect(harness.engine.haloReviewState?.isRefining == false)
+        #expect(harness.engine.haloReviewState?.selectedRevision?.id == originalID)
+        #expect(harness.engine.haloReviewState?.revisions.count == 1)
+        #expect(!harness.engine.beginHaloAnotherTake())
+    }
+
     @Test func useOriginalAndManualEditPrepareExactImmutablePayloads() async throws {
         let harness = try makeHarness(refinement: EngineRefinementService(behaviors: []))
         let transcriptionID = UUID()

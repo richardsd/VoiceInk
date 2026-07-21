@@ -1253,6 +1253,19 @@ class VoiceInkEngine: NSObject, ObservableObject {
         _ action: HaloRefinementAction,
         at date: Date = Date()
     ) -> Bool {
+        beginHaloRefinementOperation(kind: .preset(action), at: date)
+    }
+
+    @discardableResult
+    func beginHaloAnotherTake(at date: Date = Date()) -> Bool {
+        guard haloCapabilitySnapshot.anotherTakeEnabled else { return false }
+        return beginHaloRefinementOperation(kind: .anotherTake, at: date)
+    }
+
+    private func beginHaloRefinementOperation(
+        kind: HaloReviewRefinementKind,
+        at date: Date
+    ) -> Bool {
         guard recordingState == .reviewing,
             let review = pendingPasteReview,
             pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
@@ -1284,7 +1297,14 @@ class VoiceInkEngine: NSObject, ObservableObject {
         let requestID = UUID()
         let effect = HaloReviewReducer.reduce(
             state: &state,
-            action: .beginRefinement(action, requestID: requestID, at: date)
+            action: {
+                switch kind {
+                case .preset(let action):
+                    return .beginRefinement(action, requestID: requestID, at: date)
+                case .anotherTake:
+                    return .beginAnotherTake(requestID: requestID, at: date)
+                }
+            }()
         )
         guard case .refinementStarted(let reviewRequest) = effect else {
             haloReviewState = state
@@ -2427,7 +2447,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         )
         let revision = HaloReviewRevision(
             parentID: result.baseRevisionID,
-            action: .refinement(refinementRequest.action),
+            action: refinementRequest.kind.revisionAction,
             text: result.replacementText,
             metadata: state.session.metadata,
             payload: payload
@@ -2938,6 +2958,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
         if !updated.voiceCommandsEnabled {
             haloVoiceCommandConfirmation = nil
+        }
+        if previous.anotherTakeEnabled,
+            !updated.anotherTakeEnabled,
+            haloReviewState?.refinementRequest?.kind == .anotherTake
+        {
+            _ = cancelHaloRefinementIfActive()
         }
 
         guard let phase = haloReviewState?.voiceRefinementPhase,

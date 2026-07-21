@@ -98,6 +98,8 @@ private struct HaloReviewPresentationSnapshot: Equatable, Sendable {
     let canUseOriginal: Bool
     let canBeginManualEdit: Bool
     let activeRefinementAction: HaloRefinementAction?
+    let isAnotherTakeActive: Bool
+    let canAnotherTake: Bool
     let hasReachedRevisionLimit: Bool
     let noticeMessage: String?
     let noticeTone: HaloReviewNoticeTone?
@@ -304,6 +306,15 @@ final class HaloPresentationModel: ObservableObject {
         reviewSnapshot?.activeRefinementAction
     }
 
+    var isAnotherTakeActive: Bool {
+        reviewSnapshot?.isAnotherTakeActive ?? false
+    }
+
+    var canAnotherTake: Bool {
+        capabilitySnapshot.anotherTakeEnabled
+            && (reviewSnapshot?.canAnotherTake ?? false)
+    }
+
     var isEditingManually: Bool {
         reviewSnapshot?.isEditingManually ?? false
     }
@@ -445,6 +456,10 @@ final class HaloPresentationModel: ObservableObject {
                 && !state.isEditingManually
                 && state.revisions.count < HaloReviewState.maximumRevisionCount,
             activeRefinementAction: state.refinementRequest?.action,
+            isAnotherTakeActive: state.refinementRequest?.kind == .anotherTake,
+            canAnotherTake: state.canRefine
+                && state.session.enhancementConfiguration != nil
+                && state.session.refinementInputSnapshot != nil,
             hasReachedRevisionLimit: hasReachedRevisionLimit,
             noticeMessage: notice.message,
             noticeTone: notice.tone,

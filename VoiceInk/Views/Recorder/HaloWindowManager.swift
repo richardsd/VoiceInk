@@ -429,6 +429,9 @@ final class HaloWindowManager {
             onRefine: { [weak engine] action in
                 _ = engine?.beginHaloRefinement(action)
             },
+            onAnotherTake: { [weak engine] in
+                _ = engine?.beginHaloAnotherTake()
+            },
             onToggleVoiceRefinement: { [weak engine] in
                 _ = engine?.toggleHaloVoiceRefinementCapture()
             },

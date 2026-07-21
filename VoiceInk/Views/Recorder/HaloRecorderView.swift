@@ -64,6 +64,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     let onSelectReviewLens: (HaloReviewLens) -> Void
     let onMoveReviewRevision: (Int) -> Void
     let onRefine: (HaloRefinementAction) -> Void
+    let onAnotherTake: () -> Void
     let onToggleVoiceRefinement: () -> Void
     let onBeginTypedInstruction: () -> Void
     let onEditInstruction: () -> Void
@@ -94,6 +95,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         onSelectReviewLens: @escaping (HaloReviewLens) -> Void,
         onMoveReviewRevision: @escaping (Int) -> Void,
         onRefine: @escaping (HaloRefinementAction) -> Void,
+        onAnotherTake: @escaping () -> Void = {},
         onToggleVoiceRefinement: @escaping () -> Void = {},
         onBeginTypedInstruction: @escaping () -> Void = {},
         onEditInstruction: @escaping () -> Void = {},
@@ -120,6 +122,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         self.onSelectReviewLens = onSelectReviewLens
         self.onMoveReviewRevision = onMoveReviewRevision
         self.onRefine = onRefine
+        self.onAnotherTake = onAnotherTake
         self.onToggleVoiceRefinement = onToggleVoiceRefinement
         self.onBeginTypedInstruction = onBeginTypedInstruction
         self.onEditInstruction = onEditInstruction
@@ -680,6 +683,15 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                     || presentation.isVoiceRefinementActive,
                 action: onBeginManualEdit
             )
+            HaloReviewActionButton(
+                key: nil,
+                title: String(localized: "Another Take"),
+                systemImage: "arrow.triangle.2.circlepath",
+                emphasized: false,
+                isDisabled: !presentation.canAnotherTake
+                    || presentation.isReviewDelivering,
+                action: onAnotherTake
+            )
             Spacer(minLength: 0)
         }
         .accessibilityElement(children: .contain)
@@ -853,6 +865,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             )
         } else if presentation.isRefining, let activeAction = presentation.activeRefinementAction {
             HaloRefinementProgressStatus(action: activeAction)
+        } else if presentation.isAnotherTakeActive {
+            HaloRefinementProgressStatus(label: String(localized: "Another Take"))
         } else {
             if let notice = presentation.reviewNoticeMessage {
                 Label(notice, systemImage: reviewNoticeIcon)
@@ -1468,7 +1482,15 @@ private struct HaloRefinementActionButton: View {
 }
 
 private struct HaloRefinementProgressStatus: View {
-    let action: HaloRefinementAction
+    let label: String
+
+    init(action: HaloRefinementAction) {
+        label = action.displayName
+    }
+
+    init(label: String) {
+        self.label = label
+    }
 
     var body: some View {
         HStack(spacing: 7) {
@@ -1477,7 +1499,7 @@ private struct HaloRefinementProgressStatus: View {
             Text(
                 String(
                     format: String(localized: "Refining: %@"),
-                    action.displayName
+                    label
                 )
             )
             .font(HaloTypography.warning)
@@ -1495,7 +1517,7 @@ private struct HaloRefinementProgressStatus: View {
             Text(
                 String(
                     format: String(localized: "Refinement in progress: %@"),
-                    action.displayName
+                    label
                 )
             )
         )

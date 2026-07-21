@@ -175,10 +175,43 @@ struct HaloReviewSession {
     }
 }
 
+enum HaloReviewRefinementKind: Equatable, Sendable {
+    case preset(HaloRefinementAction)
+    case anotherTake
+
+    var presetAction: HaloRefinementAction? {
+        guard case .preset(let action) = self else { return nil }
+        return action
+    }
+
+    var revisionAction: HaloReviewRevisionAction {
+        switch self {
+        case .preset(let action):
+            return .refinement(action)
+        case .anotherTake:
+            return .anotherTake
+        }
+    }
+}
+
 struct HaloReviewRefinementRequest: Equatable, Sendable {
     let id: UUID
-    let action: HaloRefinementAction
+    let kind: HaloReviewRefinementKind
     let baseRevisionID: UUID
+
+    init(id: UUID, action: HaloRefinementAction, baseRevisionID: UUID) {
+        self.id = id
+        kind = .preset(action)
+        self.baseRevisionID = baseRevisionID
+    }
+
+    init(id: UUID, kind: HaloReviewRefinementKind, baseRevisionID: UUID) {
+        self.id = id
+        self.kind = kind
+        self.baseRevisionID = baseRevisionID
+    }
+
+    var action: HaloRefinementAction? { kind.presetAction }
 }
 
 struct HaloReviewManualEdit: Equatable, Sendable {
@@ -454,6 +487,33 @@ struct HaloReviewState {
         let request = HaloReviewRefinementRequest(
             id: requestID,
             action: action,
+            baseRevisionID: selectedRevision.id
+        )
+        refinementRequest = request
+        notice = nil
+        return request
+    }
+
+    @discardableResult
+    mutating func beginAnotherTake(
+        requestID: UUID = UUID(),
+        at date: Date = Date()
+    ) -> HaloReviewRefinementRequest? {
+        guard !isExpired, refinementRequest == nil, !voiceRefinementPhase.isActive,
+            manualEdit == nil, let selectedRevision
+        else {
+            return nil
+        }
+        guard revisions.count < Self.maximumRevisionCount else {
+            notice = .revisionLimitReached
+            touch(at: date)
+            return nil
+        }
+
+        expiresAt = max(expiresAt, date.addingTimeInterval(1))
+        let request = HaloReviewRefinementRequest(
+            id: requestID,
+            kind: .anotherTake,
             baseRevisionID: selectedRevision.id
         )
         refinementRequest = request
@@ -917,6 +977,7 @@ enum HaloReviewReducerAction: Equatable {
     case moveRevision(Int, at: Date)
     case copied(succeeded: Bool, at: Date)
     case beginRefinement(HaloRefinementAction, requestID: UUID, at: Date)
+    case beginAnotherTake(requestID: UUID, at: Date)
     case completeRefinement(requestID: UUID, revision: HaloReviewRevision, at: Date)
     case failRefinement(requestID: UUID, notice: HaloReviewNotice, at: Date)
     case cancelRefinement(at: Date)
@@ -980,6 +1041,15 @@ enum HaloReviewReducer {
         case .beginRefinement(let refinement, let requestID, let date):
             guard let request = state.beginRefinement(
                 action: refinement,
+                requestID: requestID,
+                at: date
+            ) else {
+                return .ignored
+            }
+            return .refinementStarted(request)
+
+        case .beginAnotherTake(let requestID, let date):
+            guard let request = state.beginAnotherTake(
                 requestID: requestID,
                 at: date
             ) else {

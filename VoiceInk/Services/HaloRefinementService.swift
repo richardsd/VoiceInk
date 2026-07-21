@@ -108,7 +108,12 @@ struct HaloRefinementRequest {
     ) {
         requestID = reviewRequest.id
         baseRevisionID = reviewRequest.baseRevisionID
-        instruction = .preset(reviewRequest.action)
+        switch reviewRequest.kind {
+        case .preset(let action):
+            instruction = .preset(action)
+        case .anotherTake:
+            instruction = .anotherTake
+        }
         self.rawTranscript = rawTranscript
         self.selectedRevisionText = selectedRevisionText
         self.configuration = configuration

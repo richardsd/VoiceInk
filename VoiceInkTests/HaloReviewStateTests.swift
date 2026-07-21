@@ -652,6 +652,48 @@ struct HaloReviewStateTests {
         #expect(!state.voiceRefinementPhase.isProcessing)
     }
 
+    @Test func anotherTakeUsesExclusiveRefinementSlotAndCreatesOwnRevision() throws {
+        let start = Date(timeIntervalSince1970: 10_500)
+        var state = makeState(raw: "Raw", final: "Initial", now: start)
+        let parent = try #require(state.selectedRevision)
+        let requestID = UUID()
+
+        let began = HaloReviewReducer.reduce(
+            state: &state,
+            action: .beginAnotherTake(requestID: requestID, at: start)
+        )
+        #expect(
+            began == .refinementStarted(
+                HaloReviewRefinementRequest(
+                    id: requestID,
+                    kind: .anotherTake,
+                    baseRevisionID: parent.id
+                )
+            )
+        )
+        #expect(state.isRefining)
+        #expect(state.beginAnotherTake(at: start) == nil)
+
+        let revision = makeRevision(
+            text: "A different clean version",
+            parentID: parent.id,
+            action: .anotherTake
+        )
+        let completed = HaloReviewReducer.reduce(
+            state: &state,
+            action: .completeRefinement(
+                requestID: requestID,
+                revision: revision,
+                at: start.addingTimeInterval(1)
+            )
+        )
+
+        #expect(completed == .revisionAppended(revision.id))
+        #expect(state.selectedRevision?.action == .anotherTake)
+        #expect(state.selectedRevision?.parentID == parent.id)
+        #expect(state.lens == .changes)
+    }
+
     private func makeState(
         raw: String,
         final: String,
