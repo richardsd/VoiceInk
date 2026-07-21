@@ -87,6 +87,7 @@ final class HaloWindowManager {
     private var screenObserver: NSObjectProtocol?
     private var cancellables = Set<AnyCancellable>()
     private var anchorResolutionTask: Task<Void, Never>?
+    private var caretTracker: HaloContinuousCaretTracker?
     private var anchorSession = HaloAnchorSessionState()
     private var destinationSnapshot = HaloFocusedDestinationSnapshot(
         processID: nil,
@@ -132,6 +133,7 @@ final class HaloWindowManager {
     /// RecorderUIManager calls this before it orders either Halo or Mini onscreen,
     /// so a later trigger-word switch can still reuse the original caret.
     func beginRecordingSession() {
+        stopCaretTracking()
         anchorResolutionTask?.cancel()
         anchorResolutionTask = nil
         hasPartialTranscript = false
@@ -145,6 +147,7 @@ final class HaloWindowManager {
 
     func show() {
         isShowRequested = true
+        reconcileCaretTracking()
 
         if capturedAnchor != nil {
             initializeWindowIfNeeded()
@@ -193,6 +196,7 @@ final class HaloWindowManager {
             )
             self.updateResolvedDestinationMetadata()
             self.prepareStablePlacementSideIfNeeded()
+            self.reconcileCaretTracking()
             if self.isShowRequested {
                 self.initializeWindowIfNeeded()
                 self.positionAndShowPanel(animated: false)
@@ -234,6 +238,7 @@ final class HaloWindowManager {
             )
             self.updateResolvedDestinationMetadata()
             self.prepareStablePlacementSideIfNeeded()
+            self.reconcileCaretTracking()
             if self.isShowRequested {
                 self.positionAndShowPanel(animated: true)
             }
@@ -247,7 +252,9 @@ final class HaloWindowManager {
         panel?.endReviewInteraction()
         panel?.orderOut(nil)
 
-        if !preservingSession {
+        if preservingSession {
+            caretTracker?.pause(for: .styleChange)
+        } else {
             endRecordingSession()
         }
     }
@@ -260,6 +267,7 @@ final class HaloWindowManager {
     }
 
     func endRecordingSession() {
+        stopCaretTracking()
         anchorResolutionTask?.cancel()
         anchorResolutionTask = nil
         hasPartialTranscript = false
@@ -478,6 +486,11 @@ final class HaloWindowManager {
                     secondsRemaining: self.engine.pasteReviewSecondsRemaining,
                     isDelivering: state == .busy && self.engine.pendingPasteReview != nil
                 )
+                if state == .busy && self.engine.pendingPasteReview != nil {
+                    self.caretTracker?.pause(for: .delivery)
+                } else {
+                    self.caretTracker?.resume(after: .delivery)
+                }
                 if phase != .reviewing {
                     self.panel?.endReviewInteraction()
                 }
@@ -506,6 +519,11 @@ final class HaloWindowManager {
                 self.panel?.setManualEditing(
                     reviewState?.isEditingManually == true || isEditingInstruction
                 )
+                if reviewState?.isEditingManually == true || isEditingInstruction {
+                    self.caretTracker?.pause(for: .textEditing)
+                } else {
+                    self.caretTracker?.resume(after: .textEditing)
+                }
                 if reviewState != nil {
                     self.panel?.beginReviewInteraction()
                 }
@@ -516,6 +534,7 @@ final class HaloWindowManager {
             .removeDuplicates()
             .sink { [weak self] snapshot in
                 self?.presentation.updateCapabilities(snapshot)
+                self?.reconcileCaretTracking(snapshot: snapshot)
             }
             .store(in: &cancellables)
 
@@ -643,6 +662,53 @@ final class HaloWindowManager {
         guard let capturedAnchor else { return }
         destinationSnapshot = capturedDestinationSnapshot
         presentation.setCapturedApplication(capturedAnchor.applicationName)
+    }
+
+    private func reconcileCaretTracking(
+        snapshot: HaloCapabilitySnapshot? = nil
+    ) {
+        let snapshot = snapshot ?? engine.haloCapabilitySnapshot
+        guard snapshot.positionBehavior == .followOriginalCaret else {
+            // Keep the last accepted anchor exactly where it is. Only the
+            // tracker and its ephemeral AX observers are discarded.
+            stopCaretTracking()
+            return
+        }
+
+        if let tracker = caretTracker {
+            tracker.resume(after: .styleChange)
+            return
+        }
+
+        guard let initialAnchor = capturedAnchor else { return }
+        let expectedDestination = capturedDestinationSnapshot
+        guard expectedDestination.processID != nil else { return }
+        let sessionID = anchorSession.id
+
+        let tracker = HaloContinuousCaretTracker(
+            expectedDestination: expectedDestination,
+            initialAnchor: initialAnchor,
+            resolver: DefaultHaloCaretTrackingResolver(
+                anchorResolver: anchorResolver
+            ),
+            notifier: SystemHaloCaretTrackingNotifier(),
+            onAnchorChange: { [weak self] anchor in
+                guard let self, self.anchorSession.id == sessionID else { return }
+                guard self.anchorSession.accept(
+                    anchor,
+                    for: sessionID,
+                    screens: HaloScreenGeometry.currentScreens()
+                ) else { return }
+                self.positionAndShowPanel(animated: true)
+            }
+        )
+        caretTracker = tracker
+        tracker.start()
+    }
+
+    private func stopCaretTracking() {
+        caretTracker?.stop()
+        caretTracker = nil
     }
 
     private var panelSize: CGSize {

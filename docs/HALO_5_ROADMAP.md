@@ -29,7 +29,7 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 | H5-03 | **Done** | H5-02 | Voice confirmation/correction, typed refinement, and Settings controls |
 | H5-04 | **Done** | H5-03 | Exact local `Halo …` commands and consequential-command confirmation |
 | H5-05 | **Done** | H5-01 | Guided application return with manual recovery fallback |
-| H5-06 | **Planned** | H5-05 | Identity-safe continuous caret tracking and position setting |
+| H5-06 | **Done** | H5-05 | Identity-safe continuous caret tracking and position setting |
 | H5-07 | **Planned** | H5-02 | Another Take through the frozen route and immutable revision pipeline |
 | H5-08 | **Planned** | H5-01 | PCM snapshot, secure rolling buffer, CoreAudio memory sink, and WAV encoder |
 | H5-09 | **Planned** | H5-08 | Audio leases, Time-Shift lifecycle, memory clearing, and aggregate metrics |
@@ -86,10 +86,10 @@ Spoken refinements always require confirmation. Apply and Cancel voice commands 
 
 ### H5-06 — Continuous caret presence
 
-- [ ] Expected paste identity remains immutable while the last-safe visual anchor may update.
-- [ ] AX notifications and a low-rate watchdog coalesce updates, allow one lookup in flight, and ignore jitter/quality downgrades.
-- [ ] Tracking accepts only the original validated field, freezes on mismatch, and pauses during text entry and delivery.
-- [ ] Stable Anchor remains the default and final Apply validation remains authoritative.
+- [x] Expected paste identity remains immutable while the last-safe visual anchor may update.
+- [x] AX notifications and a low-rate watchdog coalesce updates, allow one lookup in flight, and ignore jitter/quality downgrades.
+- [x] Tracking accepts only the original validated field, freezes on mismatch, and pauses during text entry and delivery.
+- [x] Stable Anchor remains the default and final Apply validation remains authoritative.
 
 ### H5-07 — Another Take
 
@@ -157,7 +157,8 @@ Stories use focused `H5-XX …` commits in dependency order. H5-05, H5-07, and H
 - 2026-07-21: `64b23a13` completed H5-02 with the unified memory-only instruction draft, reducer, bounds, prompt escaping, and frozen-route contract.
 - 2026-07-21: `d26cdb69` completed H5-03; focused instruction, reducer, refinement-service, keyboard, and presentation suites passed serially with code signing disabled in `/tmp/VoiceInk-H5-refine-final`; the same run compiled the full application and test targets.
 - 2026-07-21: `66559c73` completed H5-04; exact-command parser, review engine, confirmation UI, presentation, and keyboard suites passed serially in `/tmp/VoiceInk-H5-refine-final`; exact commands use no model call and near matches remain inert.
-- 2026-07-21: H5-05 recovery, destination-matcher, review-engine, and compact-layout suites passed serially in `/tmp/VoiceInk-H5-refine-final`; recovery validates PID, bundle, and field identity while keeping paste as a separate action.
+- 2026-07-21: `71ab51c8` completed H5-05; recovery, destination-matcher, review-engine, and compact-layout suites passed serially in `/tmp/VoiceInk-H5-refine-final`; recovery validates PID, bundle, and field identity while keeping paste as a separate action.
+- 2026-07-21: H5-06 caret-tracker, capability, and layout suites passed serially in `/tmp/VoiceInk-H5-refine-final`; tests cover AX notifications, watchdog fallback, focus freezing, jitter, quality, operation pauses, and non-cooperative lookup recovery.
 
 ## Deferred beyond Halo 5.0
 
