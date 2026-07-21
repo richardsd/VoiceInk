@@ -65,8 +65,29 @@ enum HaloReviewRevisionAction: Equatable, Sendable {
     /// A voice-directed replacement. The recognized instruction is
     /// intentionally not retained in revision metadata.
     case voiceRefinement
+    case typedRefinement
+    case anotherTake
     case original
     case manualEdit
+}
+
+enum HaloInstructionSource: String, Equatable, Sendable {
+    case voice
+    case typed
+
+    var promptLabel: String {
+        switch self {
+        case .voice: return "spoken"
+        case .typed: return "typed"
+        }
+    }
+}
+
+struct HaloInstructionDraft: Equatable, Sendable {
+    let requestID: UUID
+    let baseRevisionID: UUID
+    let source: HaloInstructionSource
+    var text: String
 }
 
 struct HaloReviewModelMetadata: Equatable, Sendable {
@@ -168,6 +189,17 @@ struct HaloReviewManualEdit: Equatable, Sendable {
 struct HaloVoiceRefinementRequest: Equatable, Sendable {
     let id: UUID
     let baseRevisionID: UUID
+    let source: HaloInstructionSource
+
+    init(
+        id: UUID,
+        baseRevisionID: UUID,
+        source: HaloInstructionSource = .voice
+    ) {
+        self.id = id
+        self.baseRevisionID = baseRevisionID
+        self.source = source
+    }
 }
 
 enum HaloVoiceRefinementFailure: Equatable, Sendable {
@@ -206,6 +238,8 @@ enum HaloVoiceRefinementPhase: Equatable, Sendable {
     case idle
     case listening(HaloVoiceRefinementRequest)
     case transcribing(HaloVoiceRefinementRequest)
+    case awaitingConfirmation(HaloInstructionDraft)
+    case editingInstruction(HaloInstructionDraft)
     case refining(HaloVoiceRefinementRequest)
     case failed(HaloVoiceRefinementFailure)
 
@@ -213,12 +247,36 @@ enum HaloVoiceRefinementPhase: Equatable, Sendable {
         switch self {
         case .listening(let request), .transcribing(let request), .refining(let request):
             return request
+        case .awaitingConfirmation(let draft), .editingInstruction(let draft):
+            return HaloVoiceRefinementRequest(
+                id: draft.requestID,
+                baseRevisionID: draft.baseRevisionID,
+                source: draft.source
+            )
         case .idle, .failed:
             return nil
         }
     }
 
     var isActive: Bool { activeRequest != nil }
+
+    var isProcessing: Bool {
+        switch self {
+        case .listening, .transcribing, .refining:
+            return true
+        case .idle, .awaitingConfirmation, .editingInstruction, .failed:
+            return false
+        }
+    }
+
+    var instructionDraft: HaloInstructionDraft? {
+        switch self {
+        case .awaitingConfirmation(let draft), .editingInstruction(let draft):
+            return draft
+        case .idle, .listening, .transcribing, .refining, .failed:
+            return nil
+        }
+    }
 }
 
 enum HaloReviewNotice: Equatable, Sendable {
@@ -233,6 +291,7 @@ enum HaloReviewNotice: Equatable, Sendable {
     case unchangedManualEdit
     case voiceRefinementCancelled
     case voiceRefinementFailed(HaloVoiceRefinementFailure)
+    case instructionValidation(String)
 
     var message: String {
         switch self {
@@ -258,6 +317,8 @@ enum HaloReviewNotice: Equatable, Sendable {
             return String(localized: "Voice refinement cancelled")
         case .voiceRefinementFailed(let failure):
             return failure.message
+        case .instructionValidation(let message):
+            return message
         }
     }
 }
@@ -327,14 +388,14 @@ struct HaloReviewState {
     }
 
     func secondsRemaining(at date: Date = Date()) -> Int {
-        if isRefining || isVoiceRefinementActive {
+        if isRefining || voiceRefinementPhase.isProcessing {
             return max(1, Int(ceil(expiresAt.timeIntervalSince(date))))
         }
         return max(0, Int(ceil(expiresAt.timeIntervalSince(date))))
     }
 
     mutating func touch(at date: Date = Date()) {
-        guard !isExpired, !isRefining, !isVoiceRefinementActive else { return }
+        guard !isExpired, !isRefining, !voiceRefinementPhase.isProcessing else { return }
         expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
     }
 
@@ -526,6 +587,121 @@ struct HaloReviewState {
         return true
     }
 
+    /// Stages recognized speech for explicit user confirmation. No model
+    /// request is started until `submitInstructionDraft` succeeds.
+    @discardableResult
+    mutating func stageVoiceInstruction(
+        requestID: UUID,
+        text: String,
+        at date: Date = Date()
+    ) -> Bool {
+        guard case .transcribing(let request) = voiceRefinementPhase,
+            request.id == requestID
+        else {
+            return false
+        }
+
+        voiceRefinementPhase = .awaitingConfirmation(
+            HaloInstructionDraft(
+                requestID: request.id,
+                baseRevisionID: request.baseRevisionID,
+                source: .voice,
+                text: text
+            )
+        )
+        notice = nil
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+        return true
+    }
+
+    @discardableResult
+    mutating func beginTypedInstruction(
+        requestID: UUID = UUID(),
+        at date: Date = Date()
+    ) -> HaloInstructionDraft? {
+        guard !isExpired, refinementRequest == nil, !voiceRefinementPhase.isActive,
+            manualEdit == nil, let selectedRevision
+        else {
+            return nil
+        }
+        guard revisions.count < Self.maximumRevisionCount else {
+            notice = .revisionLimitReached
+            touch(at: date)
+            return nil
+        }
+
+        let draft = HaloInstructionDraft(
+            requestID: requestID,
+            baseRevisionID: selectedRevision.id,
+            source: .typed,
+            text: ""
+        )
+        voiceRefinementPhase = .editingInstruction(draft)
+        notice = nil
+        expiresAt = date.addingTimeInterval(Self.inactivityLifetime)
+        return draft
+    }
+
+    @discardableResult
+    mutating func editInstructionDraft(at date: Date = Date()) -> Bool {
+        guard case .awaitingConfirmation(let draft) = voiceRefinementPhase else {
+            return false
+        }
+        voiceRefinementPhase = .editingInstruction(draft)
+        touch(at: date)
+        return true
+    }
+
+    @discardableResult
+    mutating func updateInstructionDraft(
+        requestID: UUID,
+        _ text: String,
+        at date: Date = Date()
+    ) -> Bool {
+        guard case .editingInstruction(var draft) = voiceRefinementPhase else {
+            return false
+        }
+        guard draft.requestID == requestID else { return false }
+        draft.text = text
+        voiceRefinementPhase = .editingInstruction(draft)
+        touch(at: date)
+        return true
+    }
+
+    /// Atomically leaves the editable/confirmable draft state and freezes the
+    /// inactivity timer for the resulting model request. The caller receives
+    /// the draft exactly once through the reducer effect and can build the
+    /// ephemeral request without retaining instruction text in review state.
+    @discardableResult
+    mutating func submitInstructionDraft(
+        at date: Date = Date()
+    ) -> HaloInstructionDraft? {
+        guard !isExpired else { return nil }
+        guard date < expiresAt else {
+            _ = expireIfNeeded(at: date)
+            return nil
+        }
+
+        let draft: HaloInstructionDraft
+        switch voiceRefinementPhase {
+        case .awaitingConfirmation(let pending), .editingInstruction(let pending):
+            draft = pending
+        case .idle, .listening, .transcribing, .refining, .failed:
+            return nil
+        }
+
+        voiceRefinementPhase = .refining(
+            HaloVoiceRefinementRequest(
+                id: draft.requestID,
+                baseRevisionID: draft.baseRevisionID,
+                source: draft.source
+            )
+        )
+        notice = nil
+        expiresAt = max(expiresAt, date.addingTimeInterval(1))
+        return draft
+    }
+
     @discardableResult
     mutating func completeVoiceRefinement(
         requestID: UUID,
@@ -535,7 +711,7 @@ struct HaloReviewState {
         guard case .refining(let request) = voiceRefinementPhase,
             request.id == requestID,
             request.baseRevisionID == revision.parentID,
-            revision.action == .voiceRefinement,
+            revision.action == (request.source == .voice ? .voiceRefinement : .typedRefinement),
             let base = revisions.first(where: { $0.id == request.baseRevisionID })
         else {
             return .stale
@@ -701,10 +877,14 @@ struct HaloReviewState {
 
     @discardableResult
     mutating func expireIfNeeded(at date: Date = Date()) -> Bool {
-        guard !isExpired, !isRefining, !isVoiceRefinementActive, date >= expiresAt else {
+        guard !isExpired, !isRefining, !voiceRefinementPhase.isProcessing,
+            date >= expiresAt
+        else {
             return false
         }
         isExpired = true
+        voiceRefinementPhase = .idle
+        manualEdit = nil
         return true
     }
 }
@@ -721,6 +901,11 @@ enum HaloReviewReducerAction: Equatable {
     case beginVoiceRefinement(requestID: UUID, at: Date)
     case finishVoiceCapture(requestID: UUID, at: Date)
     case finishVoiceTranscription(requestID: UUID, at: Date)
+    case stageVoiceInstruction(requestID: UUID, text: String, at: Date)
+    case beginTypedInstruction(requestID: UUID, at: Date)
+    case editInstructionDraft(at: Date)
+    case updateInstructionDraft(requestID: UUID, text: String, at: Date)
+    case submitInstructionDraft(at: Date)
     case completeVoiceRefinement(requestID: UUID, revision: HaloReviewRevision, at: Date)
     case failVoiceRefinement(requestID: UUID, failure: HaloVoiceRefinementFailure, at: Date)
     case cancelVoiceRefinement(at: Date)
@@ -739,6 +924,7 @@ enum HaloReviewReducerEffect: Equatable {
     case refinementStarted(HaloReviewRefinementRequest)
     case voiceRefinementStarted(HaloVoiceRefinementRequest)
     case voiceRefinementPhaseChanged(HaloVoiceRefinementPhase)
+    case instructionSubmitted(HaloInstructionDraft)
     case voiceRefinementCancelled(UUID)
     case revisionAppended(UUID)
     case expired
@@ -815,6 +1001,40 @@ enum HaloReviewReducer {
                 return .ignored
             }
             return .voiceRefinementPhaseChanged(state.voiceRefinementPhase)
+
+        case .stageVoiceInstruction(let requestID, let text, let date):
+            guard state.stageVoiceInstruction(
+                requestID: requestID,
+                text: text,
+                at: date
+            ) else {
+                return .ignored
+            }
+            return .voiceRefinementPhaseChanged(state.voiceRefinementPhase)
+
+        case .beginTypedInstruction(let requestID, let date):
+            guard state.beginTypedInstruction(requestID: requestID, at: date) != nil else {
+                return .ignored
+            }
+            return .voiceRefinementPhaseChanged(state.voiceRefinementPhase)
+
+        case .editInstructionDraft(let date):
+            guard state.editInstructionDraft(at: date) else { return .ignored }
+            return .voiceRefinementPhaseChanged(state.voiceRefinementPhase)
+
+        case .updateInstructionDraft(let requestID, let text, let date):
+            guard state.updateInstructionDraft(
+                requestID: requestID,
+                text,
+                at: date
+            ) else { return .ignored }
+            return .voiceRefinementPhaseChanged(state.voiceRefinementPhase)
+
+        case .submitInstructionDraft(let date):
+            guard let draft = state.submitInstructionDraft(at: date) else {
+                return .ignored
+            }
+            return .instructionSubmitted(draft)
 
         case .completeVoiceRefinement(let requestID, let revision, let date):
             let result = state.completeVoiceRefinement(

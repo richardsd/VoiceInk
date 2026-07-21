@@ -230,6 +230,38 @@ struct HaloRefinementServiceTests {
         )
     }
 
+    @Test func typedDirectiveUsesTheSameValidatedBoundaryAndEscapedPromptContract() throws {
+        let directive = try HaloFreeformRefinementDirective(
+            validating: "  Use <bullets> & keep every date  "
+        )
+        let prompt = HaloRefinementPromptBuilder.build(
+            instruction: .freeform(.typed, directive),
+            rawTranscript: "Raw source",
+            selectedRevisionText: "Selected source",
+            originalModeRequirements: "Keep names exact."
+        )
+
+        #expect(directive.text == "Use <bullets> & keep every date")
+        #expect(prompt.systemInstructions.contains("typed directive"))
+        #expect(prompt.systemInstructions.contains("exactly one complete replacement"))
+        #expect(prompt.userMessage.contains("<TYPED_REFINEMENT_DIRECTIVE>"))
+        #expect(prompt.userMessage.contains("Use &lt;bullets&gt; &amp; keep every date"))
+        #expect(!prompt.userMessage.contains("<bullets>"))
+    }
+
+    @Test func anotherTakeRequestsOneDifferentFactPreservingReplacement() {
+        let prompt = HaloRefinementPromptBuilder.build(
+            instruction: .anotherTake,
+            rawTranscript: "Raw source",
+            selectedRevisionText: "Selected source",
+            originalModeRequirements: "Keep names exact."
+        )
+
+        #expect(prompt.systemInstructions.contains("materially different complete replacement"))
+        #expect(prompt.systemInstructions.contains("preserving every fact"))
+        #expect(prompt.systemInstructions.contains("Return exactly one complete replacement"))
+    }
+
     @Test func liveAdapterReusesExactRouteAndFrozenContextAndCarriesRequestIdentity() async throws {
         let originalPrompt = CustomPrompt(
             title: "Voice Dictation",

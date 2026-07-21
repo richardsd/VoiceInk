@@ -463,6 +463,195 @@ struct HaloReviewStateTests {
         )
     }
 
+    @Test func recognizedVoiceInstructionWaitsForConfirmationBeforeRefining() throws {
+        let start = Date(timeIntervalSince1970: 7_000)
+        var state = makeState(raw: "Raw", final: "Initial", now: start)
+        let parent = try #require(state.selectedRevision)
+        let requestID = UUID()
+
+        _ = state.beginVoiceRefinement(requestID: requestID, at: start)
+        let didFinishCapture = state.finishVoiceCapture(requestID: requestID, at: start)
+        #expect(didFinishCapture)
+
+        let staged = HaloReviewReducer.reduce(
+            state: &state,
+            action: .stageVoiceInstruction(
+                requestID: requestID,
+                text: "Make this easier to scan",
+                at: start.addingTimeInterval(2)
+            )
+        )
+        let expectedDraft = HaloInstructionDraft(
+            requestID: requestID,
+            baseRevisionID: parent.id,
+            source: .voice,
+            text: "Make this easier to scan"
+        )
+
+        #expect(staged == .voiceRefinementPhaseChanged(.awaitingConfirmation(expectedDraft)))
+        #expect(state.voiceRefinementPhase.instructionDraft == expectedDraft)
+        #expect(!state.voiceRefinementPhase.isProcessing)
+        #expect(!state.canResolveReview)
+        #expect(state.secondsRemaining(at: start.addingTimeInterval(121)) == 1)
+
+        let submitted = HaloReviewReducer.reduce(
+            state: &state,
+            action: .submitInstructionDraft(at: start.addingTimeInterval(3))
+        )
+        #expect(submitted == .instructionSubmitted(expectedDraft))
+        #expect(
+            state.voiceRefinementPhase == .refining(
+                HaloVoiceRefinementRequest(
+                    id: requestID,
+                    baseRevisionID: parent.id,
+                    source: .voice
+                )
+            )
+        )
+        #expect(state.voiceRefinementPhase.instructionDraft == nil)
+    }
+
+    @Test func typedInstructionCanBeEditedAndProducesTypedRevision() throws {
+        let start = Date(timeIntervalSince1970: 8_000)
+        var state = makeState(raw: "Raw", final: "Initial", now: start)
+        let parent = try #require(state.selectedRevision)
+        let requestID = UUID()
+
+        let began = HaloReviewReducer.reduce(
+            state: &state,
+            action: .beginTypedInstruction(requestID: requestID, at: start)
+        )
+        #expect(
+            began == .voiceRefinementPhaseChanged(
+                .editingInstruction(
+                    HaloInstructionDraft(
+                        requestID: requestID,
+                        baseRevisionID: parent.id,
+                        source: .typed,
+                        text: ""
+                    )
+                )
+            )
+        )
+
+        _ = HaloReviewReducer.reduce(
+            state: &state,
+            action: .updateInstructionDraft(
+                requestID: requestID,
+                text: "Use a friendlier opening",
+                at: start.addingTimeInterval(4)
+            )
+        )
+        let submitted = HaloReviewReducer.reduce(
+            state: &state,
+            action: .submitInstructionDraft(at: start.addingTimeInterval(5))
+        )
+        let draft = try #require(state.voiceRefinementPhase.activeRequest)
+        #expect(draft.source == .typed)
+        #expect(
+            submitted == .instructionSubmitted(
+                HaloInstructionDraft(
+                    requestID: requestID,
+                    baseRevisionID: parent.id,
+                    source: .typed,
+                    text: "Use a friendlier opening"
+                )
+            )
+        )
+
+        let revision = makeRevision(
+            text: "Hello! Here is the result.",
+            parentID: parent.id,
+            action: .typedRefinement
+        )
+        let completion = HaloReviewReducer.reduce(
+            state: &state,
+            action: .completeVoiceRefinement(
+                requestID: requestID,
+                revision: revision,
+                at: start.addingTimeInterval(6)
+            )
+        )
+        #expect(completion == .revisionAppended(revision.id))
+        #expect(state.selectedRevision?.action == .typedRefinement)
+    }
+
+    @Test func instructionDraftExpiresAndClearsWithoutChangingRevision() throws {
+        let start = Date(timeIntervalSince1970: 9_000)
+        var state = makeState(raw: "Raw", final: "Initial", now: start)
+        let original = try #require(state.selectedRevision)
+        let requestID = UUID()
+
+        _ = state.beginVoiceRefinement(requestID: requestID, at: start)
+        _ = state.finishVoiceCapture(requestID: requestID, at: start)
+        _ = state.stageVoiceInstruction(
+            requestID: requestID,
+            text: "Shorten this",
+            at: start
+        )
+
+        let effect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .timeout(at: start.addingTimeInterval(HaloReviewState.inactivityLifetime))
+        )
+        #expect(effect == .expired)
+        #expect(state.voiceRefinementPhase == .idle)
+        #expect(state.selectedRevisionID == original.id)
+        #expect(state.revisions.count == 1)
+    }
+
+    @Test func staleTypedEditorUpdateCannotMutateANewerDraft() throws {
+        let start = Date(timeIntervalSince1970: 9_500)
+        var state = makeState(raw: "Raw", final: "Initial", now: start)
+        let staleRequestID = UUID()
+        let currentRequestID = UUID()
+
+        _ = state.beginTypedInstruction(requestID: staleRequestID, at: start)
+        _ = state.cancelVoiceRefinement(at: start.addingTimeInterval(1))
+        _ = state.beginTypedInstruction(
+            requestID: currentRequestID,
+            at: start.addingTimeInterval(2)
+        )
+
+        let effect = HaloReviewReducer.reduce(
+            state: &state,
+            action: .updateInstructionDraft(
+                requestID: staleRequestID,
+                text: "Stale callback",
+                at: start.addingTimeInterval(3)
+            )
+        )
+
+        #expect(effect == .ignored)
+        #expect(state.voiceRefinementPhase.instructionDraft?.requestID == currentRequestID)
+        #expect(state.voiceRefinementPhase.instructionDraft?.text == "")
+    }
+
+    @Test func expiredInstructionCannotBeSubmitted() throws {
+        let start = Date(timeIntervalSince1970: 9_800)
+        var state = makeState(raw: "Raw", final: "Initial", now: start)
+        let requestID = UUID()
+
+        _ = state.beginTypedInstruction(requestID: requestID, at: start)
+        _ = state.updateInstructionDraft(
+            requestID: requestID,
+            "Make this clearer",
+            at: start
+        )
+
+        let submitted = HaloReviewReducer.reduce(
+            state: &state,
+            action: .submitInstructionDraft(
+                at: start.addingTimeInterval(HaloReviewState.inactivityLifetime)
+            )
+        )
+
+        #expect(submitted == .ignored)
+        #expect(state.voiceRefinementPhase == .idle)
+        #expect(state.isExpired)
+        #expect(!state.voiceRefinementPhase.isProcessing)
+    }
+
     private func makeState(
         raw: String,
         final: String,
