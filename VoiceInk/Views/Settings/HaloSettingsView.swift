@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HaloSettingsView: View {
     @EnvironmentObject private var capabilities: HaloCapabilityStore
+    @EnvironmentObject private var engine: VoiceInkEngine
     @EnvironmentObject private var recorderUIManager: RecorderUIManager
     @EnvironmentObject private var navigation: MainWindowNavigation
 
@@ -105,6 +106,37 @@ struct HaloSettingsView: View {
             Toggle("Time-Shift Capture", isOn: $capabilities.timeShiftEnabled)
 
             if capabilities.timeShiftEnabled {
+                LabeledContent {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(engine.timeShiftPresentation.statusLabel)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(timeShiftStatusColor)
+                        Text(engine.timeShiftPresentation.detailLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } label: {
+                    Label("Status", systemImage: engine.timeShiftPresentation.systemImage)
+                }
+
+                HStack(spacing: 8) {
+                    Button(timeShiftArmActionLabel) {
+                        Task { @MainActor in
+                            await engine.toggleTimeShiftArming()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!canToggleTimeShift)
+
+                    Button("Capture Last 15 Seconds") {
+                        Task { @MainActor in
+                            await engine.captureTimeShift()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(engine.timeShiftPresentation.kind != .armed)
+                }
+
                 LabeledContent("Arm or Disarm") {
                     ShortcutRecorder(action: .toggleTimeShift)
                         .controlSize(.small)
@@ -118,6 +150,35 @@ struct HaloSettingsView: View {
 
             Text("Time-Shift is one-shot and starts disarmed. While armed, it keeps at most 15 seconds in memory, writes no audio file, and uploads nothing until you choose Capture.")
                 .settingsDescription()
+        }
+    }
+
+    private var timeShiftArmActionLabel: String {
+        switch engine.timeShiftPresentation.kind {
+        case .arming, .armed:
+            return String(localized: "Disarm")
+        case .disabled, .unavailable, .ready, .capturing, .processing:
+            return String(localized: "Arm")
+        }
+    }
+
+    private var canToggleTimeShift: Bool {
+        switch engine.timeShiftPresentation.kind {
+        case .ready, .arming, .armed:
+            return true
+        case .disabled, .unavailable, .capturing, .processing:
+            return false
+        }
+    }
+
+    private var timeShiftStatusColor: Color {
+        switch engine.timeShiftPresentation.tone {
+        case .muted:
+            return .secondary
+        case .accent:
+            return AppTheme.Accent.primary
+        case .warning:
+            return AppTheme.Status.warningStrong
         }
     }
 

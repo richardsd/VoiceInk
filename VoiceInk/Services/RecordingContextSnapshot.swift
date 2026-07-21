@@ -53,4 +53,38 @@ enum RecordingContextCaptureService {
             },
         ]
     }
+
+    /// Captures only the context sources explicitly enabled by the frozen
+    /// Mode. Time-Shift calls this after the user invokes Capture, never while
+    /// the rolling memory buffer is merely armed.
+    static func captureSnapshot(
+        useClipboard: Bool,
+        useSelectedText: Bool,
+        useScreen: Bool
+    ) async -> RecordingContextSnapshot? {
+        guard useClipboard || useSelectedText || useScreen else { return nil }
+
+        let clipboardText = useClipboard
+            ? NSPasteboard.general.string(forType: .string)
+            : nil
+        async let selectedText: String? = {
+            guard useSelectedText, !Task.isCancelled else { return nil }
+            return await SelectedTextService.fetchSelectedText()
+        }()
+        async let screenText: String? = {
+            guard useScreen,
+                CGPreflightScreenCaptureAccess(),
+                !Task.isCancelled
+            else {
+                return nil
+            }
+            return await ScreenCaptureService().captureAndExtractText()
+        }()
+
+        let store = RecordingContextSnapshotStore()
+        store.updateClipboardText(clipboardText)
+        store.updateSelectedText(await selectedText)
+        store.updateScreenText(await screenText)
+        return store.snapshot
+    }
 }

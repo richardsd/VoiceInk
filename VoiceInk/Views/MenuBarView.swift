@@ -108,6 +108,32 @@ struct MenuBarView: View {
                 }
             }
 
+            Menu {
+                Text(engine.timeShiftPresentation.detailLabel)
+                    .foregroundStyle(.secondary)
+
+                Divider()
+
+                Button(timeShiftArmActionLabel) {
+                    Task { @MainActor in
+                        await engine.toggleTimeShiftArming()
+                    }
+                }
+                .disabled(!canToggleTimeShift)
+
+                Button("Capture Last 15 Seconds") {
+                    Task { @MainActor in
+                        await engine.captureTimeShift()
+                    }
+                }
+                .disabled(engine.timeShiftPresentation.kind != .armed)
+            } label: {
+                Label(
+                    engine.timeShiftPresentation.menuLabel,
+                    systemImage: engine.timeShiftPresentation.systemImage
+                )
+            }
+
             Divider()
 
             Button("Retry Last Transcription") {
@@ -163,6 +189,24 @@ struct MenuBarView: View {
             Button("Quit VoiceInk") {
                 NSApplication.shared.terminate(nil)
             }
+        }
+    }
+
+    private var timeShiftArmActionLabel: String {
+        switch engine.timeShiftPresentation.kind {
+        case .arming, .armed:
+            return String(localized: "Disarm Time-Shift")
+        case .disabled, .unavailable, .ready, .capturing, .processing:
+            return String(localized: "Arm Time-Shift")
+        }
+    }
+
+    private var canToggleTimeShift: Bool {
+        switch engine.timeShiftPresentation.kind {
+        case .ready, .arming, .armed:
+            return true
+        case .disabled, .unavailable, .capturing, .processing:
+            return false
         }
     }
 

@@ -180,6 +180,7 @@ struct TimeShiftCaptureMetrics: Equatable, Sendable {
 
 enum TimeShiftCaptureEvent: Equatable, Sendable {
     case availabilityRestored
+    case modelSupportChanged(isSupported: Bool)
     case beginArming(sessionID: UUID)
     case armingSucceeded(sessionID: UUID)
     case armingFailed(sessionID: UUID, reason: TimeShiftUnavailableReason)
@@ -225,6 +226,29 @@ struct TimeShiftCaptureStateMachine: Sendable {
             if case .unavailable = state {
                 state = .unarmed
                 effects = [.clearAudio]
+            }
+
+        case .modelSupportChanged(let isSupported):
+            if isSupported {
+                if state == .unavailable(.unsupportedModel) {
+                    state = .unarmed
+                    effects = [.clearAudio]
+                }
+            } else {
+                switch state {
+                case .unarmed:
+                    state = .unavailable(.unsupportedModel)
+                    effects = [.clearAudio]
+                case .arming, .armed:
+                    state = .unavailable(.unsupportedModel)
+                    latestMetrics = nil
+                    effects = Self.fullCleanupEffects
+                case .unavailable(.unsupportedModel), .capturing, .processing:
+                    break
+                case .unavailable:
+                    // A stronger lifecycle/permission reason remains visible.
+                    break
+                }
             }
 
         case .beginArming(let sessionID):

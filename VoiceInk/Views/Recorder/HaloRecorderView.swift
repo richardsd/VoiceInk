@@ -547,7 +547,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                         systemImage: showsRefocus ? "scope" : nil,
                         emphasized: true,
                         isDisabled: presentation.isReviewDelivering
-                            || presentation.isReviewOperationActive,
+                            || presentation.isReviewOperationActive
+                            || presentation.reviewFeedback?.blocksDelivery == true,
                         action: showsRetry ? onRetry : (showsRefocus ? onRefocus : onApply)
                     )
                     HaloReviewActionButton(
@@ -1183,7 +1184,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         switch feedback {
         case .copied:
             return "checkmark.circle.fill"
-        case .copyFailed, .destinationChanged, .pasteFailed, .deliveryUnavailable:
+        case .copyFailed, .destinationChanged, .destinationUnavailable, .pasteFailed,
+            .deliveryUnavailable:
             return "exclamationmark.triangle.fill"
         }
     }
@@ -1192,7 +1194,8 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
         switch feedback {
         case .copied:
             return AppTheme.Status.positive.opacity(0.95)
-        case .copyFailed, .destinationChanged, .pasteFailed, .deliveryUnavailable:
+        case .copyFailed, .destinationChanged, .destinationUnavailable, .pasteFailed,
+            .deliveryUnavailable:
             return AppTheme.Status.warningStrong.opacity(0.95)
         }
     }

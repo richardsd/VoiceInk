@@ -103,6 +103,7 @@ enum PasteReviewFeedback: Equatable, Sendable {
     case copied
     case copyFailed
     case destinationChanged(PasteReviewDestinationMismatch)
+    case destinationUnavailable
     case pasteFailed
     case deliveryUnavailable
 
@@ -115,6 +116,15 @@ enum PasteReviewFeedback: Equatable, Sendable {
             return true
         }
         return false
+    }
+
+    var blocksDelivery: Bool {
+        switch self {
+        case .destinationUnavailable, .deliveryUnavailable:
+            return true
+        case .copied, .copyFailed, .destinationChanged, .pasteFailed:
+            return false
+        }
     }
 
     var message: String {
@@ -133,6 +143,8 @@ enum PasteReviewFeedback: Equatable, Sendable {
                 )
             }
             return String(localized: "Return to the original text field to apply this transcript.")
+        case .destinationUnavailable:
+            return String(localized: "No compatible text field was captured. Copy the result instead.")
         case .pasteFailed:
             return String(localized: "Paste was not delivered. Try again or copy the result.")
         case .deliveryUnavailable:

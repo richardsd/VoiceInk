@@ -49,6 +49,9 @@ protocol RecorderPanelPresenting: AnyObject {
     func clearPasteReview()
     func showHaloPasteConfirmation()
     func showNoSpeechDetected()
+    /// Starts a one-shot Halo surface without changing the persisted recorder
+    /// style. Time-Shift calls this only after Capture has consumed its buffer.
+    func beginTimeShiftHaloSession() -> PasteReviewDestinationSnapshot?
 }
 
 extension RecorderPanelPresenting {
@@ -59,6 +62,8 @@ extension RecorderPanelPresenting {
             await dismissRecorderPanel()
         }
     }
+
+    func beginTimeShiftHaloSession() -> PasteReviewDestinationSnapshot? { nil }
 }
 
 @MainActor
@@ -252,6 +257,19 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
         haloNoSpeechTask?.cancel()
         haloNoSpeechTask = nil
         engine?.clearHaloSessionDeliveryOverride()
+        if let status = engine?.timeShiftWorkflowStatus,
+            status == .capturing || status == .processing
+        {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.cancelRecording()
+                self.effectiveRecorderPanelStyle = RecorderPanelRouting.effectiveStyle(
+                    selectedStyle: self.recorderPanelStyle,
+                    outputMode: ModeRuntimeResolver.outputConfiguration().outputMode
+                )
+            }
+            return
+        }
         if engine?.recordingState == .reviewing {
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -569,6 +587,27 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
             self.haloNoSpeechTask = nil
             await self.dismissRecorderPanel()
         }
+    }
+
+    func beginTimeShiftHaloSession() -> PasteReviewDestinationSnapshot? {
+        guard let engine, let recorder else { return nil }
+
+        let previousStyle = effectiveRecorderPanelStyle
+        if isRecorderPanelVisible, previousStyle != .halo {
+            hideRecorderPanel(style: previousStyle)
+        }
+
+        effectiveRecorderPanelStyle = .halo
+        let manager = ensureHaloWindowManager(engine: engine, recorder: recorder)
+        manager.beginRecordingSession()
+
+        if isRecorderPanelVisible {
+            manager.show()
+        } else {
+            isRecorderPanelVisible = true
+        }
+
+        return manager.capturedDestinationSnapshot
     }
 
     // MARK: - Notification Handling

@@ -208,6 +208,17 @@ struct PasteReviewSafetyTests {
         #expect(staged.expiresAt == original.expiresAt)
     }
 
+    @Test func destinationUnavailableMakesTimeShiftReviewCopyOnly() {
+        let feedback = PasteReviewFeedback.destinationUnavailable
+
+        #expect(feedback.blocksDelivery)
+        #expect(!feedback.allowsRetry)
+        #expect(!feedback.allowsRefocus)
+        #expect(feedback.message.contains("Copy"))
+        #expect(!PasteReviewFeedback.copied.blocksDelivery)
+        #expect(!PasteReviewFeedback.pasteFailed.blocksDelivery)
+    }
+
     private func destination(
         pid: pid_t?,
         app: String?,

@@ -120,9 +120,14 @@ final class TimeShiftCaptureController: ObservableObject {
         self.modelSupportProvider = modelSupportProvider
         self.capabilityNotificationObject = capabilityNotificationObject
 
-        let initialState: TimeShiftCaptureState = capabilityEnabledProvider()
-            ? .unarmed
-            : .unavailable(.disabled)
+        let initialState: TimeShiftCaptureState
+        if !capabilityEnabledProvider() {
+            initialState = .unavailable(.disabled)
+        } else if !modelSupportProvider() {
+            initialState = .unavailable(.unsupportedModel)
+        } else {
+            initialState = .unarmed
+        }
         stateMachine = TimeShiftCaptureStateMachine(initialState: initialState)
         state = initialState
 
@@ -336,6 +341,17 @@ final class TimeShiftCaptureController: ObservableObject {
         }
     }
 
+    /// Reconciles the currently selected transcription model without applying
+    /// the normal-recording fallback. Captured processing is deliberately left
+    /// alone because its exact route is frozen by the workflow coordinator.
+    func reconcileModelSupport() async {
+        let transition = stateMachine.handle(
+            .modelSupportChanged(isSupported: modelSupportProvider())
+        )
+        publish(transition)
+        await execute(transition.effects)
+    }
+
     private func prepareAvailabilityForArm() async -> Bool {
         guard capabilityEnabledProvider() else {
             await handleLifecycle(.disabled)
@@ -351,19 +367,7 @@ final class TimeShiftCaptureController: ObservableObject {
             return false
         }
         guard modelSupportProvider() else {
-            if case .unavailable = state {
-                // Replace an older recoverable reason with the current model
-                // capability reason without ever arming.
-                publish(stateMachine.handle(.availabilityRestored))
-            }
-            guard state == .unarmed else { return false }
-            let sessionID = UUID()
-            publish(stateMachine.handle(.beginArming(sessionID: sessionID)))
-            let failed = stateMachine.handle(
-                .armingFailed(sessionID: sessionID, reason: .unsupportedModel)
-            )
-            publish(failed)
-            await execute(failed.effects)
+            await reconcileModelSupport()
             record(action: .arm, outcome: .unsupportedModel)
             return false
         }
@@ -376,7 +380,7 @@ final class TimeShiftCaptureController: ObservableObject {
     }
 
     private func restoreAvailabilityIfSafe() async {
-        guard capabilityEnabledProvider(), permissionProvider(),
+        guard capabilityEnabledProvider(), permissionProvider(), modelSupportProvider(),
             !isSleeping, !isScreenLocked, !isTerminating
         else {
             return

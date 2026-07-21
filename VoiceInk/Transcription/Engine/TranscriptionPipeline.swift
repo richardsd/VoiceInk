@@ -64,7 +64,10 @@ class TranscriptionPipeline {
     ///   - onDismiss: Called when delivery should close the recorder panel.
     func run(
         transcription: Transcription,
-        audioURL: URL,
+        audioURL: URL?,
+        audioSource: TranscriptionAudioSource? = nil,
+        knownAudioDuration: TimeInterval? = nil,
+        customVocabulary: [String] = [],
         transcriptionConfiguration: TranscriptionRuntimeConfiguration,
         formattingConfiguration resolveFormattingConfiguration: @escaping () -> TranscriptionFormattingConfiguration,
         session: TranscriptionSession?,
@@ -83,6 +86,18 @@ class TranscriptionPipeline {
         assistant: AssistantHooks = .inactive
     ) async -> TranscriptionPipelineOutcome {
         let model = transcriptionConfiguration.model
+        let resolvedAudioSource: TranscriptionAudioSource
+        if let audioSource {
+            resolvedAudioSource = audioSource
+        } else if let audioURL {
+            resolvedAudioSource = .file(audioURL)
+        } else {
+            transcription.text = String(localized: "Transcription Failed: Audio source unavailable")
+            transcription.transcriptionStatus = TranscriptionStatus.failed.rawValue
+            try? modelContext.save()
+            await onDismiss()
+            return .finished
+        }
         var finalText: String?
         var responseError: String?
         var outputForDelivery: OutputRuntimeConfiguration?
@@ -101,6 +116,14 @@ class TranscriptionPipeline {
             return frozenRecordingContext
         }
 
+        func resolvedDuration() async -> TimeInterval {
+            if let knownAudioDuration {
+                return max(0, knownAudioDuration)
+            }
+            guard let audioURL else { return 0 }
+            return await AudioFileMetadata.duration(for: audioURL)
+        }
+
         func finishCanceledTranscription() async {
             await onCancel()
 
@@ -108,7 +131,7 @@ class TranscriptionPipeline {
             if transcription.duration > 0 {
                 canceledDuration = nil
             } else {
-                let duration = await AudioFileMetadata.duration(for: audioURL)
+                let duration = await resolvedDuration()
                 canceledDuration = duration > 0 ? duration : nil
             }
 
@@ -131,12 +154,14 @@ class TranscriptionPipeline {
                 try modelContext.save()
                 NotificationCenter.default.post(name: .transcriptionDeleted, object: nil)
 
-                do {
-                    try FileManager.default.removeItem(at: audioURL)
-                } catch where (error as NSError).code == NSFileNoSuchFileError {
-                    // The recorder or a transcription service already removed it.
-                } catch {
-                    logger.error("Failed to remove audio for an empty transcription")
+                if let audioURL {
+                    do {
+                        try FileManager.default.removeItem(at: audioURL)
+                    } catch where (error as NSError).code == NSFileNoSuchFileError {
+                        // The recorder or a transcription service already removed it.
+                    } catch {
+                        logger.error("Failed to remove audio for an empty transcription")
+                    }
                 }
             } catch {
                 logger.error("Failed to discard empty transcription: \(error, privacy: .public)")
@@ -151,14 +176,15 @@ class TranscriptionPipeline {
         do {
             let transcriptionStart = Date()
             var text: String
-            if let session {
+            if let session, let audioURL {
                 text = try await session.transcribe(audioURL: audioURL)
             } else {
                 text = try await serviceRegistry.transcribe(
-                    audioURL: audioURL,
+                    source: resolvedAudioSource,
                     model: model,
-                    context: transcriptionConfiguration.requestContext
-                )
+                    context: transcriptionConfiguration.requestContext,
+                    customVocabulary: customVocabulary
+                ).text
             }
             text = TranscriptionOutputFilter.filter(text)
             let transcriptionDuration = Date().timeIntervalSince(transcriptionStart)
@@ -203,7 +229,7 @@ class TranscriptionPipeline {
             text = WordReplacementService.shared.applyReplacements(to: text, using: modelContext)
             let cleanedText = text
 
-            let actualDuration = await AudioFileMetadata.duration(for: audioURL)
+            let actualDuration = await resolvedDuration()
 
             transcription.text = cleanedText
             transcription.duration = actualDuration
@@ -301,6 +327,11 @@ class TranscriptionPipeline {
             }
 
             transcription.transcriptionStatus = TranscriptionStatus.completed.rawValue
+        } catch let error as InMemoryTranscriptionError
+            where error == .emptyAudio || error == .emptyResult
+        {
+            discardEmptyTranscription()
+            return .noSpeechDetected
         } catch {
             let errorDescription = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
 

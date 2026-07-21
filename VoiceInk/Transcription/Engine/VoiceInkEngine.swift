@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import Combine
 import Foundation
 import SwiftData
 import SwiftUI
@@ -109,6 +110,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
     @Published private(set) var haloVoiceInstructionPartialTranscript = ""
     @Published private(set) var haloVoiceCommandConfirmation: HaloVoiceCommandConfirmation?
     @Published private(set) var haloCapabilitySnapshot: HaloCapabilitySnapshot
+    @Published private(set) var timeShiftPresentation = TimeShiftStatusPresentation.project(
+        capabilityEnabled: false,
+        captureState: .unavailable(.disabled)
+    )
+    @Published private(set) var timeShiftWorkflowStatus: TimeShiftWorkflowStatus = .disabled
     var currentSession: TranscriptionSession?
     private var currentSessionTranscriptionConfiguration: TranscriptionRuntimeConfiguration?
     private var activeRecordingStartID: UUID?
@@ -128,6 +134,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private var isResolvingPasteReview = false
     private var pasteReviewResolutionGate = PasteReviewResolutionGate()
     private var activePasteReviewDestination: PasteReviewDestinationSnapshot?
+    private var timeShiftCancellables = Set<AnyCancellable>()
 
     let recorder = Recorder()
     var recordedFile: URL? = nil
@@ -151,6 +158,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private let haloOutcomeRecorder: any HaloOutcomeRecording
     private let haloCapabilityStore: HaloCapabilityStore
     private let pipeline: TranscriptionPipeline
+    private let timeShiftPulseWindowManager = TimeShiftPulseWindowManager()
+    private(set) lazy var timeShiftWorkflow: TimeShiftWorkflowCoordinator = makeTimeShiftWorkflow()
 
     let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "VoiceInkEngine")
 
@@ -212,8 +221,100 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
         super.init()
 
+        configureTimeShiftWorkflow()
         setupNotifications()
         createRecordingsDirectoryIfNeeded()
+    }
+
+    private func makeTimeShiftWorkflow() -> TimeShiftWorkflowCoordinator {
+        let routeProvider = StrictTimeShiftRouteProvider(
+            selectedModelNameProvider: { [weak self] in
+                self?.transcriptionModelManager.currentTranscriptionModel?.name
+            },
+            captureSelectedModelNameProvider: { [weak self] in
+                self?.selectedTimeShiftCaptureModelName()
+            },
+            availableModelsProvider: { [weak self] in
+                self?.transcriptionModelManager.usableModels ?? []
+            }
+        )
+        let processor = ClosureTimeShiftWorkflowProcessor { [weak self] request in
+            guard let self else { throw CancellationError() }
+            try await self.processTimeShiftWorkflow(request)
+        }
+        return TimeShiftWorkflowCoordinator(
+            routeProvider: routeProvider,
+            processor: processor,
+            leaseCoordinator: AudioCaptureLeaseCoordinator.applicationShared,
+            capabilityEnabledProvider: { [weak self] in
+                self?.haloCapabilityStore.snapshot.timeShiftEnabled ?? false
+            },
+            capabilityNotificationObject: haloCapabilityStore
+        )
+    }
+
+    private func configureTimeShiftWorkflow() {
+        let workflow = timeShiftWorkflow
+        timeShiftPresentation = workflow.presentation
+        timeShiftWorkflowStatus = workflow.status
+        timeShiftPulseWindowManager.update(workflow.presentation)
+
+        workflow.captureController.$state
+            .sink { [weak self] state in
+                guard let self else { return }
+                // `@Published` emits in willSet. Project the emitted state
+                // instead of rereading the controller's previous value.
+                let presentation = TimeShiftStatusPresentation.project(
+                    capabilityEnabled: self.haloCapabilityStore.snapshot.timeShiftEnabled,
+                    captureState: state
+                )
+                self.timeShiftPresentation = presentation
+                self.timeShiftPulseWindowManager.update(presentation)
+            }
+            .store(in: &timeShiftCancellables)
+
+        workflow.$status
+            .sink { [weak self] status in
+                guard let self else { return }
+                self.timeShiftWorkflowStatus = status
+                let presentation: TimeShiftStatusPresentation
+                if status == .failed(.unsupportedModel) {
+                    presentation = .project(
+                        capabilityEnabled: true,
+                        captureState: .unavailable(.unsupportedModel)
+                    )
+                } else {
+                    return
+                }
+                self.timeShiftPresentation = presentation
+                self.timeShiftPulseWindowManager.update(presentation)
+            }
+            .store(in: &timeShiftCancellables)
+
+        transcriptionModelManager.$currentTranscriptionModel
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    await self?.timeShiftWorkflow.reconcileModelAvailability()
+                }
+            }
+            .store(in: &timeShiftCancellables)
+
+        transcriptionModelManager.$allAvailableModels
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    await self?.timeShiftWorkflow.reconcileModelAvailability()
+                }
+            }
+            .store(in: &timeShiftCancellables)
+    }
+
+    private func selectedTimeShiftCaptureModelName() -> String? {
+        if let mode = ModeManager.shared.currentEffectiveConfiguration {
+            return mode.selectedTranscriptionModelName
+        }
+        return transcriptionModelManager.currentTranscriptionModel?.name
     }
 
     private func createRecordingsDirectoryIfNeeded() {
@@ -260,6 +361,89 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     func clearHaloSessionDeliveryOverride() {
         haloSessionDeliveryOverride = nil
+    }
+
+    func toggleTimeShiftArming() async {
+        let isAlreadyActive: Bool
+        switch timeShiftWorkflowStatus {
+        case .arming, .armed:
+            isAlreadyActive = true
+        case .disabled, .unavailable, .ready, .capturing, .processing, .failed:
+            isAlreadyActive = false
+        }
+
+        guard isAlreadyActive
+            || (recordingState == .idle && pendingPasteReview == nil)
+        else {
+            NotificationManager.shared.showNotification(
+                title: String(localized: "Finish the current VoiceInk session before arming Time-Shift."),
+                type: .warning
+            )
+            return
+        }
+
+        await timeShiftWorkflow.toggleArming()
+        if timeShiftWorkflowStatus == .unavailable(.unsupportedModel) {
+            NotificationManager.shared.showNotification(
+                title: String(localized: "The selected transcription model does not support memory-only Time-Shift audio."),
+                type: .warning
+            )
+        }
+    }
+
+    func captureTimeShift() async {
+        guard recordingState == .idle, pendingPasteReview == nil else {
+            NotificationManager.shared.showNotification(
+                title: String(localized: "Finish the current VoiceInk session before capturing Time-Shift."),
+                type: .warning
+            )
+            return
+        }
+
+        let outcome = await timeShiftWorkflow.capture()
+        switch outcome {
+        case .completed:
+            break
+        case .notArmed:
+            NotificationManager.shared.showNotification(
+                title: String(localized: "Arm Time-Shift before capturing the last 15 seconds."),
+                type: .warning
+            )
+        case .failed(.unsupportedModel):
+            NotificationManager.shared.showNotification(
+                title: String(localized: "This Mode’s transcription model cannot process memory-only audio."),
+                type: .warning
+            )
+        case .failed(.cancelled):
+            break
+        case .failed(.transcription(let failure)):
+            NotificationManager.shared.showNotification(
+                title: timeShiftFailureMessage(failure),
+                type: .warning
+            )
+        }
+    }
+
+    private func timeShiftFailureMessage(_ failure: InMemoryTranscriptionError) -> String {
+        switch failure {
+        case .credentialsUnavailable, .authenticationExpired:
+            return String(localized: "Time-Shift could not authenticate the selected transcription model.")
+        case .rateLimited:
+            return String(localized: "Time-Shift is temporarily rate limited. Try again shortly.")
+        case .timedOut:
+            return String(localized: "Time-Shift transcription timed out.")
+        case .networkUnavailable:
+            return String(localized: "Time-Shift could not reach the selected transcription provider.")
+        case .serverUnavailable:
+            return String(localized: "The selected transcription provider is temporarily unavailable.")
+        case .emptyAudio, .emptyResult:
+            return String(localized: "No speech was detected in the Time-Shift buffer.")
+        case .cancelled:
+            return String(localized: "Time-Shift capture was cancelled.")
+        case .unsupported, .audioEncodingFailed, .fileSourceNotAllowed,
+            .malformedResponse, .failed:
+            return String(localized: "Time-Shift could not prepare this capture.")
+        }
     }
 
     // MARK: - Toggle Record
@@ -625,6 +809,229 @@ class VoiceInkEngine: NSObject, ObservableObject {
         activeRecordingContextStore = nil
     }
 
+    // MARK: - Time-Shift Pipeline
+
+    private func processTimeShiftWorkflow(
+        _ request: TimeShiftWorkflowRequest
+    ) async throws {
+        guard request.deliveryRequirement == .forcedReview,
+            recordingState == .idle,
+            pendingPasteReview == nil
+        else {
+            throw CancellationError()
+        }
+
+        let frozenMode = ModeManager.shared.currentEffectiveConfiguration
+        let selectedModelName = frozenMode?.selectedTranscriptionModelName
+            ?? (frozenMode == nil ? transcriptionModelManager.currentTranscriptionModel?.name : nil)
+        guard selectedModelName == request.model.name else {
+            throw InMemoryTranscriptionError.unsupported(.modelNotRegistered)
+        }
+
+        let language = TranscriptionLanguageSupport.validLanguageOrFallback(
+            frozenMode?.selectedLanguage,
+            for: request.model,
+            realtimeEnabled: false
+        )
+        let transcriptionConfiguration = TranscriptionRuntimeConfiguration(
+            mode: frozenMode,
+            model: request.model,
+            language: language,
+            isRealtimeEnabled: false
+        )
+        let formattingConfiguration = ModeRuntimeResolver.transcriptionFormattingConfiguration(
+            mode: frozenMode
+        )
+        let enhancementConfiguration: EnhancementRuntimeConfiguration?
+        if let enhancementService,
+            let aiService = enhancementService.getAIService()
+        {
+            enhancementConfiguration = ModeRuntimeResolver.currentEnhancementConfiguration(
+                mode: frozenMode,
+                enhancementService: enhancementService,
+                aiService: aiService
+            )
+        } else {
+            enhancementConfiguration = nil
+        }
+        let modeOutput = ModeRuntimeResolver.outputConfiguration(mode: frozenMode)
+        guard modeOutput.outputMode == .paste else {
+            NotificationManager.shared.showNotification(
+                title: String(localized: "Time-Shift Capture is available for Paste Modes."),
+                type: .warning
+            )
+            throw CancellationError()
+        }
+        let forcedReviewOutput = OutputRuntimeConfiguration(
+            mode: frozenMode,
+            outputMode: .paste,
+            haloDeliveryPolicy: .alwaysReview,
+            autoSendKey: modeOutput.autoSendKey,
+            customCommand: nil
+        )
+
+        haloSessionDeliveryOverride = nil
+        shouldCancelRecording = false
+        recordingState = .transcribing
+        let initialDestination = recorderUIManager?.beginTimeShiftHaloSession()
+            ?? pasteReviewDestinationService.frontmostApplicationSnapshot()
+        activePasteReviewDestination = initialDestination
+
+        let contextTask = Task { @MainActor in
+            await RecordingContextCaptureService.captureSnapshot(
+                useClipboard: enhancementConfiguration?.useClipboardContext == true,
+                useSelectedText: enhancementConfiguration?.useSelectedTextContext == true,
+                useScreen: enhancementConfiguration?.useScreenCaptureContext == true
+            )
+        }
+
+        let metadata = transcriptionConfiguration.metadata
+        let transcription = Transcription(
+            text: "",
+            duration: request.metrics.duration,
+            audioFileURL: nil,
+            transcriptionModelName: request.model.displayName,
+            modeName: metadata.name,
+            modeEmoji: metadata.emoji,
+            transcriptionStatus: .pending
+        )
+        modelContext.insert(transcription)
+        do {
+            try modelContext.save()
+            NotificationCenter.default.post(name: .transcriptionCreated, object: transcription)
+        } catch {
+            contextTask.cancel()
+            throw InMemoryTranscriptionError.failed
+        }
+
+        let transcriptionID = transcription.id
+        activePipelineTranscriptionID = transcriptionID
+        var reviewWasStaged = false
+        let pipelineOutcome = await pipeline.run(
+            transcription: transcription,
+            audioURL: nil,
+            audioSource: request.source,
+            knownAudioDuration: request.metrics.duration,
+            customVocabulary: timeShiftCustomVocabulary(),
+            transcriptionConfiguration: transcriptionConfiguration,
+            formattingConfiguration: { formattingConfiguration },
+            session: nil,
+            enhancementConfiguration: { enhancementConfiguration },
+            recordingContextSnapshot: {
+                await contextTask.value
+            },
+            outputConfiguration: { forcedReviewOutput },
+            onOutputConfigurationResolved: { _ in },
+            onStateChange: { [weak self] state in
+                guard let self, self.activePipelineTranscriptionID == transcriptionID else { return }
+                self.recordingState = state
+            },
+            shouldCancel: { [weak self] in
+                guard let self else { return true }
+                return Task.isCancelled
+                    || self.canceledPipelineTranscriptionIDs.contains(transcriptionID)
+                    || (self.activePipelineTranscriptionID == transcriptionID
+                        && self.shouldCancelRecording)
+            },
+            onCancel: {},
+            onDismiss: { [weak self] in
+                guard let self, self.activePipelineTranscriptionID == transcriptionID else { return }
+                await self.recorderUIManager?.dismissRecorderPanel()
+            },
+            shouldUseHaloDelivery: { _ in true },
+            haloSessionOverride: { .forceReview },
+            handleHaloPaste: { [weak self] review, _ in
+                guard let self, self.activePipelineTranscriptionID == transcriptionID else {
+                    return true
+                }
+
+                let resolvedDestination =
+                    (self.recorderUIManager as? any PasteReviewDestinationProviding)?
+                    .pasteReviewDestinationSnapshot
+                    ?? initialDestination
+                let feedback: PasteReviewFeedback? = resolvedDestination.processID == nil
+                    ? .destinationUnavailable
+                    : nil
+                reviewWasStaged = self.stagePasteReview(
+                    review.withDestination(resolvedDestination),
+                    feedback: feedback,
+                    notifyReady: true
+                )
+
+                if !reviewWasStaged {
+                    self.logger.error("Time-Shift review could not be presented")
+                    NotificationManager.shared.showNotification(
+                        title: String(localized: "Time-Shift saved the transcript, but Halo review could not be opened."),
+                        type: .warning
+                    )
+                }
+                // Mandatory review owns this delivery even if presentation
+                // fails; falling through would paste without user approval.
+                return true
+            }
+        )
+
+        contextTask.cancel()
+        _ = await contextTask.value
+        let didFinishActivePipeline = activePipelineTranscriptionID == transcriptionID
+        if didFinishActivePipeline {
+            await finishRecorderSession()
+            await cleanupResources()
+            activePipelineTranscriptionID = nil
+            shouldCancelRecording = false
+            activePasteReviewDestination = nil
+            if pendingPasteReview?.transcriptionID == transcriptionID {
+                isHaloVoiceRefinementReady = haloReviewState?.session.transcriptionConfiguration != nil
+            }
+        }
+        canceledPipelineTranscriptionIDs.remove(transcriptionID)
+
+        switch pipelineOutcome {
+        case .noSpeechDetected:
+            if didFinishActivePipeline {
+                recordingState = .idle
+                recorderUIManager?.showNoSpeechDetected()
+            }
+        case .canceled:
+            if didFinishActivePipeline, pendingPasteReview == nil {
+                recordingState = .idle
+            }
+            throw CancellationError()
+        case .finished:
+            if transcription.transcriptionStatus == TranscriptionStatus.failed.rawValue {
+                if didFinishActivePipeline, pendingPasteReview == nil {
+                    recordingState = .idle
+                }
+                throw InMemoryTranscriptionError.failed
+            }
+            guard reviewWasStaged else {
+                if didFinishActivePipeline, pendingPasteReview == nil {
+                    recordingState = .idle
+                }
+                throw InMemoryTranscriptionError.failed
+            }
+        }
+    }
+
+    private func timeShiftCustomVocabulary() -> [String] {
+        let descriptor = FetchDescriptor<VocabularyWord>(
+            sortBy: [SortDescriptor(\VocabularyWord.word)]
+        )
+        guard let words = try? modelContext.fetch(descriptor) else { return [] }
+
+        var seen = Set<String>()
+        return words.compactMap { item in
+            let value = item.word.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return nil }
+            let key = value.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            )
+            guard seen.insert(key).inserted else { return nil }
+            return value
+        }
+    }
+
     // MARK: - Pipeline Dispatch
 
     private func runPipeline(
@@ -987,6 +1394,11 @@ class VoiceInkEngine: NSObject, ObservableObject {
             reviewState.secondsRemaining() > 0
         else {
             await cancelPendingPasteReview(reason: .expiry)
+            return
+        }
+
+
+        guard pasteReviewFeedback?.blocksDelivery != true else {
             return
         }
 
@@ -2701,6 +3113,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             shouldFinishSessionImmediately = false
         case .transcribing, .enhancing:
             requestRecordingCancellation()
+            await timeShiftWorkflow.cancelProcessing()
             partialTranscript = ""
             recordingState = .idle
             shouldFinishSessionImmediately = false
@@ -2721,6 +3134,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
     func resetRecordingSession() async {
         haloSessionDeliveryOverride = nil
+        await timeShiftWorkflow.disarm()
         discardPendingPasteReview()
         cancelCurrentSession()
         activeRecordingStartID = nil
@@ -2934,6 +3348,24 @@ class VoiceInkEngine: NSObject, ObservableObject {
             name: .haloCapabilitiesDidChange,
             object: haloCapabilityStore
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleTimeShiftToggleRequested),
+            name: .haloTimeShiftToggleRequested,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleTimeShiftCaptureRequested),
+            name: .haloTimeShiftCaptureRequested,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleTimeShiftModelSelectionChanged),
+            name: .didChangeModel,
+            object: nil
+        )
     }
 
     @objc func handlePromptChange() {
@@ -2944,6 +3376,24 @@ class VoiceInkEngine: NSObject, ObservableObject {
             if let context = whisperModelManager.whisperContext {
                 await context.setPrompt(currentPrompt)
             }
+        }
+    }
+
+    @objc private func handleTimeShiftToggleRequested() {
+        Task { @MainActor [weak self] in
+            await self?.toggleTimeShiftArming()
+        }
+    }
+
+    @objc private func handleTimeShiftCaptureRequested() {
+        Task { @MainActor [weak self] in
+            await self?.captureTimeShift()
+        }
+    }
+
+    @objc private func handleTimeShiftModelSelectionChanged() {
+        Task { @MainActor [weak self] in
+            await self?.timeShiftWorkflow.reconcileModelAvailability()
         }
     }
 
@@ -2991,6 +3441,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     @objc private func handleApplicationWillTerminate() {
+        timeShiftPulseWindowManager.shutdown()
         stopActiveHaloRefinementTask()
         discardPendingPasteReview()
         clearActiveRecordingContext()
