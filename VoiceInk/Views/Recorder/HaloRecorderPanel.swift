@@ -92,6 +92,47 @@ enum HaloReviewInteractionState: Equatable {
     case wholePanelFallback
 }
 
+enum HaloReviewFrameChangeKind: Equatable {
+    case none
+    case positionOnly
+    case size
+}
+
+enum HaloReviewFrameChangeClassifier {
+    static func classify(
+        from currentFrame: CGRect,
+        to targetFrame: CGRect
+    ) -> HaloReviewFrameChangeKind {
+        guard currentFrame != targetFrame else { return .none }
+        return currentFrame.size == targetFrame.size ? .positionOnly : .size
+    }
+}
+
+struct HaloReviewLayoutTransitionTracker {
+    typealias Generation = UInt
+
+    private(set) var activeGeneration: Generation?
+    private var nextGeneration: Generation = 0
+
+    var isActive: Bool { activeGeneration != nil }
+
+    mutating func begin() -> Generation {
+        nextGeneration &+= 1
+        activeGeneration = nextGeneration
+        return nextGeneration
+    }
+
+    mutating func finish(_ generation: Generation) -> Bool {
+        guard activeGeneration == generation else { return false }
+        activeGeneration = nil
+        return true
+    }
+
+    mutating func cancel() {
+        activeGeneration = nil
+    }
+}
+
 enum HaloPanelMouseTransparencyPolicy {
     static func ignoresMouseEvents(
         interactionState: HaloReviewInteractionState,
@@ -122,7 +163,7 @@ final class HaloRecorderPanel: NSPanel {
     private var interactionState: HaloReviewInteractionState = .inactive
     private var interactiveRegions: [HaloInteractionRegion] = []
     private var pendingInteractiveRegions: [HaloInteractionRegion] = []
-    private var isReviewLayoutTransitioning = false
+    private var reviewLayoutTransitionTracker = HaloReviewLayoutTransitionTracker()
     private var localMouseMonitor: Any?
     private var globalMouseMonitor: Any?
 
@@ -166,19 +207,19 @@ final class HaloRecorderPanel: NSPanel {
     }
 
     func show(frame: CGRect) {
-        prepareForFrameChangeIfNeeded(frame)
+        let transitionGeneration = prepareForFrameChangeIfNeeded(frame)
         setFrame(frame, display: true)
-        finishReviewLayoutTransitionIfNeeded()
+        finishReviewLayoutTransitionIfNeeded(generation: transitionGeneration)
         orderFrontRegardless()
         refreshMouseTransparency()
     }
 
     func update(frame: CGRect, animated: Bool) {
-        prepareForFrameChangeIfNeeded(frame)
+        let transitionGeneration = prepareForFrameChangeIfNeeded(frame)
 
         guard animated, isVisible else {
             setFrame(frame, display: true)
-            finishReviewLayoutTransitionIfNeeded()
+            finishReviewLayoutTransitionIfNeeded(generation: transitionGeneration)
             refreshMouseTransparency()
             return
         }
@@ -188,7 +229,7 @@ final class HaloRecorderPanel: NSPanel {
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             animator().setFrame(frame, display: true)
         } completionHandler: { [weak self] in
-            self?.finishReviewLayoutTransitionIfNeeded()
+            self?.finishReviewLayoutTransitionIfNeeded(generation: transitionGeneration)
             self?.refreshMouseTransparency()
         }
     }
@@ -204,7 +245,7 @@ final class HaloRecorderPanel: NSPanel {
 
         interactiveRegions = []
         pendingInteractiveRegions = []
-        isReviewLayoutTransitioning = false
+        reviewLayoutTransitionTracker.cancel()
 
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
@@ -242,7 +283,7 @@ final class HaloRecorderPanel: NSPanel {
         )
         pendingInteractiveRegions = pendingRegions
 
-        guard !isReviewLayoutTransitioning else { return }
+        guard !reviewLayoutTransitionTracker.isActive else { return }
 
         let bounds = contentView?.bounds ?? .zero
         applyInteractiveRegions(
@@ -258,7 +299,7 @@ final class HaloRecorderPanel: NSPanel {
         interactionState = .inactive
         interactiveRegions = []
         pendingInteractiveRegions = []
-        isReviewLayoutTransitioning = false
+        reviewLayoutTransitionTracker.cancel()
         stopMouseMonitors()
         ignoresMouseEvents = true
     }
@@ -310,24 +351,37 @@ final class HaloRecorderPanel: NSPanel {
         )
     }
 
-    private func prepareForFrameChangeIfNeeded(_ frame: CGRect) {
-        guard frame != self.frame,
-            (interactionState == .awaitingRegions || interactionState == .selective)
+    private func prepareForFrameChangeIfNeeded(
+        _ frame: CGRect
+    ) -> HaloReviewLayoutTransitionTracker.Generation? {
+        guard interactionState == .awaitingRegions || interactionState == .selective,
+            HaloReviewFrameChangeClassifier.classify(from: self.frame, to: frame) == .size
+        else {
+            // Interactive regions use panel-local coordinates. Moving a panel
+            // without resizing it cannot invalidate those regions, and waiting
+            // for SwiftUI to republish unchanged geometry would leave the panel
+            // permanently click-through.
+            return nil
+        }
+
+        interactiveRegions = []
+        // Keep the latest un-clipped SwiftUI regions. They may already describe
+        // the destination layout even if they were published before AppKit began
+        // the resize, and will be clipped against the final bounds on completion.
+        interactionState = .awaitingRegions
+        ignoresMouseEvents = true
+        return reviewLayoutTransitionTracker.begin()
+    }
+
+    private func finishReviewLayoutTransitionIfNeeded(
+        generation: HaloReviewLayoutTransitionTracker.Generation?
+    ) {
+        guard let generation,
+            reviewLayoutTransitionTracker.finish(generation)
         else {
             return
         }
 
-        interactiveRegions = []
-        pendingInteractiveRegions = []
-        interactionState = .awaitingRegions
-        isReviewLayoutTransitioning = true
-        ignoresMouseEvents = true
-    }
-
-    private func finishReviewLayoutTransitionIfNeeded() {
-        guard isReviewLayoutTransitioning else { return }
-
-        isReviewLayoutTransitioning = false
         contentView?.layoutSubtreeIfNeeded()
         applyInteractiveRegions(
             HaloReviewInteractionRegionResolver.activeRegions(

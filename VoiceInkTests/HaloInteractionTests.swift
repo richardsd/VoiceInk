@@ -47,6 +47,44 @@ struct HaloInteractionTests {
         #expect(converted == CGPoint(x: 32, y: 310))
     }
 
+    @Test func positionOnlyPanelMoveKeepsLocalInteractionRegionsActive() {
+        let current = CGRect(x: 120, y: 240, width: 520, height: 402)
+
+        #expect(
+            HaloReviewFrameChangeClassifier.classify(
+                from: current,
+                to: current
+            ) == .none
+        )
+        #expect(
+            HaloReviewFrameChangeClassifier.classify(
+                from: current,
+                to: CGRect(x: 360, y: 420, width: 520, height: 402)
+            ) == .positionOnly
+        )
+        #expect(
+            HaloReviewFrameChangeClassifier.classify(
+                from: current,
+                to: CGRect(x: 120, y: 240, width: 480, height: 104)
+            ) == .size
+        )
+    }
+
+    @Test func onlyLatestReviewLayoutTransitionCanFinish() {
+        var tracker = HaloReviewLayoutTransitionTracker()
+
+        let firstGeneration = tracker.begin()
+        let secondGeneration = tracker.begin()
+
+        #expect(tracker.isActive)
+        let staleCompletionWasAccepted = tracker.finish(firstGeneration)
+        #expect(!staleCompletionWasAccepted)
+        #expect(tracker.isActive)
+        let latestCompletionWasAccepted = tracker.finish(secondGeneration)
+        #expect(latestCompletionWasAccepted)
+        #expect(!tracker.isActive)
+    }
+
     @Test func hitTesterAcceptsPointsInsideAnyInteractiveRegion() {
         let regions = [
             HaloInteractionRegion.rectangle(CGRect(x: 10, y: 20, width: 80, height: 40)),
