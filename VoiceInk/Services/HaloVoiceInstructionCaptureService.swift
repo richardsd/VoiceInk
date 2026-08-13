@@ -1,4 +1,3 @@
-import Combine
 import Foundation
 
 enum HaloVoiceInstructionCapturePhase: Equatable {
@@ -93,7 +92,7 @@ protocol HaloVoiceInstructionDeadlineScheduling: AnyObject {
 @MainActor
 final class RecorderHaloVoiceInstructionAudioRecorder: HaloVoiceInstructionAudioRecording {
     private let recorder: Recorder
-    private var audioMeterObservation: AnyCancellable?
+    private var audioMeterTask: Task<Void, Never>?
 
     var onAudioChunk: ((Data) -> Void)? {
         didSet {
@@ -105,19 +104,32 @@ final class RecorderHaloVoiceInstructionAudioRecorder: HaloVoiceInstructionAudio
 
     init(recorder: Recorder) {
         self.recorder = recorder
-        audioMeterObservation = recorder.$audioMeter
-            .removeDuplicates()
-            .sink { [weak self] meter in
-                self?.onAudioMeter?(meter)
-            }
     }
 
     func startRecording(toOutputFile url: URL) async throws {
         try await recorder.startRecording(toOutputFile: url)
+        startAudioMeterUpdates()
     }
 
     func stopRecording() async {
+        audioMeterTask?.cancel()
+        audioMeterTask = nil
         await recorder.stopRecording()
+    }
+
+    private func startAudioMeterUpdates() {
+        audioMeterTask?.cancel()
+        audioMeterTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.onAudioMeter?(self.recorder.audioMeterSnapshot())
+                do {
+                    try await Task.sleep(for: .milliseconds(17))
+                } catch {
+                    return
+                }
+            }
+        }
     }
 }
 

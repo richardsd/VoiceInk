@@ -18,6 +18,7 @@ struct InMemoryTranscriptionCapabilityRegistryTests {
             .cartesia: .unsupported(.streamingOnly),
             .nativeApple: .unsupported(.fileBackedServiceOnly),
             .custom: .unsupported(.fileBackedServiceOnly),
+            .transcribeCpp: .unsupported(.fileBackedServiceOnly),
             .whisper: .supported(.localPCM16),
             .fluidAudio: .supported(.localPCM16),
         ]

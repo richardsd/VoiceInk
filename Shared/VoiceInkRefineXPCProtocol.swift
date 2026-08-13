@@ -1,6 +1,6 @@
 import Foundation
 
-let voiceInkRefineXPCServiceName = "com.prakashjoshipax.VoiceInk.RefineXPC"
+let voiceInkRefineXPCServiceName = "com.prakashjoshipax.VoiceInkDias.RefineXPC"
 let voiceInkRefineXPCErrorDomain = "com.prakashjoshipax.VoiceInk.RefineXPC"
 
 struct VoiceInkRefinePrepareRequest: Codable, Sendable {

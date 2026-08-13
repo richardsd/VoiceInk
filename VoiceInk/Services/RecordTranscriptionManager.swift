@@ -221,22 +221,22 @@ class RecordTranscriptionManager: ObservableObject {
            enhancementService.isConfigured(for: enhancementConfiguration) {
             recordingState = .enhancing
             do {
-                let (enhancedText, enhancementDuration, promptName) = try await enhancementService.enhance(
+                let enhancementResult = try await enhancementService.enhance(
                     text,
                     configuration: enhancementConfiguration
                 )
                 let transcription = Transcription(
                     text: cleanedText,
                     duration: duration,
-                    enhancedText: enhancedText,
+                    enhancedText: enhancementResult.text,
                     audioFileURL: fileURL.absoluteString,
                     transcriptionModelName: currentModel.displayName,
                     aiEnhancementModelName: enhancementConfiguration.modelName ?? enhancementConfiguration.provider?.defaultModel,
-                    promptName: promptName,
+                    promptName: enhancementResult.promptName,
                     transcriptionDuration: transcriptionDuration,
-                    enhancementDuration: enhancementDuration,
-                    aiRequestSystemMessage: enhancementService.lastSystemMessageSent,
-                    aiRequestUserMessage: enhancementService.lastUserMessageSent,
+                    enhancementDuration: enhancementResult.duration,
+                    aiRequestSystemMessage: enhancementResult.systemMessage,
+                    aiRequestUserMessage: enhancementResult.userMessage,
                     modeName: modeMetadata.name,
                     modeEmoji: modeMetadata.emoji
                 )

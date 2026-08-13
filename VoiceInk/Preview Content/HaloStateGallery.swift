@@ -1,6 +1,24 @@
 #if DEBUG
 import SwiftUI
 
+@MainActor
+private final class HaloGalleryRecorder: Recorder {
+    private let previewAudioMeter: AudioMeter
+
+    init(audioMeter: AudioMeter) {
+        self.previewAudioMeter = audioMeter
+        super.init(
+            audioCaptureLeaseCoordinator: AudioCaptureLeaseCoordinator.applicationShared,
+            audioCaptureLeaseOwner: nil,
+            prepareOnInitialization: false
+        )
+    }
+
+    override func audioMeterSnapshot() -> AudioMeter {
+        previewAudioMeter
+    }
+}
+
 /// Development-only visual regression canvas for the focus-preserving Halo.
 ///
 /// Open the canvas for this file in Xcode to inspect production Halo rendering
@@ -12,8 +30,9 @@ private struct HaloStateGallery: View {
     @StateObject private var recorder: Recorder
 
     init() {
-        let recorder = Recorder()
-        recorder.audioMeter = AudioMeter(averagePower: 0.58, peakPower: 0.76)
+        let recorder = HaloGalleryRecorder(
+            audioMeter: AudioMeter(averagePower: 0.58, peakPower: 0.76)
+        )
         _recorder = StateObject(wrappedValue: recorder)
     }
 

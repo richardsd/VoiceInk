@@ -132,6 +132,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
     private var haloVoiceRefinementTask: Task<Void, Never>?
     private var activeHaloVoiceRefinementRequestID: UUID?
     private var pendingHaloVoiceStopRequestID: UUID?
+    private var haloReviewKeyboardFocusReviewID: UUID?
+    private var haloDestinationFocusRestorationTask: Task<Void, Never>?
     private var isResolvingPasteReview = false
     private var pasteReviewResolutionGate = PasteReviewResolutionGate()
     private var activePasteReviewDestination: PasteReviewDestinationSnapshot?
@@ -1498,7 +1500,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
     }
 
     @discardableResult
-    func beginPasteReviewFocusRecovery() -> Bool {
+    func beginPasteReviewFocusRecovery(
+        activateDestinationApplication: Bool = true
+    ) -> Bool {
         guard recordingState == .reviewing,
             let review = pendingPasteReview,
             pasteReviewResolutionGate.permitsNonDeliveryAction(for: review.id),
@@ -1518,7 +1522,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
         recoveryPresenter.beginPasteReviewFocusRecovery()
         announcePasteReviewFocusRecovery()
 
-        if haloCapabilitySnapshot.guidedRecoveryEnabled,
+        if activateDestinationApplication,
+            haloCapabilitySnapshot.guidedRecoveryEnabled,
             let destination = review.destination,
             haloDestinationRecoveryService.activateDestinationApplication(
                 for: destination
@@ -1602,6 +1607,106 @@ class VoiceInkEngine: NSObject, ObservableObject {
         }
         resetPasteReviewInactivity()
         recoveryPresenter.endPasteReviewFocusRecovery()
+    }
+
+    /// Records that Halo deliberately became key so a review text editor could
+    /// accept keyboard input. The immutable paste destination remains unchanged;
+    /// this marker only makes Halo responsible for returning the focus it took.
+    private func noteHaloReviewTookKeyboardFocus(reviewID: UUID) {
+        haloReviewKeyboardFocusReviewID = reviewID
+        haloDestinationFocusRestorationTask?.cancel()
+        haloDestinationFocusRestorationTask = nil
+    }
+
+    /// Repairs the focus handoff after Halo-owned text entry without weakening
+    /// destination validation. If the original application is still frontmost,
+    /// activate only that verified application and revalidate the exact field. A
+    /// field that cannot be proven falls back to the existing manual recovery UI.
+    private func restoreDestinationFocusAfterHaloTextEntry(reviewID: UUID) {
+        guard haloReviewKeyboardFocusReviewID == reviewID else { return }
+        haloReviewKeyboardFocusReviewID = nil
+        haloDestinationFocusRestorationTask?.cancel()
+
+        haloDestinationFocusRestorationTask = Task { @MainActor [weak self] in
+            guard let self,
+                self.recordingState == .reviewing,
+                let review = self.pendingPasteReview,
+                review.id == reviewID,
+                self.pasteReviewResolutionGate.permitsNonDeliveryAction(for: reviewID),
+                let destination = review.destination
+            else {
+                return
+            }
+
+            var validation = await self.pasteReviewDestinationService.validate(destination)
+            guard !Task.isCancelled,
+                self.pendingPasteReview?.id == reviewID,
+                self.pasteReviewResolutionGate.permitsNonDeliveryAction(for: reviewID)
+            else {
+                return
+            }
+
+            if validation.permitsDelivery {
+                if case .destinationChanged = self.pasteReviewFeedback {
+                    self.pasteReviewFeedback = nil
+                }
+                self.haloDestinationFocusRestorationTask = nil
+                return
+            }
+
+            guard case .mismatch(let initialMismatch) = validation else {
+                self.haloDestinationFocusRestorationTask = nil
+                return
+            }
+
+            let frontmost = self.pasteReviewDestinationService.frontmostApplicationSnapshot()
+            let canRestoreWithoutInterruptingAnotherApplication = frontmost.processID == nil
+                || frontmost.processID == destination.processID
+            guard self.haloCapabilitySnapshot.guidedRecoveryEnabled,
+                canRestoreWithoutInterruptingAnotherApplication,
+                self.haloDestinationRecoveryService.activateDestinationApplication(
+                    for: destination
+                ) == .activated
+            else {
+                self.pasteReviewFeedback = .destinationChanged(initialMismatch)
+                _ = self.beginPasteReviewFocusRecovery(
+                    activateDestinationApplication: false
+                )
+                self.haloDestinationFocusRestorationTask = nil
+                return
+            }
+
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+            } catch {
+                return
+            }
+
+            validation = await self.pasteReviewDestinationService.validate(destination)
+            guard !Task.isCancelled,
+                self.pendingPasteReview?.id == reviewID,
+                self.pasteReviewResolutionGate.permitsNonDeliveryAction(for: reviewID)
+            else {
+                return
+            }
+
+            self.haloDestinationFocusRestorationTask = nil
+            if validation.permitsDelivery {
+                if case .destinationChanged = self.pasteReviewFeedback {
+                    self.pasteReviewFeedback = nil
+                }
+                self.announceHaloVoiceRefinement(
+                    String(localized: "Original field is ready. Choose Apply to paste.")
+                )
+                return
+            }
+
+            guard case .mismatch(let mismatch) = validation else { return }
+            self.pasteReviewFeedback = .destinationChanged(mismatch)
+            _ = self.beginPasteReviewFocusRecovery(
+                activateDestinationApplication: false
+            )
+        }
     }
 
     @discardableResult
@@ -2231,6 +2336,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         activeHaloVoiceRefinementRequestID = requestID
         haloReviewState = state
         pasteReviewFeedback = nil
+        noteHaloReviewTookKeyboardFocus(reviewID: review.id)
         pasteReviewSecondsRemaining = Int(HaloReviewState.inactivityLifetime)
         recorderUIManager?.refreshPasteReviewKeyboardHandling()
         schedulePasteReviewInactivity(for: review.id)
@@ -2253,6 +2359,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         )
         guard effect != .ignored else { return false }
         haloReviewState = state
+        noteHaloReviewTookKeyboardFocus(reviewID: review.id)
         recorderUIManager?.refreshPasteReviewKeyboardHandling()
         schedulePasteReviewInactivity(for: review.id)
         return true
@@ -2463,6 +2570,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         haloOutcomeRecorder.record(.voiceRefinementCancelled)
         recorderUIManager?.refreshPasteReviewKeyboardHandling()
         schedulePasteReviewInactivity(for: review.id)
+        restoreDestinationFocusAfterHaloTextEntry(reviewID: review.id)
         announceHaloVoiceRefinement(
             request.source == .voice
                 ? String(localized: "Voice refinement cancelled")
@@ -2797,6 +2905,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
             haloOutcomeRecorder.record(metric)
         }
         schedulePasteReviewInactivity(for: reviewID)
+        restoreDestinationFocusAfterHaloTextEntry(reviewID: reviewID)
     }
 
     private func failHaloVoiceRefinement(
@@ -2829,6 +2938,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         haloReviewState = state
         haloOutcomeRecorder.record(metric)
         schedulePasteReviewInactivity(for: reviewID)
+        restoreDestinationFocusAfterHaloTextEntry(reviewID: reviewID)
         announceHaloVoiceRefinement(failure.message)
     }
 
@@ -2939,6 +3049,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         }
         haloReviewState = state
         pasteReviewFeedback = nil
+        noteHaloReviewTookKeyboardFocus(reviewID: review.id)
         recorderUIManager?.refreshPasteReviewKeyboardHandling()
         schedulePasteReviewInactivity(for: review.id)
         return true
@@ -2998,6 +3109,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         schedulePasteReviewInactivity(for: review.id)
         if effect != .ignored {
             haloOutcomeRecorder.record(.manualEdit)
+            restoreDestinationFocusAfterHaloTextEntry(reviewID: review.id)
         }
         return effect != .ignored
     }
@@ -3022,6 +3134,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         haloReviewState = state
         recorderUIManager?.refreshPasteReviewKeyboardHandling()
         schedulePasteReviewInactivity(for: review.id)
+        restoreDestinationFocusAfterHaloTextEntry(reviewID: review.id)
         return true
     }
 
@@ -3328,6 +3441,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
         stopActiveHaloRefinementTask()
         stopActiveHaloVariantTasks()
         stopActiveHaloVoiceRefinementTask()
+        haloReviewKeyboardFocusReviewID = nil
+        haloDestinationFocusRestorationTask?.cancel()
+        haloDestinationFocusRestorationTask = nil
         haloVoiceCommandConfirmation = nil
         isPasteReviewRefocusing = false
         isHaloVoiceRefinementReady = false

@@ -79,7 +79,7 @@ struct RecordTranscribeView: View {
             Spacer()
 
             AudioVisualizer(
-                audioMeter: recordManager.recorder.audioMeter,
+                audioMeterProvider: recordManager.recorder.audioMeterSnapshot,
                 color: .red,
                 isActive: true
             )

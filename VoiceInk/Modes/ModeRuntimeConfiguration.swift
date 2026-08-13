@@ -1,7 +1,7 @@
 import Foundation
 
 struct TranscriptionRuntimeConfiguration {
-    let mode: ModeConfig
+    let mode: ModeConfig?
     let model: any TranscriptionModel
     let language: String
     let isRealtimeEnabled: Bool
@@ -30,7 +30,7 @@ struct TranscriptionRuntimeConfiguration {
     }
 
     var metadata: (name: String?, emoji: String?) {
-        guard mode.isEnabled else {
+        guard let mode, mode.isEnabled else {
             return (nil, nil)
         }
         return (mode.name, mode.icon.value)

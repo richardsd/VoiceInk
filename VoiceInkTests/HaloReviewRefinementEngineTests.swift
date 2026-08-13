@@ -262,6 +262,7 @@ private final class SuspendedEngineDestinationService: PasteReviewDestinationSer
 @MainActor
 private final class SequencedEngineDestinationService: PasteReviewDestinationServicing {
     private var validations: [PasteReviewDestinationValidation]
+    private(set) var validationCount = 0
 
     init(_ validations: [PasteReviewDestinationValidation]) {
         self.validations = validations
@@ -279,7 +280,8 @@ private final class SequencedEngineDestinationService: PasteReviewDestinationSer
     func validate(
         _ expected: PasteReviewDestinationSnapshot
     ) async -> PasteReviewDestinationValidation {
-        validations.isEmpty ? .processMatch : validations.removeFirst()
+        validationCount += 1
+        return validations.isEmpty ? .processMatch : validations.removeFirst()
     }
 }
 
@@ -918,6 +920,82 @@ struct HaloReviewRefinementEngineTests {
         #expect(selected.payload.pastedText == "licensed:Concise final version ")
         #expect(harness.outcomes.counts[.voiceRefinementStarted] == 1)
         #expect(harness.outcomes.counts[.voiceRefinementCompleted] == 1)
+    }
+
+    @Test func editedSpokenInstructionReturnsFocusTakenByHaloBeforeApply() async throws {
+        let mismatch = PasteReviewDestinationValidation.mismatch(
+            PasteReviewDestinationMismatch(
+                expectedApplicationName: "Destination",
+                currentApplicationName: "VoiceInk",
+                reason: .processChanged
+            )
+        )
+        let destination = SequencedEngineDestinationService([
+            mismatch,
+            .focusedElementMatch,
+            .focusedElementMatch,
+        ])
+        let recovery = EngineDestinationRecoveryService()
+        let voiceCapture = EngineVoiceInstructionCaptureService(
+            behaviors: [.result(.instruction("Make it concise"))]
+        )
+        let harness = try makeHarness(
+            refinement: EngineRefinementService(behaviors: [.success("Concise result")]),
+            destinationService: destination,
+            destinationRecoveryService: recovery,
+            voiceCapture: voiceCapture
+        )
+        let capturedDestination = destination.frontmostApplicationSnapshot()
+        #expect(harness.engine.stagePasteReview(
+            makeReview(
+                destination: capturedDestination,
+                transcriptionConfiguration: makeVoiceTranscriptionConfiguration()
+            ),
+            notifyReady: false
+        ))
+
+        #expect(harness.engine.beginHaloVoiceRefinement())
+        await waitForInstructionDraft(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 1
+        )
+        #expect(harness.engine.editHaloInstructionDraft())
+        let requestID = try #require(
+            harness.engine.haloReviewState?.voiceRefinementPhase.instructionDraft?.requestID
+        )
+        #expect(harness.engine.updateHaloInstructionDraft(
+            requestID: requestID,
+            text: "Make it concise and direct"
+        ))
+        #expect(harness.engine.submitHaloInstructionDraft())
+        await waitForVoiceRefinement(
+            in: harness.engine,
+            capture: voiceCapture,
+            expectedCaptureCount: 1
+        )
+
+        for _ in 0..<200 {
+            if recovery.destinations == [capturedDestination],
+                destination.validationCount >= 2,
+                harness.engine.pasteReviewFeedback == nil
+            {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+
+        #expect(recovery.destinations == [capturedDestination])
+        #expect(destination.validationCount == 2)
+        #expect(!harness.engine.isPasteReviewRefocusing)
+        #expect(harness.engine.pasteReviewFeedback == nil)
+        #expect(harness.engine.haloReviewState?.selectedRevision?.text == "Concise result")
+
+        await harness.engine.approvePendingPasteReview()
+
+        #expect(destination.validationCount == 3)
+        #expect(harness.paste.deliveryPayloads.count == 1)
+        #expect(harness.engine.pendingPasteReview == nil)
     }
 
     @Test func typedInstructionWaitsForSubmissionAndUsesFrozenRoute() async throws {

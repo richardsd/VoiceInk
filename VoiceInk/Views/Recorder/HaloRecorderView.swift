@@ -255,7 +255,7 @@ struct HaloRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                 .frame(width: 22, height: 22)
 
                 AudioVisualizer(
-                    audioMeter: recorder.audioMeter,
+                    audioMeterProvider: recorder.audioMeterSnapshot,
                     color: coral,
                     isActive: true
                 )
@@ -1613,7 +1613,7 @@ private struct HaloVoiceRefinementProgressStatus: View {
             switch phase {
             case .listening:
                 AudioVisualizer(
-                    audioMeter: audioMeter,
+                    audioMeterProvider: { audioMeter },
                     color: Color(red: 0.96, green: 0.34, blue: 0.29),
                     isActive: true
                 )

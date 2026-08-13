@@ -69,7 +69,7 @@ enum InMemoryTranscriptionCapabilityRegistry {
         case .cartesia:
             return .unsupported(.streamingOnly)
 
-        case .nativeApple, .custom:
+        case .nativeApple, .custom, .transcribeCpp:
             return .unsupported(.fileBackedServiceOnly)
 
         case .whisper, .fluidAudio:

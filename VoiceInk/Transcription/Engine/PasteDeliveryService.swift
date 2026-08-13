@@ -76,7 +76,7 @@ final class PasteDeliveryService: PasteDeliveryServicing {
 
         @MainActor static let live = Dependencies(
             usageRestrictionMessage: {
-                LicenseViewModel().usageRestrictionMessage
+                LicenseViewModel.shared.usageRestrictionMessage
             },
             shouldAppendTrailingSpace: {
                 UserDefaults.standard.bool(forKey: "AppendTrailingSpace")
