@@ -34,6 +34,7 @@ final class LicenseViewModel: ObservableObject {
     private let now: () -> Date
     private let automaticallyRetriesStorage: Bool
     private let automaticallyRefreshesTime: Bool
+    private let bypassesLicenseEnforcement: Bool
 
     private var storedLicenseKey: String?
     private var activationId: String?
@@ -54,7 +55,8 @@ final class LicenseViewModel: ObservableObject {
             userDefaults: .standard,
             now: Date.init,
             automaticallyRetriesStorage: true,
-            automaticallyRefreshesTime: true
+            automaticallyRefreshesTime: true,
+            bypassesLicenseEnforcement: true
         )
     }
 
@@ -64,7 +66,8 @@ final class LicenseViewModel: ObservableObject {
         userDefaults: UserDefaults,
         now: @escaping () -> Date,
         automaticallyRetriesStorage: Bool = false,
-        automaticallyRefreshesTime: Bool = false
+        automaticallyRefreshesTime: Bool = false,
+        bypassesLicenseEnforcement: Bool = false
     ) {
         self.polarService = polarService
         self.licenseManager = licenseManager
@@ -72,6 +75,7 @@ final class LicenseViewModel: ObservableObject {
         self.now = now
         self.automaticallyRetriesStorage = automaticallyRetriesStorage
         self.automaticallyRefreshesTime = automaticallyRefreshesTime
+        self.bypassesLicenseEnforcement = bypassesLicenseEnforcement
 
         loadPersistentState()
     }
@@ -137,10 +141,14 @@ final class LicenseViewModel: ObservableObject {
     }
 
     var isLicensed: Bool {
-        licenseState == .licensed
+        bypassesLicenseEnforcement || licenseState == .licensed
     }
 
     var hasVerifiedLicense: Bool {
+        if bypassesLicenseEnforcement {
+            return true
+        }
+
         guard isPersistentStateAvailable else { return false }
         return storedLicenseKey != nil && licenseState == .licensed
     }
@@ -438,6 +446,10 @@ final class LicenseViewModel: ObservableObject {
     }
 
     private func resolvedState(at date: Date) -> LicenseState {
+        if bypassesLicenseEnforcement {
+            return .licensed
+        }
+
         if storedLicenseKey != nil,
             activationId != nil || !requiresActivation
         {
@@ -483,7 +495,8 @@ final class LicenseViewModel: ObservableObject {
         stateRefreshTask?.cancel()
         stateRefreshTask = nil
 
-        guard automaticallyRefreshesTime,
+        guard !bypassesLicenseEnforcement,
+            automaticallyRefreshesTime,
             storedLicenseKey == nil,
             let trialStartDate,
             licenseState != .trialExpired
